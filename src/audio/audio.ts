@@ -59,8 +59,30 @@ export class AudioEngine {
     }
   }
 
+  /** 曲の songTime 秒の位置で鳴るように、クリック音を予約する（タイミング調整用） */
+  scheduleTick(songTime: number) {
+    const when = this.startedAt + (songTime - this.songStart) / this.rate;
+    if (when < this.ctx.currentTime) return;
+    const osc = this.ctx.createOscillator();
+    const g = this.ctx.createGain();
+    osc.frequency.value = 1500;
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.linearRampToValueAtTime(0.35, when + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.001, when + 0.06);
+    osc.connect(g).connect(this.sfxGain);
+    osc.start(when);
+    osc.stop(when + 0.07);
+    this.scheduled.push(osc);
+  }
+
+  private scheduled: AudioScheduledSourceNode[] = [];
+
   stop() {
     this.playing = false;
+    for (const n of this.scheduled) {
+      try { n.stop(); } catch { /* 停止済み */ }
+    }
+    this.scheduled = [];
     if (this.source) {
       try { this.source.stop(); } catch { /* 既に停止済み */ }
       this.source.disconnect();
@@ -86,13 +108,32 @@ export class AudioEngine {
     const ts = this.ctx.getOutputTimestamp?.();
     if (ts && ts.performanceTime && ts.performanceTime > 0 && ts.contextTime !== undefined) {
       const off = ts.contextTime - ts.performanceTime / 1000;
-      if (this.clockOffset === null || Math.abs(off - this.clockOffset) > 0.03) this.clockOffset = off;
-      else this.clockOffset += (off - this.clockOffset) * 0.02;
-      return perfMs / 1000 + this.clockOffset;
+      // 明らかにおかしい値（出力の遅れがマイナス、または 0.5 秒以上）は使わない
+      const lat = this.ctx.currentTime - (performance.now() / 1000 + off);
+      if (lat > -0.02 && lat < 0.5) {
+        if (this.clockOffset === null || Math.abs(off - this.clockOffset) > 0.03) this.clockOffset = off;
+        else this.clockOffset += (off - this.clockOffset) * 0.02;
+        this.clockMode = 'outputTimestamp';
+        return perfMs / 1000 + this.clockOffset;
+      }
     }
     // 未対応のブラウザ: 報告されている出力遅延を引く
+    this.clockMode = 'outputLatency';
     const latency = this.ctx.outputLatency || this.ctx.baseLatency || 0;
     return this.ctx.currentTime - latency - (performance.now() - perfMs) / 1000;
+  }
+
+  private clockMode: 'outputTimestamp' | 'outputLatency' = 'outputLatency';
+
+  /** 診断用: 時計の方式と、推定している出力の遅れ（ms） */
+  clockInfo() {
+    const lat = this.ctx.currentTime - this.contextTimeAt(performance.now());
+    return {
+      mode: this.clockMode,
+      latencyMs: Math.round(lat * 1000),
+      outputLatencyMs: Math.round((this.ctx.outputLatency || 0) * 1000),
+      baseLatencyMs: Math.round((this.ctx.baseLatency || 0) * 1000),
+    };
   }
 
   playing = false;

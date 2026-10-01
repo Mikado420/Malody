@@ -317,6 +317,7 @@ export class Renderer {
     this.drawGauge(st.gauge, wall);
     this.drawRollBubble(wall);
     this.drawJudgeText(wall);
+    this.drawTiming(wall);
     this.drawFlyers(wall);
     this.drawBanner(wall);
     ctx.restore();
@@ -877,6 +878,27 @@ export class Renderer {
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fillText('面＝ドン　それ以外（画面のどこでも）＝カッ', P.x, P.y - P.faceRy + 40 * this.s);
+  }
+
+  /** 叩いたときのずれの表示（設定でオンのとき） */
+  pushTiming(text: string, color: string) {
+    this.timing = { text, color, t: performance.now() };
+  }
+
+  private timing: { text: string; color: string; t: number } | null = null;
+
+  private drawTiming(wall: number) {
+    const tm = this.timing;
+    if (!tm) return;
+    const age = wall - tm.t;
+    if (age > 600) return;
+    const ctx = this.ctx;
+    ctx.globalAlpha = age < 450 ? 1 : 1 - (age - 450) / 150;
+    ctx.font = `800 34px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    outlinedText(ctx, tm.text, JX, LANE_BOTTOM - 22, tm.color, '#000', 6);
+    ctx.globalAlpha = 1;
   }
 
   /** 指が触れた場所（画面 px）を記録して波紋を出す */

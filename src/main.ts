@@ -12,7 +12,7 @@ import { loadAudio, loadChart, loadHitSound, saveAudio, saveChart, saveHitSound 
 import { writeZip } from './io/zip';
 import { PlayMode } from './play/playmode';
 import { fitRoot } from './orient';
-import { startAutoUpdate } from './update';
+import { BUILD_ID, startAutoUpdate } from './update';
 
 fitRoot();
 
@@ -33,6 +33,7 @@ const settings = {
   hitSound: true,
   metronome: false,
   auto: false,
+  showTiming: false,
 };
 try {
   // 横スクロール化で拡大率の意味が変わったので v2 のキーで保存
@@ -342,7 +343,8 @@ function renderSheet() {
         <button data-act="saveZip">.zip（譜面＋音源）</button>
         <button data-act="copy">TJA をコピー</button>
       </div>
-      <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja は UTF-8（BOM付き）です。</p>`;
+      <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja は UTF-8（BOM付き）です。</p>
+      <p class="note">バージョン: ${esc(BUILD_ID.slice(0, 7))}</p>`;
   } else if (sheet === 'info') {
     $('sheetTitle').textContent = '譜面情報';
     const c = ed.chart;
@@ -390,6 +392,10 @@ function renderSheet() {
         <button data-act="hitReset" ${hitNames.don || hitNames.ka ? '' : 'disabled'}>内蔵の音に戻す</button>
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
+      <button data-act="calibrate" class="primary">タイミングを測って判定調整を合わせる</button>
+      <p class="note">クリック音に合わせてドンを 24 回叩くと、端末の音の遅れを測って判定調整を提案します。音がずれて「正確に叩いても判定されない・不可になる」ときに使ってください。</p>
+      <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>
+      <p class="note">オンにすると、叩くたびに判定枠の下にずれ（ms）が出ます。判定されなかったときは「判定なし」と、近くの音符とのずれが出ます。</p>
       <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
   } else if (sheet === 'events') {
@@ -610,6 +616,10 @@ async function fileAction(act: string) {
     }
     renderSheet();
     toast('打音を内蔵の音に戻しました');
+  } else if (act === 'calibrate') {
+    stopPlayback();
+    closeSheet();
+    await play.startCalibration();
   } else if (act === 'resetZoom') {
     settings.zoomSet = false;
     saveSettings();
@@ -680,7 +690,7 @@ $('applyCalib').addEventListener('click', () => {
 });
 $('playExit').addEventListener('click', () => play.close());
 $('back').addEventListener('click', () => play.close());
-$('retry').addEventListener('click', () => void startTest());
+$('retry').addEventListener('click', () => void (play.lastWasCalibration ? play.startCalibration() : startTest()));
 play.onExit = () => view.invalidate();
 
 // ---------- 起動 ----------

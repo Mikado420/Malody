@@ -3,6 +3,7 @@ import type { Course } from '../chart/types';
 import { Game } from '../engine/game';
 import { bindInput } from '../input';
 import { Renderer } from '../render/renderer';
+import { BUILD_ID } from '../update';
 
 export interface PlaySettings {
   speed: number;
@@ -10,6 +11,8 @@ export interface PlaySettings {
   offset: number;
   /** オート（譜面確認用に自動で叩く） */
   auto?: boolean;
+  /** 叩くたびにずれ（ms）を表示する */
+  showTiming?: boolean;
 }
 
 /**
@@ -42,7 +45,15 @@ export class PlayMode {
         this.renderer.pushHit(kind, side);
         if (pt) this.renderer.pushTouch(kind, pt.x, pt.y);
         // 叩いた瞬間の時刻で判定（処理が遅れてもずれない）
-        this.game.hit(kind, this.time(at));
+        const r = this.game.hit(kind, this.time(at));
+        if (this.settings.showTiming) {
+          const ms = (d: number) => `${d > 0 ? '+' : ''}${Math.round(d * 1000)}ms`;
+          if (r.type === 'judged') this.renderer.pushTiming(ms(r.delta), r.delta > 0 ? '#ffb070' : '#8fd0ff');
+          else if (r.type === 'none') {
+            if (r.wrongColor && r.nearest === null) this.renderer.pushTiming('色違い', '#c0c0c0');
+            else if (r.nearest !== null) this.renderer.pushTiming(`判定なし ${ms(r.nearest)}`, '#ff6b6b');
+          }
+        }
       },
     );
     window.addEventListener('keydown', (e) => {
@@ -58,8 +69,31 @@ export class PlayMode {
     return this.audio.now(perfMs) - this.settings.offset / 1000;
   }
 
-  /** fromTime 秒の位置から（2秒前から助走して）開始 */
-  async start(course: Course, fromTime: number, info: { title: string; course: string; level: number }) {
+  /** タイミング調整の測定中か */
+  private calibrating = false;
+
+  /**
+   * タイミング調整: 0.6 秒おきのドンに合わせてクリック音を鳴らし、叩いたずれを測る。
+   * 音符の間隔が広いので、端末の音の遅れが ±300ms あっても別の音符と取り違えずに測れる。
+   */
+  async startCalibration() {
+    const N = 24;
+    const notes = Array.from({ length: N }, (_, i) => ({
+      type: 'don' as const, time: 1 + i * 0.6, bpm: 100, scroll: 1, gogo: false,
+    }));
+    const bars = Array.from({ length: Math.ceil(N / 4) + 1 }, (_, i) => ({ time: 1 + i * 2.4, bpm: 100, scroll: 1 }));
+    this.calibrating = true;
+    await this.start(
+      { name: 'Oni', level: 0, notes, bars, gogo: [] },
+      1,
+      { title: 'タイミング調整（クリック音に合わせて叩いてください）', course: 'Oni', level: 0 },
+      notes.map((n) => n.time),
+    );
+  }
+
+  /** fromTime 秒の位置から（2秒前から助走して）開始。clicks を渡すとその時刻にクリック音を鳴らす */
+  async start(course: Course, fromTime: number, info: { title: string; course: string; level: number }, clicks?: number[]) {
+    if (!clicks) this.calibrating = false;
     const from = Math.max(fromTime, (course.notes[0]?.time ?? 0) - 1);
     const notes = course.notes.filter((n) => (n.endTime ?? n.time) >= from - 0.05);
     const game = new Game(notes);
@@ -74,6 +108,7 @@ export class PlayMode {
     this.renderer.speed = this.settings.speed;
     this.active = true;
     await this.audio.startAt(from - 2, 1);
+    for (const t of clicks ?? []) this.audio.scheduleTick(t);
 
     const lastTime = Math.max(from, ...notes.map((n) => n.endTime ?? n.time));
     const endAt = Math.max(lastTime + 2, Math.min(this.audio.musicDuration, lastTime + 4));
@@ -84,7 +119,7 @@ export class PlayMode {
     const loop = () => {
       if (!this.active) return;
       const now = this.time();
-      if (this.settings.auto) this.autoPlay(game, now);
+      if (this.settings.auto && !this.calibrating) this.autoPlay(game, now);
       game.update(now);
       this.renderer.draw(game, course, now, info);
       if (now > endAt || (game.finished && now > lastTime + 1.5)) {
@@ -136,6 +171,10 @@ export class PlayMode {
     this.audio.stop();
     const g = this.game;
     if (!g) return;
+    if (this.calibrating) {
+      this.showCalibration(g);
+      return;
+    }
     const s = g.stats;
     const total = g.totalHitNotes || 1;
     const acc = ((s.good + s.ok * 0.5) / total) * 100;
@@ -148,27 +187,87 @@ export class PlayMode {
       ['連打', String(s.rolls)],
       ['精度', `${acc.toFixed(2)}%`],
     ];
-    // 叩いたタイミングの平均のずれ（オートのときは出さない）
-    const d = g.deltas;
+    // 叩いたタイミングのずれ（オートのときは出さない）。
+    // 判定幅の外だった打撃も含めて中央値を取るので、端末の音の遅れが 114ms より大きくても調整できる
     const calib = this.result.querySelector<HTMLElement>('.calib')!;
-    if (!this.settings.auto && d.length >= 8) {
-      const mean = d.reduce((a, b) => a + b, 0) / d.length;
-      const sd = Math.sqrt(d.reduce((a, b) => a + (b - mean) ** 2, 0) / d.length);
-      const ms = Math.round(mean * 1000);
-      rows.push(['平均のずれ', `${ms > 0 ? '+' : ''}${ms}ms（${Math.abs(ms) <= 5 ? 'ちょうど' : ms > 0 ? '遅め' : '早め'}）`]);
-      rows.push(['ばらつき', `±${Math.round(sd * 1000)}ms`]);
-      this.suggested = Math.round(this.settings.offset + mean * 1000);
-      calib.classList.toggle('hidden', Math.abs(ms) <= 5);
-      calib.querySelector('button')!.textContent = `判定調整を ${this.suggested}ms にする（今は ${this.settings.offset}ms）`;
-    } else {
-      calib.classList.add('hidden');
+    calib.classList.add('hidden');
+    if (!this.settings.auto) {
+      const T = g.taps;
+      const all = [...g.deltas, ...g.outside].sort((a, b) => a - b);
+      rows.push(['叩いた回数', `${T.total}（判定 ${T.judged}・連打 ${T.roll + T.big}）`]);
+      if (T.none > 0) {
+        const out = g.outside;
+        const outMean = out.length ? Math.round((out.reduce((a, b) => a + b, 0) / out.length) * 1000) : 0;
+        const parts = [];
+        if (out.length) parts.push(`判定幅の外 ${out.length}（平均 ${outMean > 0 ? '+' : ''}${outMean}ms）`);
+        if (T.wrongColor) parts.push(`色違い ${T.wrongColor}`);
+        const rest = T.none - out.length - T.wrongColor;
+        if (rest > 0) parts.push(`近くに音符なし ${rest}`);
+        rows.push(['判定されなかった', `${T.none}：${parts.join('・')}`]);
+      }
+      if (all.length >= 8) {
+        const med = all[Math.floor(all.length / 2)];
+        const mean = g.deltas.length ? g.deltas.reduce((a, b) => a + b, 0) / g.deltas.length : med;
+        const sd = g.deltas.length
+          ? Math.sqrt(g.deltas.reduce((a, b) => a + (b - mean) ** 2, 0) / g.deltas.length)
+          : 0;
+        const ms = Math.round(med * 1000);
+        rows.push(['ずれ（中央値）', `${ms > 0 ? '+' : ''}${ms}ms（${Math.abs(ms) <= 5 ? 'ちょうど' : ms > 0 ? '遅め' : '早め'}）`]);
+        if (g.deltas.length) rows.push(['ばらつき', `±${Math.round(sd * 1000)}ms`]);
+        this.suggested = Math.round(this.settings.offset + med * 1000);
+        if (Math.abs(ms) > 5) {
+          calib.classList.remove('hidden');
+          calib.querySelector('button')!.textContent = `判定調整を ${this.suggested}ms にする（今は ${this.settings.offset}ms）`;
+        }
+      }
     }
+    // 不具合を調べるための情報
+    const c = this.audio.clockInfo();
+    rows.push([
+      '音の遅れ（推定）',
+      `${c.latencyMs}ms（${c.mode === 'outputTimestamp' ? '再生位置から' : '端末の申告値'}、申告 ${c.outputLatencyMs}/${c.baseLatencyMs}ms）`,
+    ]);
+    rows.push(['判定調整', `${this.settings.offset}ms`]);
+    rows.push(['バージョン', BUILD_ID.slice(0, 7)]);
+    this.result.querySelector('h2')!.textContent = '結果';
     this.result.querySelector('dl')!.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     this.result.classList.remove('hidden');
   }
 
   /** 結果画面で提案する判定調整の値（ms） */
   suggested = 0;
+
+  private showCalibration(g: Game) {
+    const all = [...g.deltas, ...g.outside].filter((d) => Math.abs(d) < 0.3).sort((a, b) => a - b);
+    const calib = this.result.querySelector<HTMLElement>('.calib')!;
+    const rows: [string, string][] = [['叩いた回数', `${g.taps.total}（測れた ${all.length}）`]];
+    if (all.length >= 8) {
+      // 外れ値に強いよう、中央付近の半分の平均を使う
+      const q = all.slice(Math.floor(all.length / 4), Math.ceil((all.length * 3) / 4));
+      const mid = q.reduce((a, b) => a + b, 0) / q.length;
+      const sd = Math.sqrt(all.reduce((a, b) => a + (b - mid) ** 2, 0) / all.length);
+      const ms = Math.round(mid * 1000);
+      rows.push(['ずれ', `${ms > 0 ? '+' : ''}${ms}ms（${Math.abs(ms) <= 5 ? 'ちょうど' : ms > 0 ? '遅め' : '早め'}）`]);
+      rows.push(['ばらつき', `±${Math.round(sd * 1000)}ms`]);
+      this.suggested = Math.round(this.settings.offset + mid * 1000);
+      calib.classList.remove('hidden');
+      calib.querySelector('button')!.textContent = `判定調整を ${this.suggested}ms にする（今は ${this.settings.offset}ms）`;
+    } else {
+      rows.push(['結果', '測れた打撃が少ないので、もう一度試してください']);
+      calib.classList.add('hidden');
+    }
+    const c = this.audio.clockInfo();
+    rows.push(['音の遅れ（推定）', `${c.latencyMs}ms（${c.mode === 'outputTimestamp' ? '再生位置から' : '端末の申告値'}）`]);
+    rows.push(['バージョン', BUILD_ID.slice(0, 7)]);
+    this.result.querySelector('h2')!.textContent = 'タイミング調整の結果';
+    this.result.querySelector('dl')!.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+    this.result.classList.remove('hidden');
+  }
+
+  /** 「もう一度」で同じモードをやり直す */
+  get lastWasCalibration() {
+    return this.calibrating;
+  }
 
   close() {
     this.finish();

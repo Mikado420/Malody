@@ -217,6 +217,21 @@ describe('Game 判定', () => {
     expect([g.stats.rolls, g.stats.good, g.stats.bad]).toEqual([6, 1, 0]);
   });
 
+  it('114ms を過ぎた直後のフレームの後に届いた打撃も、叩いた瞬間の時刻で判定される', () => {
+    const g = new Game(mk([['don', 1]]));
+    g.update(1.13); // 1.0 から 130ms 後のフレーム
+    expect(g.hit('don', 1.07)).toMatchObject({ type: 'judged', judge: 'ok' }); // 叩いたのは 70ms 後
+    expect(g.stats.bad).toBe(0);
+  });
+
+  it('判定されなかった打撃は、近くの同じ色のノーツとのずれを記録する', () => {
+    const g = new Game(mk([['don', 1], ['ka', 1.0]]));
+    expect(g.hit('don', 0.8)).toMatchObject({ type: 'none' }); // 200ms 早い
+    expect(g.hit('ka', 1.5)).toMatchObject({ type: 'none' });
+    expect(g.outside.map((d) => Math.round(d * 1000))).toEqual([-200, 500]);
+    expect(g.taps).toMatchObject({ total: 2, none: 2 });
+  });
+
   it('見逃しは不可', () => {
     const g = new Game(notes);
     g.update(1.5);

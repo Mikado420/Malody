@@ -12,6 +12,24 @@ export const BIG_WAIT = 0.05;
 
 export const WINDOW = { good: 0.025, ok: 0.075, bad: 0.114 } as const;
 
+/**
+ * 見逃し（不可）にするまでの猶予（秒）。
+ * スマホではタッチの処理が次のフレームより後になることがあるので、114ms を過ぎたらすぐ見逃しにすると、
+ * 実際には 114ms 以内に叩いていた打撃が「判定なし」になってしまう。判定そのものは叩いた瞬間の時刻で行う。
+ */
+const MISS_GRACE = 0.08;
+
+/** 判定されなかった打撃のうち、近くの同じ色のノーツとのずれを記録する範囲（秒） */
+const NEAR_RANGE = 0.6;
+
+/** hit() の結果（画面のずれ表示や結果画面の集計に使う） */
+export type HitResult =
+  | { type: 'judged'; judge: Judge; delta: number }
+  | { type: 'big' }
+  | { type: 'roll' }
+  /** 判定されなかった。nearest = 同じ色のいちばん近いノーツとのずれ（なければ null）、wrongColor = 判定幅の中に色違いのノーツがあった */
+  | { type: 'none'; nearest: number | null; wrongColor: boolean };
+
 export interface NoteState {
   note: Note;
   /** 普通ノーツ: 判定済みか。長いノーツ: 終了したか */
@@ -55,6 +73,10 @@ export class Game {
   private readonly hitIdx: number[];
   /** 叩いたノーツのずれ（秒、＋で遅い）。色が合っていたものだけ。結果画面で平均を出して判定調整に使う */
   readonly deltas: number[] = [];
+  /** 判定幅の外だった打撃の、近くの同じ色のノーツとのずれ（秒）。端末の音の遅れが大きいときの調整に使う */
+  readonly outside: number[] = [];
+  /** 打撃の集計（結果画面の診断用） */
+  readonly taps = { total: 0, judged: 0, roll: 0, big: 0, none: 0, wrongColor: 0 };
   onJudge: (e: JudgeEvent) => void = () => {};
   /** 連打・風船を叩いたとき */
   onRoll: (s: NoteState) => void = () => {};
@@ -80,7 +102,7 @@ export class Game {
     while (this.cursor < this.hitIdx.length) {
       const s = this.states[this.hitIdx[this.cursor]];
       if (s.done) { this.cursor++; continue; }
-      if (now - s.note.time > WINDOW.bad + EPS) {
+      if (now - s.note.time > WINDOW.bad + MISS_GRACE) {
         s.missed = true;
         this.apply(s, 'bad', now - s.note.time);
         this.cursor++;
@@ -97,14 +119,25 @@ export class Game {
   private bigWait: { kind: HitKind; at: number } | null = null;
 
   /** 叩いたときに呼ぶ */
-  hit(kind: HitKind, now: number) {
+  hit(kind: HitKind, now: number): HitResult {
+    this.taps.total++;
+    const r = this.hitInner(kind, now);
+    this.taps[r.type === 'judged' ? 'judged' : r.type]++;
+    if (r.type === 'none') {
+      if (r.wrongColor) this.taps.wrongColor++;
+      if (r.nearest !== null) this.outside.push(r.nearest);
+    }
+    return r;
+  }
+
+  private hitInner(kind: HitKind, now: number): HitResult {
     // 1) 大音符の両手打ち: 大音符を叩いてから 50ms 以内の同じ色の 2 打目は、次のノーツの判定に使わない
     //    （使うと次のノーツが「早い不可」になる。TNDE の BigNotesWaitTime=50ms と同じ考え方）
     const bw = this.bigWait;
     if (bw && kind === bw.kind && now >= bw.at - EPS && now - bw.at <= BIG_WAIT + EPS) {
       this.bigWait = null;
       this.stats.score += 500;
-      return;
+      return { type: 'big' };
     }
 
     // 2) 連打・風船の最中なら、そちらに入れる（次のノーツを早く叩いたことにしない）
@@ -114,7 +147,7 @@ export class Game {
       if (now < n.time) break; // states は時刻順
       if (now > (n.endTime ?? n.time)) continue;
       if (n.type === 'balloon') {
-        if (kind !== 'don') return; // 風船はドンだけ。カッは何も起きない
+        if (kind !== 'don') return { type: 'roll' }; // 風船はドンだけ。カッは何も起きない
         ls.count++;
         this.stats.score += 300;
         if (ls.count >= (n.hits ?? 5)) {
@@ -127,7 +160,7 @@ export class Game {
         this.stats.score += n.type === 'bigRoll' ? 200 : 100;
       }
       this.onRoll(ls);
-      return;
+      return { type: 'roll' };
     }
 
     // 3) 判定幅の中で、叩いた色と同じ色のノーツのうち、叩いた時刻にいちばん近いものを判定する
@@ -147,7 +180,21 @@ export class Game {
         bestAd = ad;
       }
     }
-    if (!best) return; // 判定幅の中に同じ色のノーツがない: 音が鳴るだけ
+    if (!best) {
+      // 判定幅の中に同じ色のノーツがない: 音が鳴るだけ。原因を調べられるように近くのノーツを記録する
+      let nearest: number | null = null;
+      let wrongColor = false;
+      for (let i = this.cursor; i < this.hitIdx.length; i++) {
+        const st = this.states[this.hitIdx[i]];
+        const d = now - st.note.time;
+        if (d < -NEAR_RANGE) break;
+        if (st.done) continue;
+        const sameColor = (kind === 'don') === isDon(st.note.type);
+        if (!sameColor && Math.abs(d) <= WINDOW.bad) wrongColor = true;
+        if (sameColor && Math.abs(d) <= NEAR_RANGE && (nearest === null || Math.abs(d) < Math.abs(nearest))) nearest = d;
+      }
+      return { type: 'none', nearest, wrongColor };
+    }
 
     const delta = now - best.note.time;
     // 境界ちょうど（例: 25ms）が浮動小数点の誤差で外れないよう、わずかに余裕を持たせる
@@ -157,6 +204,7 @@ export class Game {
     this.apply(best, judge, delta);
     const big = best.note.type === 'bigDon' || best.note.type === 'bigKa';
     this.bigWait = big && judge !== 'bad' ? { kind, at: now } : null;
+    return { type: 'judged', judge, delta };
   }
 
   private apply(s: NoteState, judge: Judge, delta: number) {
