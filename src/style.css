@@ -48,10 +48,9 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 
 /* ---------- エディタ本体 ---------- */
 #app {
-  position: fixed;
+  position: absolute;
   inset: 0;
   display: flex;
-  height: 100dvh;
   padding: var(--safe-t) var(--safe-r) 0 var(--safe-l);
 }
 .stage {
@@ -256,7 +255,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* ---------- テストプレイ ---------- */
-.play { position: fixed; inset: 0; z-index: 20; background: #000; }
+.play { position: absolute; inset: 0; z-index: 20; background: #000; }
 .play canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 .play .exit {
   position: absolute;
@@ -304,27 +303,26 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weig
 }
 
 /* ---------- 横画面固定 ---------- */
-/* #root が画面全体。縦向きのときは時計回りに 90° 回して横画面として表示する */
+/* #root が画面全体。大きさは JS（src/orient.ts の fitRoot）で実際の画面サイズを --vw / --vh に入れて決める。
+   縦向きのときは時計回りに 90° 回して横画面として表示する */
 #root {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100vw;
-  height: 100vh;
-  height: 100dvh;
+  width: var(--vw, 100vw);
+  height: var(--vh, 100vh);
   overflow: hidden;
+  /* transform があると、中の position: fixed の要素は #root を基準にする */
+  transform: translateZ(0);
 }
-/* 中の position: fixed の要素は #root を基準にする（transform があると基準が #root になる） */
-#root { transform: translateZ(0); }
 #app { height: 100%; }
 
 @media (orientation: portrait) {
   #root {
-    width: 100vh;
-    width: 100dvh;
-    height: 100vw;
+    width: var(--vh, 100vh);
+    height: var(--vw, 100vw);
     transform-origin: top left;
-    transform: translateX(100vw) rotate(90deg);
+    transform: translateX(var(--vw, 100vw)) rotate(90deg);
   }
   /* 回転中はノッチ等の余白の向きが変わるので、左右の余白を上下の値から取る */
   #app { padding: var(--safe-r) var(--safe-b) 0 var(--safe-t); }

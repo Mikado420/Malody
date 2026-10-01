@@ -22,3 +22,25 @@ export function localPoint(e: { clientX: number; clientY: number }, el: Element)
   }
   return { x: e.clientX - r.left, y: e.clientY - r.top };
 }
+
+/**
+ * #root の大きさを実際の画面サイズ（innerWidth / innerHeight）に合わせる。
+ * CSS の 100vh / 100dvh は端末やブラウザによって実際の表示領域とずれることがあるため。
+ */
+export function fitRoot() {
+  const apply = () => {
+    const st = document.documentElement.style;
+    st.setProperty('--vw', `${window.innerWidth}px`);
+    st.setProperty('--vh', `${window.innerHeight}px`);
+  };
+  apply();
+  const later = () => {
+    apply();
+    // アドレスバーの出入りや回転のアニメーション後にもう一度
+    setTimeout(apply, 350);
+  };
+  window.addEventListener('resize', later);
+  window.addEventListener('orientationchange', later);
+  window.visualViewport?.addEventListener('resize', later);
+  portrait.addEventListener('change', later);
+}

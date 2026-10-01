@@ -64,6 +64,12 @@ const fmtTime = (t: number) => {
 interface Box { x: number; y: number; r: number }
 type Lay = EditorView['L'];
 
+// プレイ画面の基準（src/render/renderer.ts と同じ値）
+const PLAY_H = 1125;
+const PLAY_LANE_H = 210;
+const PLAY_NOTE_R = 47;
+const PLAY_BEAT_PX = 1470 / 4;
+
 export class EditorView {
   private readonly ctx: CanvasRenderingContext2D;
   w = 0;
@@ -115,20 +121,23 @@ export class EditorView {
 
   // ---------- レイアウト ----------
 
-  /** 画面いっぱいに使うレイアウト（上から 情報行・波形・レーン・イベント行） */
+  /**
+   * レイアウト（上から 情報行・波形・レーン・イベント行）。
+   * レーンの高さ・ノーツの大きさはプレイ画面（2000×1125 基準のレーン 210px・ノーツ半径 47px）と同じ比率。
+   */
   get L() {
     const colW = 56;
     const infoH = 22;
     const evH = 28;
-    const avail = Math.max(120, this.h - infoH - evH - 4);
-    const waveH = Math.round(avail * 0.36);
-    const laneH = avail - waveH;
-    const top = 0;
+    const laneH = Math.round(Math.max(56, (this.h * PLAY_LANE_H) / PLAY_H));
+    const r = Math.max(12, (this.h * PLAY_NOTE_R) / PLAY_H);
+    const waveH = Math.round(Math.max(40, Math.min(this.h * 0.32, this.h - infoH - evH - laneH - 24)));
+    const total = infoH + waveH + 4 + laneH + evH;
+    const top = Math.max(0, Math.round((this.h - total) / 2));
     const waveY = top + infoH;
     const laneY = waveY + waveH + 4;
     const evY = laneY + laneH;
     const playX = colW + Math.min(110, (this.w - colW) * 0.14);
-    const r = Math.min(laneH * 0.23, 46);
     const hexR = Math.min(24, Math.max(16, this.h * 0.055));
     return {
       colW, laneH, waveH, top, waveY, laneY, evY, evH, playX,
@@ -136,8 +145,13 @@ export class EditorView {
       r,
       zoomOut: { x: colW / 2, y: waveY + hexR + 4, r: hexR } as Box,
       zoomIn: { x: colW / 2, y: waveY + hexR * 3 + 12, r: hexR } as Box,
-      play: { x: colW / 2, y: laneY + laneH / 2, r: hexR + 3 } as Box,
+      play: { x: colW / 2, y: laneY + laneH / 2, r: Math.min(hexR + 3, laneH / 2 + 4) } as Box,
     };
+  }
+
+  /** プレイ画面（ハイスピード 1.0）と同じ見た目の拡大率（1拍あたりの px） */
+  get playZoom() {
+    return (this.h * PLAY_BEAT_PX) / PLAY_H;
   }
 
   xOf(tick: number) {

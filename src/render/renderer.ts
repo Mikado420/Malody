@@ -1,5 +1,6 @@
 import type { Course, Note } from '../chart/types';
 import { CLEAR_LINE, type Game, type HitKind, type Judge, type JudgeEvent, type NoteState } from '../engine/game';
+import { FACE_RATIO } from '../input';
 import { BIG_SCALE, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
 
 /**
@@ -82,7 +83,7 @@ export class Renderer {
     this.ctx = canvas.getContext('2d')!;
     this.makePatterns();
     this.resize();
-    window.addEventListener('resize', () => this.resize());
+    new ResizeObserver(() => this.resize()).observe(canvas);
   }
 
   // ---------- レイアウト ----------
@@ -101,13 +102,9 @@ export class Renderer {
     const s = this.s;
     this.vis = { x0: 0, y0: 0, x1: REF_W, y1: REF_H };
 
-    // 画面下の太鼓（タッチ用）
-    const top = TEXT_BOTTOM + 14;
-    const bottom = this.vis.y1 - 70;
-    const areaH = Math.max(80, bottom - top);
-    const vw = this.vis.x1 - this.vis.x0;
-    const r = Math.min(areaH * 0.46, vw * 0.2);
-    this.pad = { x: (this.vis.x0 + this.vis.x1) / 2, y: top + areaH / 2, r };
+    // 画面下の太鼓（タッチ用）: 下半分いっぱいの大きな太鼓。下側は画面外にはみ出す
+    const r = 400;
+    this.pad = { x: REF_W / 2, y: TEXT_BOTTOM + 14 + r, r };
 
     this.layout = {
       w, h,
@@ -768,28 +765,30 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** 画面下の太鼓（タッチ用） */
+  /** 画面下の太鼓（タッチ用）。後ろの背景が見えるように半透明 */
   private drawPad(wall: number) {
     const ctx = this.ctx;
     const { x, y, r } = this.pad;
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath();
-    ctx.ellipse(x, y + r * 0.12, r * 1.02, r, 0, 0, Math.PI * 2);
-    ctx.fill();
+    const face = r * FACE_RATIO;
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    // 縁（カッ）
     ctx.beginPath();
     ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#7b2a17';
+    ctx.fillStyle = '#8a2f1a';
     ctx.fill();
-    ctx.lineWidth = r * 0.03;
+    ctx.lineWidth = 6;
     ctx.strokeStyle = '#1f0c06';
     ctx.stroke();
+    // 面（ドン）
     ctx.beginPath();
-    ctx.arc(x, y, r * 0.72, 0, Math.PI * 2);
-    ctx.fillStyle = '#f1e2c4';
+    ctx.arc(x, y, face, 0, Math.PI * 2);
+    ctx.fillStyle = '#f4e6c8';
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = 'rgba(0,0,0,0.12)';
-    ctx.fillRect(x - 1.5, y - r * 0.72, 3, r * 1.44);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(x - 2, y - face, 4, face * 2);
+    ctx.restore();
 
     for (const f of this.flashes) {
       const a = 1 - (wall - f.t) / 150;
@@ -798,21 +797,21 @@ export class Renderer {
       ctx.beginPath();
       if (f.kind === 'don') {
         ctx.moveTo(x, y);
-        ctx.arc(x, y, r * 0.72, start, start + Math.PI);
-        ctx.fillStyle = `rgba(255,80,40,${0.6 * a})`;
+        ctx.arc(x, y, face, start, start + Math.PI);
+        ctx.fillStyle = `rgba(255,80,40,${0.55 * a})`;
         ctx.fill();
       } else {
-        ctx.arc(x, y, r * 0.86, start, start + Math.PI);
-        ctx.lineWidth = r * 0.26;
-        ctx.strokeStyle = `rgba(70,200,240,${0.75 * a})`;
+        ctx.arc(x, y, (r + face) / 2, start, start + Math.PI);
+        ctx.lineWidth = r - face;
+        ctx.strokeStyle = `rgba(70,200,240,${0.7 * a})`;
         ctx.stroke();
       }
     }
-    ctx.font = `700 ${Math.round(r * 0.11)}px ${FONT}`;
+    ctx.font = `700 26px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    ctx.fillText('内側＝ドン　外側＝カッ', x, y + r + r * 0.12);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fillText('面＝ドン　縁・外側＝カッ', x, y - face + 40);
   }
 }
 

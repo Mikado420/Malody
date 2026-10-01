@@ -11,6 +11,9 @@ import { loadFiles, type AudioFile } from './io/load';
 import { loadAudio, loadChart, saveAudio, saveChart } from './io/storage';
 import { writeZip } from './io/zip';
 import { PlayMode } from './play/playmode';
+import { fitRoot } from './orient';
+
+fitRoot();
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const esc = (s: string) =>
@@ -21,6 +24,8 @@ const esc = (s: string) =>
 const settings = {
   divisor: 4,
   zoom: 220,
+  /** 拡大率を自分で変えたか（変えるまではプレイ画面と同じ間隔） */
+  zoomSet: false,
   rate: 1,
   speed: 1,
   offset: 0,
@@ -42,7 +47,11 @@ const audio = new AudioEngine();
 const ed = new Editor();
 ed.divisor = DIVISORS.includes(settings.divisor) ? settings.divisor : 4;
 const view = new EditorView($<HTMLCanvasElement>('editor'), ed);
-view.zoom = Math.min(1600, Math.max(20, settings.zoom || 220));
+// 拡大率: 自分で変えるまではプレイ画面と同じ間隔（画面の高さに比例）
+const autoZoom = () => { if (!settings.zoomSet) view.setZoom(view.playZoom); };
+autoZoom();
+if (settings.zoomSet) view.zoom = Math.min(1600, Math.max(20, settings.zoom));
+new ResizeObserver(autoZoom).observe($('editor'));
 const play = new PlayMode($('play'), $<HTMLCanvasElement>('game'), $('result'), audio, settings);
 
 let playable: Note[] = [];
@@ -200,7 +209,12 @@ divSel.addEventListener('change', () => {
   view.invalidate();
 });
 
-view.onZoomChange = (z) => { settings.zoom = z; saveSettings(); };
+view.onZoomChange = (z) => {
+  if (Math.abs(z - view.playZoom) < 0.5 && !settings.zoomSet) return; // 自動調整のとき
+  settings.zoom = z;
+  settings.zoomSet = true;
+  saveSettings();
+};
 $('btnMetro').addEventListener('click', () => {
   settings.metronome = !settings.metronome;
   saveSettings();
@@ -362,6 +376,7 @@ function renderSheet() {
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
       <label class="field"><span>判定調整 ms</span><input type="range" min="-200" max="200" step="5" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
+      <button data-act="resetZoom">エディタの拡大率をプレイ画面と同じ間隔に戻す</button>
       <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
   } else if (sheet === 'events') {
@@ -572,6 +587,11 @@ async function fileAction(act: string) {
     const name = COURSE_NAMES.find((n) => !used.has(n)) ?? 'Edit';
     ed.addCourse(name, act === 'dupCourse' ? ed.course.level : 1, act === 'dupCourse' ? ed.course : undefined);
     toast(`${name} を${act === 'dupCourse' ? '複製して' : ''}追加しました`);
+  } else if (act === 'resetZoom') {
+    settings.zoomSet = false;
+    saveSettings();
+    view.setZoom(view.playZoom);
+    toast('拡大率をプレイ画面と同じ間隔にしました');
   } else if (act === 'delCourse') {
     if (confirm(`${ed.course.name} を削除しますか？`)) ed.removeCourse(ed.courseIndex);
   }

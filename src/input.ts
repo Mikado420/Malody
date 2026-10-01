@@ -1,6 +1,9 @@
 import type { HitKind } from './engine/game';
 import { localPoint } from './orient';
 
+/** タッチ用の太鼓で、面（ドン）の半径が太鼓全体の何割か */
+export const FACE_RATIO = 0.8;
+
 export type HitHandler = (kind: HitKind, side: 'L' | 'R') => void;
 
 /** キー割り当て（KeyboardEvent.code） */
@@ -37,7 +40,7 @@ export function bindInput(
     if (py < d.top) return; // レーンより上は無視
     const dist = Math.hypot(px - d.x, py - d.y);
     const side = px < d.x ? 'L' : 'R';
-    onHit(dist <= d.r * 0.72 ? 'don' : 'ka', side);
+    onHit(dist <= d.r * FACE_RATIO ? 'don' : 'ka', side);
   };
 
   window.addEventListener('keydown', onKey);
