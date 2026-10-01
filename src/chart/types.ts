@@ -36,6 +36,8 @@ export interface Course {
   level: number;
   notes: Note[];
   bars: BarLine[];
+  /** ゴーゴータイムの区間 [開始, 終了]（秒）。終了がない場合は Infinity */
+  gogo: [number, number][];
 }
 
 export const isHitNote = (t: NoteType) =>

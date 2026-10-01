@@ -171,7 +171,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 }
 .sheet-panel {
   width: min(560px, 100%);
-  max-height: 88dvh;
+  max-height: 88%;
   background: var(--panel);
   border-radius: 16px 16px 0 0;
   display: flex;
@@ -301,4 +301,32 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weig
   .side > button, .side > .divbtn { min-height: 36px; padding: 2px 0; }
   .side svg { width: 22px; height: 22px; }
   .side small { font-size: 9px; }
+}
+
+/* ---------- 横画面固定 ---------- */
+/* #root が画面全体。縦向きのときは時計回りに 90° 回して横画面として表示する */
+#root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+/* 中の position: fixed の要素は #root を基準にする（transform があると基準が #root になる） */
+#root { transform: translateZ(0); }
+#app { height: 100%; }
+
+@media (orientation: portrait) {
+  #root {
+    width: 100vh;
+    width: 100dvh;
+    height: 100vw;
+    transform-origin: top left;
+    transform: translateX(100vw) rotate(90deg);
+  }
+  /* 回転中はノッチ等の余白の向きが変わるので、左右の余白を上下の値から取る */
+  #app { padding: var(--safe-r) var(--safe-b) 0 var(--safe-t); }
+  .tools { padding-bottom: calc(5px + var(--safe-l)); }
 }

@@ -84,7 +84,7 @@ export class PlayMode {
       const now = this.time();
       if (this.settings.auto) this.autoPlay(game, now);
       game.update(now);
-      this.renderer.draw(game, course.bars, now, info);
+      this.renderer.draw(game, course, now, info);
       if (now > endAt || (game.finished && now > lastTime + 1.5)) {
         this.finish();
         return;

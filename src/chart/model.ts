@@ -224,5 +224,19 @@ export function toPlayable(chart: EChart, course: ECourse): Course {
     if (!t.barlineAt(m.start)) continue;
     bars.push({ time: t.tickToTime(m.start), bpm: t.bpmAt(m.start), scroll: t.scrollAt(m.start) });
   }
-  return { name: course.name, level: course.level, notes, bars };
+  // ゴーゴー区間は「直前に通過したノーツ」ではなくイベントの時刻で決める
+  // （#GOGOEND の後しばらくノーツがなくても、その時刻で解除されるように）
+  const gogo: [number, number][] = [];
+  let from: number | null = null;
+  for (const e of course.events) {
+    if (e.kind !== 'gogo') continue;
+    const time = t.tickToTime(e.tick);
+    if (e.on && from === null) from = time;
+    else if (!e.on && from !== null) {
+      gogo.push([from, time]);
+      from = null;
+    }
+  }
+  if (from !== null) gogo.push([from, Infinity]);
+  return { name: course.name, level: course.level, notes, bars, gogo };
 }

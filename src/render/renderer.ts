@@ -1,4 +1,4 @@
-import type { BarLine, Note } from '../chart/types';
+import type { Course, Note } from '../chart/types';
 import { CLEAR_LINE, type Game, type HitKind, type Judge, type JudgeEvent, type NoteState } from '../engine/game';
 import { BIG_SCALE, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
 
@@ -62,7 +62,6 @@ export class Renderer {
   private s = 1;
   private ox = 0;
   private oy = 0;
-  private portrait = false;
   private vis = { x0: 0, y0: 0, x1: REF_W, y1: REF_H };
   private pad = { x: 0, y: 0, r: 0 }; // 画面下の太鼓（基準座標）
 
@@ -95,27 +94,19 @@ export class Renderer {
     this.canvas.width = Math.round(w * this.dpr);
     this.canvas.height = Math.round(h * this.dpr);
 
-    this.portrait = h > w;
-    if (this.portrait) {
-      // 縦画面: 左パネルを外してレーンを横幅いっぱいに
-      this.s = w / (REF_W - LANE_X);
-      this.ox = -LANE_X * this.s;
-      this.oy = h * 0.2 - LANE_TOP * this.s;
-    } else {
-      this.s = w / REF_W;
-      this.ox = 0;
-      const full = REF_H * this.s;
-      this.oy = h >= full ? 0 : Math.max(h - full, -228 * this.s);
-    }
+    // 太鼓の達人の画面（16:9）の比率を固定して中央に置き、余った部分は黒帯
+    this.s = Math.min(w / REF_W, h / REF_H);
+    this.ox = (w - REF_W * this.s) / 2;
+    this.oy = (h - REF_H * this.s) / 2;
     const s = this.s;
-    this.vis = { x0: -this.ox / s, y0: -this.oy / s, x1: (w - this.ox) / s, y1: (h - this.oy) / s };
+    this.vis = { x0: 0, y0: 0, x1: REF_W, y1: REF_H };
 
     // 画面下の太鼓（タッチ用）
     const top = TEXT_BOTTOM + 14;
     const bottom = this.vis.y1 - 70;
     const areaH = Math.max(80, bottom - top);
     const vw = this.vis.x1 - this.vis.x0;
-    const r = Math.min(areaH * 0.46, vw * (this.portrait ? 0.42 : 0.2));
+    const r = Math.min(areaH * 0.46, vw * 0.2);
     this.pad = { x: (this.vis.x0 + this.vis.x1) / 2, y: top + areaH / 2, r };
 
     this.layout = {
@@ -210,7 +201,8 @@ export class Renderer {
     return (MEASURE_PX * n.bpm * n.scroll * this.speed) / 240;
   }
 
-  draw(game: Game, bars: BarLine[], now: number, info: { title: string; course: string; level: number }) {
+  draw(game: Game, course: Course, now: number, info: { title: string; course: string; level: number }) {
+    const bars = course.bars;
     const ctx = this.ctx;
     const wall = performance.now();
     const st = game.stats;
@@ -221,33 +213,34 @@ export class Renderer {
     }
     this.lastCombo = st.combo;
 
-    let gogo = false;
-    for (const s of game.states) {
-      if (s.note.time > now) break;
-      gogo = s.note.gogo;
-    }
+    const gogo = course.gogo.some(([a, b]) => now >= a && now < b);
 
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(this.dpr * this.s, 0, 0, this.dpr * this.s, this.dpr * this.ox, this.dpr * this.oy);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, REF_W, REF_H);
+    ctx.clip();
     const V = this.vis;
 
     this.drawTop(V, gogo, wall);
-    if (!this.portrait) {
-      ctx.font = `900 58px ${FONT}`;
-      ctx.textAlign = 'right';
-      ctx.textBaseline = 'middle';
-      outlinedText(ctx, info.title, V.x1 - 46, 78, '#fff', '#111', 11);
-    }
+    ctx.font = `900 58px ${FONT}`;
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    outlinedText(ctx, info.title, V.x1 - 46, 78, '#fff', '#111', 11);
     this.drawBottom(V, wall);
     this.drawLane(V, game, bars, now, gogo, wall);
     this.drawBursts(wall);
-    if (!this.portrait) this.drawPanel(st.score, st.combo, info, wall);
-    else this.drawPortraitHud(st.score, st.combo, info, wall);
+    this.drawPanel(st.score, st.combo, info, wall);
     this.drawGauge(st.gauge, wall);
     this.drawRollBubble(wall);
     this.drawJudgeText(wall);
     this.drawFlyers(wall);
     this.drawBanner(wall);
     if (this.touch) this.drawPad(wall);
+    ctx.restore();
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
@@ -316,7 +309,7 @@ export class Renderer {
     ctx.fillRect(V.x0, V.y1 - 70, V.x1 - V.x0, 4);
   }
 
-  private drawLane(V: Rect, game: Game, bars: BarLine[], now: number, gogo: boolean, wall: number) {
+  private drawLane(V: Rect, game: Game, bars: Course['bars'], now: number, gogo: boolean, wall: number) {
     const ctx = this.ctx;
     const right = V.x1;
 
@@ -604,38 +597,6 @@ export class Renderer {
     ctx.font = `900 26px ${FONT}`;
     ctx.textAlign = 'center';
     outlinedText(ctx, 'コンボ', x, y + 46, '#fff', '#2a1208', 6);
-  }
-
-  /** 縦画面: 左パネルの代わりに上の空きに タイトル・スコア・コンボ を並べる */
-  private drawPortraitHud(score: number, combo: number, info: { title: string; course: string; level: number }, wall: number) {
-    const ctx = this.ctx;
-    const top = this.vis.y0;
-    const space = GAUGE.y1 - 50 - top;
-    const x = this.vis.x0 + 28;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.font = `900 54px ${FONT}`;
-    outlinedText(ctx, info.title, x, top + space * 0.2, '#fff', '#111', 11);
-    const [label] = COURSE_LABEL[info.course] ?? [info.course];
-    ctx.font = `800 34px ${FONT}`;
-    outlinedText(ctx, `${label} ★${info.level}`, x, top + space * 0.42, '#ffe25a', '#000', 7);
-    ctx.font = `800 60px ${FONT}`;
-    outlinedText(ctx, String(score), x, top + space * 0.68, '#fff', '#000', 9);
-    if (combo >= 10) {
-      const p = Math.min(1, (wall - this.comboPop) / 90);
-      const cx = this.vis.x1 - 260;
-      const cy = top + space * 0.62;
-      ctx.save();
-      ctx.translate(cx, cy);
-      ctx.scale(1, 1 + 0.22 * (1 - p));
-      ctx.font = `900 96px ${FONT}`;
-      ctx.textAlign = 'center';
-      outlinedText(ctx, `${combo}`, 0, 0, combo >= 100 ? '#ffd23a' : '#fff', '#2a1208', 12);
-      ctx.restore();
-      ctx.font = `900 34px ${FONT}`;
-      ctx.textAlign = 'center';
-      outlinedText(ctx, 'コンボ', cx, cy + 66, '#fff', '#2a1208', 7);
-    }
   }
 
   private drawGauge(gauge: number, wall: number) {

@@ -1,4 +1,5 @@
 import type { HitKind } from './engine/game';
+import { localPoint } from './orient';
 
 export type HitHandler = (kind: HitKind, side: 'L' | 'R') => void;
 
@@ -31,9 +32,7 @@ export function bindInput(
 
   const onPointer = (e: PointerEvent) => {
     e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const px = e.clientX - rect.left;
-    const py = e.clientY - rect.top;
+    const { x: px, y: py } = localPoint(e, canvas);
     const d = getDrum();
     if (py < d.top) return; // レーンより上は無視
     const dist = Math.hypot(px - d.x, py - d.y);

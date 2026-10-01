@@ -1,6 +1,7 @@
 import { TPB, type EEvent } from '../chart/model';
 import { BIG_SCALE, drawAny, hexPath, isBig } from '../render/notes';
 import type { Editor } from './editor';
+import { localPoint } from '../orient';
 
 /**
  * Malody 風の横スクロール作譜画面。
@@ -114,25 +115,28 @@ export class EditorView {
 
   // ---------- レイアウト ----------
 
+  /** 画面いっぱいに使うレイアウト（上から 情報行・波形・レーン・イベント行） */
   get L() {
     const colW = 56;
-    const laneH = Math.round(Math.min(170, Math.max(70, this.h * 0.32)));
-    const waveH = Math.round(Math.min(150, Math.max(36, this.h * 0.24)));
-    const infoH = 20;
-    const evH = 26;
-    const total = infoH + waveH + 4 + laneH + evH;
-    const top = Math.max(4, Math.floor((this.h - total) / 2));
+    const infoH = 22;
+    const evH = 28;
+    const avail = Math.max(120, this.h - infoH - evH - 4);
+    const waveH = Math.round(avail * 0.36);
+    const laneH = avail - waveH;
+    const top = 0;
     const waveY = top + infoH;
     const laneY = waveY + waveH + 4;
     const evY = laneY + laneH;
     const playX = colW + Math.min(110, (this.w - colW) * 0.14);
+    const r = Math.min(laneH * 0.23, 46);
+    const hexR = Math.min(24, Math.max(16, this.h * 0.055));
     return {
       colW, laneH, waveH, top, waveY, laneY, evY, evH, playX,
       cy: laneY + laneH / 2,
-      r: laneH * 0.21,
-      zoomOut: { x: colW / 2, y: top + 26, r: 22 } as Box,
-      zoomIn: { x: colW / 2, y: top + 76, r: 22 } as Box,
-      play: { x: colW / 2, y: laneY + laneH / 2, r: 25 } as Box,
+      r,
+      zoomOut: { x: colW / 2, y: waveY + hexR + 4, r: hexR } as Box,
+      zoomIn: { x: colW / 2, y: waveY + hexR * 3 + 12, r: hexR } as Box,
+      play: { x: colW / 2, y: laneY + laneH / 2, r: hexR + 3 } as Box,
     };
   }
 
@@ -165,23 +169,25 @@ export class EditorView {
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
       c.setPointerCapture(e.pointerId);
-      this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+      const pt = localPoint(e, c);
+      this.pointers.set(e.pointerId, pt);
       if (this.pointers.size === 2) {
         const [a, b] = [...this.pointers.values()];
         this.pinch = { d0: Math.abs(a.x - b.x) || 1, z0: this.zoom };
         this.drag = null;
       } else if (this.pointers.size === 1) {
-        this.drag = { startX: e.offsetX, startY: e.offsetY, lastX: e.offsetX, moved: false };
+        this.drag = { startX: pt.x, startY: pt.y, lastX: pt.x, moved: false };
       }
     });
 
     c.addEventListener('pointermove', (e) => {
+      const pt = localPoint(e, c);
       if (e.pointerType === 'mouse') {
-        this.hoverX = e.offsetY >= this.L.laneY - 10 && e.offsetY <= this.L.evY + 10 && e.offsetX > this.L.colW ? e.offsetX : null;
+        this.hoverX = pt.y >= this.L.laneY - 10 && pt.y <= this.L.evY + 10 && pt.x > this.L.colW ? pt.x : null;
         this.invalidate();
       }
       if (!this.pointers.has(e.pointerId)) return;
-      this.pointers.set(e.pointerId, { x: e.offsetX, y: e.offsetY });
+      this.pointers.set(e.pointerId, pt);
       if (this.pinch && this.pointers.size >= 2) {
         const [a, b] = [...this.pointers.values()];
         const d = Math.abs(a.x - b.x);
@@ -189,15 +195,15 @@ export class EditorView {
         return;
       }
       if (!this.drag) return;
-      const dx = e.offsetX - this.drag.lastX;
-      if (!this.drag.moved && Math.abs(e.offsetX - this.drag.startX) > 8) {
+      const dx = pt.x - this.drag.lastX;
+      if (!this.drag.moved && Math.abs(pt.x - this.drag.startX) > 8) {
         if (this.drag.startX > this.L.colW) {
           this.drag.moved = true;
           this.onUserScroll();
         }
       }
       if (this.drag.moved) this.scrollBy((-dx / this.zoom) * TPB);
-      this.drag.lastX = e.offsetX;
+      this.drag.lastX = pt.x;
     });
 
     const end = (e: PointerEvent) => {
@@ -207,7 +213,10 @@ export class EditorView {
         if (this.pointers.size === 0) this.pinch = null;
         return;
       }
-      if (e.type === 'pointerup' && this.drag && !this.drag.moved) this.tap(e.offsetX, e.offsetY);
+      if (e.type === 'pointerup' && this.drag && !this.drag.moved) {
+        const pt = localPoint(e, c);
+        this.tap(pt.x, pt.y);
+      }
       this.drag = null;
     };
     c.addEventListener('pointerup', end);

@@ -81,6 +81,20 @@ describe('時間変換', () => {
   });
 });
 
+describe('ゴーゴータイム', () => {
+  it('#GOGOEND の後にノーツがなくても、その時刻で終わる', () => {
+    const c = parseTJA(`BPM:120\n#START\n#GOGOSTART\n1,\n#GOGOEND\n,\n,\n1,\n#END`);
+    const p = toPlayable(c, c.courses[0]);
+    expect(p.gogo).toEqual([[0, 2]]);
+    expect(p.notes.map((n) => n.gogo)).toEqual([true, false]);
+  });
+
+  it('#GOGOEND が無ければ最後まで', () => {
+    const c = parseTJA(`BPM:120\n#START\n1,\n#GOGOSTART\n1,\n#END`);
+    expect(toPlayable(c, c.courses[0]).gogo).toEqual([[2, Infinity]]);
+  });
+});
+
 describe('writeTJA', () => {
   it('読み込み → 書き出し → 読み込みで同じ内容になる', () => {
     const src = `TITLE:往復

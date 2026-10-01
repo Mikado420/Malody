@@ -3,14 +3,19 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-    <meta name="theme-color" content="#121019" />
+    <meta name="theme-color" content="#000000" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="manifest.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&display=swap" rel="stylesheet" />
     <title>Malody Web Editor</title>
   </head>
   <body>
+    <!-- 縦向きのときは #root ごと 90° 回転させて横画面で表示する（src/orient.ts） -->
+    <div id="root">
     <div id="app">
       <div class="stage">
         <canvas id="editor"></canvas>
@@ -68,6 +73,8 @@
           <button id="back">エディタへ戻る</button>
         </div>
       </div>
+    </div>
+
     </div>
 
     <script type="module" src="/src/main.ts"></script>
