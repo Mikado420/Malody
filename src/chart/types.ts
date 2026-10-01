@@ -1,4 +1,4 @@
-// 譜面の共通フォーマット。TJA / Malody(.mc) などはすべてこの形に変換してからゲームに渡す。
+// プレイ用（秒ベース）の譜面フォーマット。編集用モデル（model.ts）から toPlayable() で作る。
 
 export type NoteType =
   | 'don'
@@ -36,18 +36,6 @@ export interface Course {
   level: number;
   notes: Note[];
   bars: BarLine[];
-}
-
-export interface Chart {
-  title: string;
-  subtitle: string;
-  /** 音源ファイル名（WAVE:） */
-  wave: string;
-  bpm: number;
-  /** 曲データの開始位置からの譜面のずれ（秒）。TJA の OFFSET をそのまま保持 */
-  offset: number;
-  demoStart: number;
-  courses: Course[];
 }
 
 export const isHitNote = (t: NoteType) =>

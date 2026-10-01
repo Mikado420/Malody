@@ -1,207 +1,576 @@
 import './style.css';
 import { AudioEngine } from './audio/audio';
-import { decodeText } from './chart/decode';
+import { COURSE_NAMES, contentEnd, newChart, toPlayable, TPB, type EEvent } from './chart/model';
 import { parseTJA } from './chart/tja';
-import type { Chart } from './chart/types';
+import { writeTJA } from './chart/tjaWrite';
+import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
-import { Game } from './engine/game';
-import { bindInput } from './input';
-import { Renderer } from './render/renderer';
+import { DIVISORS, Editor, type Tool } from './editor/editor';
+import { EditorView, eventText } from './editor/view';
+import { loadFiles, type AudioFile } from './io/load';
+import { loadAudio, loadChart, saveAudio, saveChart } from './io/storage';
+import { writeZip } from './io/zip';
+import { PlayMode } from './play/playmode';
 
-const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
+const esc = (s: string) =>
+  s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
-const canvas = $<HTMLCanvasElement>('game');
-const menu = $('menu');
-const result = $('result');
-const filesInput = $<HTMLInputElement>('files');
-const chartInfo = $('chartInfo');
-const courseSel = $<HTMLSelectElement>('course');
-const speedInput = $<HTMLInputElement>('speed');
-const offsetInput = $<HTMLInputElement>('offset');
-const startBtn = $<HTMLButtonElement>('start');
+// ---------- 設定 ----------
+
+const settings = {
+  divisor: 4,
+  zoom: 120,
+  rate: 1,
+  speed: 1,
+  offset: 0,
+  hitSound: true,
+  metronome: false,
+};
+try {
+  Object.assign(settings, JSON.parse(localStorage.getItem('malody-web:settings') ?? '{}'));
+} catch { /* 使えない環境 */ }
+const saveSettings = () => {
+  try { localStorage.setItem('malody-web:settings', JSON.stringify(settings)); } catch { /* 無視 */ }
+};
+
+// ---------- 本体 ----------
 
 const audio = new AudioEngine();
-const renderer = new Renderer(canvas);
+const ed = new Editor();
+ed.divisor = DIVISORS.includes(settings.divisor) ? settings.divisor : 4;
+const view = new EditorView($<HTMLCanvasElement>('editor'), ed);
+view.setZoom(settings.zoom);
+const play = new PlayMode($('play'), $<HTMLCanvasElement>('game'), $('result'), audio, settings);
 
-// 設定はブラウザに保存（使えない環境では無視）
-const settings = loadSettings();
-speedInput.value = String(settings.speed);
-offsetInput.value = String(settings.offset);
-syncLabels();
+let playable: Note[] = [];
+let playing = false;
+let lastTime = 0;
 
-let chart: Chart | null = null;
-let musicBuf: ArrayBuffer | null = null;
-let game: Game | null = null;
-let raf = 0;
-let nextBar = 0;
+// ---------- トースト ----------
 
-const LEAD_IN = 2; // 開始前の待ち時間（秒）
+let toastTimer = 0;
+function toast(msg: string) {
+  const el = $('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => el.classList.remove('show'), 2600);
+}
 
-function loadSettings() {
+// ---------- 音源 ----------
+
+async function setAudio(file: AudioFile | null, save = true) {
+  ed.audio = file;
   try {
-    const s = JSON.parse(localStorage.getItem('web-taiko:settings') ?? '{}');
-    return { speed: Number(s.speed) || 1, offset: Number(s.offset) || 0 };
+    await audio.loadMusic(file ? file.data.slice(0) : null);
   } catch {
-    return { speed: 1, offset: 0 };
-  }
-}
-function saveSettings() {
-  try {
-    localStorage.setItem('web-taiko:settings', JSON.stringify(settings));
-  } catch { /* 保存できなくても続行 */ }
-}
-function syncLabels() {
-  $('speedVal').textContent = Number(speedInput.value).toFixed(1);
-  $('offsetVal').textContent = offsetInput.value;
-}
-
-speedInput.addEventListener('input', () => {
-  settings.speed = Number(speedInput.value);
-  syncLabels();
-  saveSettings();
-});
-offsetInput.addEventListener('input', () => {
-  settings.offset = Number(offsetInput.value);
-  syncLabels();
-  saveSettings();
-});
-
-function setChart(c: Chart) {
-  chart = c;
-  courseSel.innerHTML = '';
-  c.courses.forEach((co, i) => {
-    const opt = document.createElement('option');
-    opt.value = String(i);
-    opt.textContent = `${co.name} ★${co.level}（${co.notes.length}ノーツ）`;
-    courseSel.appendChild(opt);
-  });
-  courseSel.value = String(Math.max(0, c.courses.length - 1));
-  courseSel.disabled = c.courses.length === 0;
-  startBtn.disabled = c.courses.length === 0;
-  const musicNote = musicBuf ? '音源あり' : '音源なし（メトロノーム）';
-  chartInfo.textContent = `${c.title || '(無題)'} / BPM ${c.bpm} / ${musicNote}`;
-}
-
-filesInput.addEventListener('change', async () => {
-  const files = Array.from(filesInput.files ?? []);
-  const tja = files.find((f) => f.name.toLowerCase().endsWith('.tja'));
-  if (!tja) {
-    chartInfo.textContent = '.tja ファイルが含まれていません';
-    return;
-  }
-  const c = parseTJA(decodeText(await tja.arrayBuffer()));
-  // WAVE: の名前と一致する音源、なければ最初の音声ファイル
-  const audioFiles = files.filter((f) => f !== tja);
-  const music =
-    audioFiles.find((f) => f.name === c.wave) ?? audioFiles.find((f) => /\.(ogg|mp3|wav|m4a)$/i.test(f.name));
-  musicBuf = music ? await music.arrayBuffer() : null;
-  setChart(c);
-});
-
-$('demo').addEventListener('click', () => {
-  musicBuf = null;
-  setChart(parseTJA(DEMO_TJA));
-  void start();
-});
-startBtn.addEventListener('click', () => void start());
-$('retry').addEventListener('click', () => void start());
-$('back').addEventListener('click', () => {
-  result.classList.add('hidden');
-  menu.classList.remove('hidden');
-});
-
-async function start() {
-  if (!chart) return;
-  const course = chart.courses[Number(courseSel.value) || 0];
-  if (!course) return;
-
-  try {
-    // decodeAudioData は buffer を detach するのでコピーを渡す
-    await audio.loadMusic(musicBuf ? musicBuf.slice(0) : null);
-  } catch {
-    chartInfo.textContent = '音源を読み込めませんでした（曲なしで開始します）';
     await audio.loadMusic(null);
+    toast(`「${file?.name}」はこのブラウザで再生できません（mp3 / m4a なら再生できます）`);
   }
+  if (save) void saveAudio(file);
+  updateHeader();
+}
 
-  game = new Game(course.notes);
-  game.onJudge = (e) => renderer.pushJudge(e.judge);
-  renderer.speed = settings.speed;
-  nextBar = 0;
+// ---------- 再生 ----------
 
-  menu.classList.add('hidden');
-  result.classList.add('hidden');
-  await audio.start(LEAD_IN);
+function endTime() {
+  const contentT = ed.timing.tickToTime(contentEnd(ed.course)) + 2;
+  return Math.max(contentT, audio.musicDuration);
+}
 
-  cancelAnimationFrame(raf);
-  const info = { title: chart.title, course: `${course.name} ★${course.level}` };
-  const lastTime = Math.max(
-    0,
-    ...course.notes.map((n) => n.endTime ?? n.time),
-  );
-  const endAt = Math.max(lastTime + 2, audio.hasMusic ? audio.musicDuration : 0);
+async function startPlayback() {
+  if (playing) return;
+  const from = ed.timing.tickToTime(Math.max(0, view.pos));
+  playable = toPlayable(ed.chart, ed.course).notes;
+  await audio.startAt(from, settings.rate);
+  lastTime = from;
+  playing = true;
+  $('btnPlay').textContent = '❚❚';
+}
 
-  const loop = () => {
-    const now = gameTime();
-    game!.update(now);
+function stopPlayback() {
+  if (!playing) return;
+  playing = false;
+  audio.stop();
+  $('btnPlay').textContent = '▶';
+  view.invalidate();
+}
 
-    // 曲が無いときは小節線でメトロノームを鳴らす
-    if (!audio.hasMusic) {
-      while (nextBar < course.bars.length && course.bars[nextBar].time <= now) {
-        if (now - course.bars[nextBar].time < 0.05) audio.playTick(true);
-        nextBar++;
+function tickPlayback() {
+  const t = audio.now();
+  if (t < lastTime) return; // 再生開始直後
+  view.pos = ed.timing.timeToTick(t);
+
+  if (settings.hitSound) {
+    for (const n of playable) {
+      if (n.time > lastTime && n.time <= t) {
+        audio.playHit(n.type === 'ka' || n.type === 'bigKa' ? 'ka' : 'don');
       }
     }
-
-    renderer.draw(game!, course.bars, now, info);
-    if (now > endAt || (game!.finished && now > lastTime + 1.5)) {
-      finish();
-      return;
+  }
+  if (settings.metronome) {
+    const a = ed.timing.timeToTick(lastTime);
+    const b = view.pos;
+    for (const m of ed.measuresUntil(b)) {
+      if (m.start + m.length <= a) continue;
+      if (m.start > b) break;
+      for (let k = m.start; k < m.start + m.length; k += TPB) {
+        if (k > a && k <= b) audio.playTick(k === m.start);
+      }
     }
-    raf = requestAnimationFrame(loop);
-  };
-  raf = requestAnimationFrame(loop);
+  }
+  lastTime = t;
+  if (t > endTime()) stopPlayback();
+  view.invalidate();
 }
 
-function gameTime() {
-  return audio.now() - settings.offset / 1000;
+function loop() {
+  if (playing && !play.isActive) tickPlayback();
+  view.frame();
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+// ---------- ヘッダ・ツールバー ----------
+
+function updateHeader() {
+  const c = ed.course;
+  $('songTitle').textContent = ed.chart.title || '(無題)';
+  const audioLabel = ed.audio ? '' : ' · 音源なし';
+  $('songSub').textContent = `${c.name} ★${c.level} · ${c.notes.length}ノーツ${audioLabel}`;
+  $<HTMLButtonElement>('btnUndo').disabled = !ed.canUndo;
+  $<HTMLButtonElement>('btnRedo').disabled = !ed.canRedo;
+  $('btnRate').textContent = `${settings.rate.toFixed(settings.rate === 1 ? 1 : 2)}x`;
 }
 
-function finish() {
-  cancelAnimationFrame(raf);
-  audio.stop();
-  if (!game) return;
-  const s = game.stats;
-  const total = game.totalHitNotes || 1;
-  const acc = ((s.good + s.ok * 0.5) / total) * 100;
-  const rows: [string, string][] = [
-    ['スコア', String(s.score)],
-    ['良', String(s.good)],
-    ['可', String(s.ok)],
-    ['不可', String(s.bad)],
-    ['最大コンボ', String(s.maxCombo)],
-    ['連打', String(s.rolls)],
-    ['精度', `${acc.toFixed(2)}%`],
-  ];
-  $('resultList').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
-  result.classList.remove('hidden');
+function setTool(t: Tool) {
+  ed.tool = t;
+  if (ed.pendingLong !== null && t !== 'roll' && t !== 'bigRoll' && t !== 'balloon') ed.pendingLong = null;
+  document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
+    b.classList.toggle('active', b.dataset.tool === t);
+  });
+  view.invalidate();
 }
 
-bindInput(
-  canvas,
-  () => {
-    const L = renderer.layout;
-    return { x: L.drumX, y: L.drumY, r: L.drumR, top: L.laneY + L.laneH };
-  },
-  (kind, side) => {
-    if (!game || !menu.classList.contains('hidden') || !result.classList.contains('hidden')) return;
-    audio.playHit(kind);
-    renderer.pushHit(kind, side);
-    game.hit(kind, gameTime());
-  },
-);
+document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
+  b.addEventListener('click', () => setTool(b.dataset.tool as Tool));
+});
+setTool('don');
 
-window.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape' && game && menu.classList.contains('hidden') && result.classList.contains('hidden')) {
-    finish();
+const divSel = $<HTMLSelectElement>('divisor');
+divSel.innerHTML = DIVISORS.map((d) => `<option value="${d}">1/${d}</option>`).join('');
+divSel.value = String(ed.divisor);
+divSel.addEventListener('change', () => {
+  ed.divisor = Number(divSel.value);
+  settings.divisor = ed.divisor;
+  saveSettings();
+  view.invalidate();
+});
+
+$('zoomIn').addEventListener('click', () => { view.setZoom(view.zoom * 1.25); settings.zoom = view.zoom; saveSettings(); });
+$('zoomOut').addEventListener('click', () => { view.setZoom(view.zoom / 1.25); settings.zoom = view.zoom; saveSettings(); });
+$('btnUndo').addEventListener('click', () => ed.undo());
+$('btnRedo').addEventListener('click', () => ed.redo());
+$('btnPlay').addEventListener('click', () => (playing ? stopPlayback() : void startPlayback()));
+$('btnRate').addEventListener('click', () => {
+  const rates = [1, 0.75, 0.5, 0.25];
+  settings.rate = rates[(rates.indexOf(settings.rate) + 1) % rates.length] ?? 1;
+  saveSettings();
+  updateHeader();
+  if (playing) { stopPlayback(); void startPlayback(); }
+});
+
+// ---------- 編集 ----------
+
+view.onUserScroll = () => stopPlayback();
+view.onTap = (tick) => {
+  const r = ed.tap(tick);
+  if (r.message) toast(r.message);
+  if (r.editBalloon) {
+    const v = prompt('風船の打数', String(r.editBalloon.hits ?? 5));
+    if (v !== null) ed.setBalloonHits(r.editBalloon, Number(v));
+  }
+};
+
+let saveTimer = 0;
+ed.onChange((structural) => {
+  view.invalidate();
+  updateHeader();
+  if (structural) {
+    clearTimeout(saveTimer);
+    saveTimer = window.setTimeout(() => {
+      void saveChart({ chart: ed.chart, courseIndex: ed.courseIndex, savedAt: Date.now() });
+    }, 600);
+    refreshSheet();
   }
 });
+
+// ---------- キーボード（PC） ----------
+
+const KEY_TOOLS: Record<string, Tool> = {
+  Digit1: 'don', Digit2: 'ka', Digit3: 'bigDon', Digit4: 'bigKa',
+  Digit5: 'roll', Digit6: 'bigRoll', Digit7: 'balloon', Digit0: 'erase', KeyE: 'erase',
+};
+
+window.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return;
+  if (play.isActive || !$('sheet').classList.contains('hidden')) return;
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? ed.redo() : ed.undo(); return; }
+  if (mod && e.code === 'KeyY') { e.preventDefault(); ed.redo(); return; }
+  if (mod) return;
+  if (e.code === 'Space') { e.preventDefault(); playing ? stopPlayback() : void startPlayback(); return; }
+  if (KEY_TOOLS[e.code]) { setTool(KEY_TOOLS[e.code]); return; }
+  const move = (ticks: number) => {
+    e.preventDefault();
+    stopPlayback();
+    view.pos = Math.max(0, ed.snap(view.pos) + ticks);
+    view.invalidate();
+  };
+  if (e.code === 'ArrowUp') move(ed.step);
+  else if (e.code === 'ArrowDown') move(-ed.step);
+  else if (e.code === 'PageUp') move(ed.measureOf(view.pos).length);
+  else if (e.code === 'PageDown') move(-ed.measureOf(Math.max(0, view.pos - 1)).length);
+  else if (e.code === 'Home') move(-view.pos);
+  else if (e.code === 'Equal') view.setZoom(view.zoom * 1.25);
+  else if (e.code === 'Minus') view.setZoom(view.zoom / 1.25);
+});
+
+// ---------- シート ----------
+
+type SheetKind = 'file' | 'info' | 'events';
+let sheet: SheetKind | null = null;
+
+function openSheet(kind: SheetKind) {
+  stopPlayback();
+  sheet = kind;
+  $('sheet').classList.remove('hidden');
+  renderSheet();
+}
+function closeSheet() {
+  sheet = null;
+  $('sheet').classList.add('hidden');
+}
+function refreshSheet() {
+  if (!sheet) return;
+  // 入力中は描き直さない（フォーカスが外れるため）
+  if ($('sheetBody').contains(document.activeElement) && document.activeElement instanceof HTMLInputElement) return;
+  renderSheet();
+}
+
+$('sheetClose').addEventListener('click', closeSheet);
+$('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
+$('btnFile').addEventListener('click', () => openSheet('file'));
+$('btnInfo').addEventListener('click', () => openSheet('info'));
+$('btnEvents').addEventListener('click', () => openSheet('events'));
+
+function renderSheet() {
+  const body = $('sheetBody');
+  if (sheet === 'file') {
+    $('sheetTitle').textContent = 'ファイル';
+    body.innerHTML = `
+      <h3>開く</h3>
+      <div class="btns">
+        <button data-act="open" class="primary">.tja / .zip を開く</button>
+        <button data-act="audio">音源を差し替え</button>
+        <button data-act="new">新規作成</button>
+        <button data-act="sample">サンプル譜面</button>
+      </div>
+      <p class="note">.tja と音源を一緒に選ぶか、まとめた .zip を選んでください。</p>
+      <h3>書き出し</h3>
+      <div class="btns">
+        <button data-act="saveTja">.tja を保存</button>
+        <button data-act="saveZip">.zip（譜面＋音源）</button>
+        <button data-act="copy">TJA をコピー</button>
+      </div>
+      <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja は UTF-8（BOM付き）です。</p>`;
+  } else if (sheet === 'info') {
+    $('sheetTitle').textContent = '譜面情報';
+    const c = ed.chart;
+    const courses = c.courses
+      .map(
+        (co, i) => `<div class="item ${i === ed.courseIndex ? 'current' : ''}">
+          <div class="grow">${esc(co.name)} ★${co.level}<div class="pos">${co.notes.length}ノーツ</div></div>
+          ${i === ed.courseIndex ? '' : `<button data-course="${i}">編集する</button>`}
+        </div>`,
+      )
+      .join('');
+    body.innerHTML = `
+      <h3>曲</h3>
+      <label class="field"><span>タイトル</span><input type="text" data-meta="title" value="${esc(c.title)}"></label>
+      <label class="field"><span>サブタイトル</span><input type="text" data-meta="subtitle" value="${esc(c.subtitle)}"></label>
+      <label class="field"><span>BPM</span><input type="number" step="any" inputmode="decimal" data-meta="bpm" value="${c.bpm}"></label>
+      <label class="field"><span>OFFSET (秒)</span><input type="number" step="0.001" inputmode="decimal" data-meta="offset" value="${c.offset}"></label>
+      <div class="btns three">
+        <button data-off="-0.01">−10ms</button><button data-off="-0.001">−1ms</button><button data-off="0.01">+10ms</button>
+      </div>
+      <label class="field"><span>DEMOSTART</span><input type="number" step="0.01" inputmode="decimal" data-meta="demoStart" value="${c.demoStart}"></label>
+      <p class="note">音源: ${esc(ed.audio?.name ?? 'なし')}（WAVE: ${esc(c.wave || '-')}）</p>
+
+      <h3>難易度</h3>
+      <div class="list">${courses}</div>
+      <label class="field"><span>難易度名</span>
+        <select data-course-name>${COURSE_NAMES.map((n) => `<option ${n === ed.course.name ? 'selected' : ''}>${n}</option>`).join('')}</select>
+      </label>
+      <label class="field"><span>レベル</span><input type="number" min="1" max="10" inputmode="numeric" data-course-level value="${ed.course.level}"></label>
+      <div class="btns three">
+        <button data-act="addCourse">追加</button>
+        <button data-act="dupCourse">複製</button>
+        <button data-act="delCourse" class="danger" ${c.courses.length <= 1 ? 'disabled' : ''}>削除</button>
+      </div>
+
+      <h3>テストプレイ・再生</h3>
+      <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
+      <label class="field"><span>判定調整 ms</span><input type="range" min="-200" max="200" step="5" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
+      <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
+      <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
+  } else if (sheet === 'events') {
+    $('sheetTitle').textContent = 'イベント';
+    const pos = ed.snap(Math.max(0, view.pos));
+    const list = ed.course.events
+      .map(
+        (e, i) => `<div class="item">
+          <div class="grow">${esc(eventText(e))}<div class="pos">${ed.label(e.tick)}</div></div>
+          <button data-jump="${i}">移動</button>
+          <button data-del="${i}" class="danger">削除</button>
+        </div>`,
+      )
+      .join('');
+    body.innerHTML = `
+      <p class="note">判定線の位置（${ed.label(pos)}）に追加します。拍子は小節の頭に入ります。</p>
+      <div class="btns">
+        <button data-ev="bpm">BPM 変更</button>
+        <button data-ev="scroll">SCROLL 変更</button>
+        <button data-ev="measure">拍子 変更</button>
+        <button data-ev="delay">DELAY</button>
+        <button data-ev="gogoOn">GOGO 開始</button>
+        <button data-ev="gogoOff">GOGO 終了</button>
+        <button data-ev="barOff">小節線 OFF</button>
+        <button data-ev="barOn">小節線 ON</button>
+      </div>
+      <h3>この難易度のイベント（${ed.course.events.length}）</h3>
+      <div class="list">${list || '<p class="note">まだありません</p>'}</div>`;
+  }
+}
+
+$('sheetBody').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest('button');
+  if (!b) return;
+  const d = b.dataset;
+  if (d.act) void fileAction(d.act);
+  else if (d.course) ed.selectCourse(Number(d.course));
+  else if (d.off) ed.mutate(() => { ed.chart.offset = Number((ed.chart.offset + Number(d.off)).toFixed(4)); });
+  else if (d.ev) addEventAction(d.ev);
+  else if (d.jump) {
+    const ev = ed.course.events[Number(d.jump)];
+    if (ev) { view.pos = ev.tick; view.invalidate(); closeSheet(); }
+  } else if (d.del) {
+    const ev = ed.course.events[Number(d.del)];
+    if (ev) ed.removeEvent(ev);
+  }
+});
+
+$('sheetBody').addEventListener('change', (e) => {
+  const el = e.target as HTMLInputElement | HTMLSelectElement;
+  const d = el.dataset;
+  if (d.meta) {
+    const key = d.meta as 'title' | 'subtitle' | 'bpm' | 'offset' | 'demoStart';
+    ed.mutate(() => {
+      if (key === 'title' || key === 'subtitle') ed.chart[key] = el.value;
+      else {
+        const v = Number(el.value);
+        if (Number.isFinite(v) && (key !== 'bpm' || v > 0)) ed.chart[key] = v;
+      }
+    });
+  } else if (d.courseName !== undefined) {
+    ed.mutate(() => { ed.course.name = el.value; });
+  } else if (d.courseLevel !== undefined) {
+    const v = Number(el.value);
+    if (v > 0) ed.mutate(() => { ed.course.level = Math.round(v); });
+  }
+});
+
+$('sheetBody').addEventListener('input', (e) => {
+  const el = e.target as HTMLInputElement;
+  const key = el.dataset.set as keyof typeof settings | undefined;
+  if (!key) return;
+  if (el.type === 'checkbox') (settings[key] as boolean) = el.checked;
+  else {
+    (settings[key] as number) = Number(el.value);
+    const out = el.parentElement?.querySelector('output');
+    if (out) out.textContent = key === 'speed' ? Number(el.value).toFixed(1) : el.value;
+  }
+  saveSettings();
+});
+
+function addEventAction(kind: string) {
+  const tick = ed.snap(Math.max(0, view.pos));
+  const ask = (label: string, def: string) => {
+    const v = prompt(label, def);
+    return v === null ? null : v.trim();
+  };
+  let ev: EEvent | null = null;
+  if (kind === 'bpm') {
+    const v = ask('BPM', String(ed.timing.bpmAt(tick)));
+    if (v && Number(v) > 0) ev = { tick, kind: 'bpm', value: Number(v) };
+  } else if (kind === 'scroll') {
+    const v = ask('SCROLL（倍率、負の値で逆走）', '1');
+    if (v && Number.isFinite(Number(v))) ev = { tick, kind: 'scroll', value: Number(v) };
+  } else if (kind === 'measure') {
+    const m = ed.measureOf(tick);
+    const v = ask('拍子（例: 3/4, 7/8）', `${m.num}/${m.den}`);
+    const mm = v?.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+    if (mm && Number(mm[1]) > 0 && Number(mm[2]) > 0) ev = { tick, kind: 'measure', num: Number(mm[1]), den: Number(mm[2]) };
+    else if (v) toast('「3/4」の形で入力してください');
+  } else if (kind === 'delay') {
+    const v = ask('DELAY（秒）', '0.5');
+    if (v && Number.isFinite(Number(v))) ev = { tick, kind: 'delay', value: Number(v) };
+  } else if (kind === 'gogoOn') ev = { tick, kind: 'gogo', on: true };
+  else if (kind === 'gogoOff') ev = { tick, kind: 'gogo', on: false };
+  else if (kind === 'barOn') ev = { tick, kind: 'barline', on: true };
+  else if (kind === 'barOff') ev = { tick, kind: 'barline', on: false };
+  if (ev) {
+    ed.addEvent(ev);
+    toast(`${eventText(ev)} を追加しました`);
+  }
+}
+
+// ---------- ファイル ----------
+
+const fileOpen = $<HTMLInputElement>('fileOpen');
+const fileAudio = $<HTMLInputElement>('fileAudio');
+
+fileOpen.addEventListener('change', async () => {
+  const files = Array.from(fileOpen.files ?? []);
+  fileOpen.value = '';
+  if (!files.length) return;
+  try {
+    const r = await loadFiles(files);
+    if (r.chart) {
+      ed.load(r.chart, null);
+      view.pos = 0;
+      await setAudio(r.audio);
+      void saveChart({ chart: ed.chart, courseIndex: ed.courseIndex, savedAt: Date.now() });
+      closeSheet();
+    } else if (r.audio) {
+      await applyAudioOnly(r.audio);
+      closeSheet();
+    }
+    toast(r.message);
+  } catch (err) {
+    toast(`読み込めませんでした: ${(err as Error).message}`);
+  }
+});
+
+fileAudio.addEventListener('change', async () => {
+  const f = fileAudio.files?.[0];
+  fileAudio.value = '';
+  if (!f) return;
+  await applyAudioOnly({ name: f.name, data: await f.arrayBuffer() });
+  closeSheet();
+});
+
+async function applyAudioOnly(a: AudioFile) {
+  await setAudio(a);
+  ed.mutate(() => {
+    ed.chart.wave = a.name;
+    if (!ed.chart.title || ed.chart.title === '新しい譜面') ed.chart.title = a.name.replace(/\.[^.]+$/, '');
+  });
+  toast(`音源「${a.name}」を設定しました`);
+}
+
+function download(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+const safeName = (s: string) => (s || 'chart').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
+
+async function fileAction(act: string) {
+  if (act === 'open') fileOpen.click();
+  else if (act === 'audio') fileAudio.click();
+  else if (act === 'new') {
+    if (!confirm('新しい譜面を作りますか？（今の譜面はファイル保存していなければ消えます）')) return;
+    ed.load(newChart(), null, 0);
+    view.pos = 0;
+    await setAudio(null);
+    closeSheet();
+    toast('「音源を差し替え」で曲を設定してください');
+  } else if (act === 'sample') {
+    if (!confirm('サンプル譜面を開きますか？（今の譜面は置き換わります）')) return;
+    ed.load(parseTJA(DEMO_TJA), null);
+    view.pos = 0;
+    await setAudio(null);
+    closeSheet();
+  } else if (act === 'saveTja') {
+    download(new Blob(['﻿' + writeTJA(ed.chart)], { type: 'text/plain' }), `${safeName(ed.chart.title)}.tja`);
+  } else if (act === 'saveZip') {
+    const name = safeName(ed.chart.title);
+    const files: { name: string; data: Uint8Array; compress?: boolean }[] = [];
+    if (ed.audio) {
+      ed.chart.wave = ed.audio.name;
+      files.push({ name: `${name}/${ed.audio.name}`, data: new Uint8Array(ed.audio.data) });
+    }
+    const tja = new TextEncoder().encode('﻿' + writeTJA(ed.chart));
+    files.unshift({ name: `${name}/${name}.tja`, data: tja, compress: true });
+    download(await writeZip(files), `${name}.zip`);
+  } else if (act === 'copy') {
+    try {
+      await navigator.clipboard.writeText(writeTJA(ed.chart));
+      toast('TJA をコピーしました');
+    } catch {
+      toast('コピーできませんでした');
+    }
+  } else if (act === 'addCourse' || act === 'dupCourse') {
+    const used = new Set(ed.chart.courses.map((c) => c.name));
+    const name = COURSE_NAMES.find((n) => !used.has(n)) ?? 'Edit';
+    ed.addCourse(name, act === 'dupCourse' ? ed.course.level : 1, act === 'dupCourse' ? ed.course : undefined);
+    toast(`${name} を${act === 'dupCourse' ? '複製して' : ''}追加しました`);
+  } else if (act === 'delCourse') {
+    if (confirm(`${ed.course.name} を削除しますか？`)) ed.removeCourse(ed.courseIndex);
+  }
+}
+
+// ---------- テストプレイ ----------
+
+async function startTest() {
+  stopPlayback();
+  closeSheet();
+  const course = toPlayable(ed.chart, ed.course);
+  if (!course.notes.length) {
+    toast('ノーツがありません');
+    return;
+  }
+  const from = ed.timing.tickToTime(ed.snap(Math.max(0, view.pos)));
+  await play.start(course, from, { title: ed.chart.title, course: `${ed.course.name} ★${ed.course.level}` });
+}
+
+$('btnTest').addEventListener('click', () => void startTest());
+$('playExit').addEventListener('click', () => play.close());
+$('back').addEventListener('click', () => play.close());
+$('retry').addEventListener('click', () => void startTest());
+play.onExit = () => view.invalidate();
+
+// ---------- 起動 ----------
+
+async function boot() {
+  const saved = await loadChart();
+  if (saved?.chart?.courses?.length) {
+    ed.load(saved.chart, null, saved.courseIndex);
+    await setAudio(await loadAudio(), false);
+  } else {
+    ed.load(parseTJA(DEMO_TJA), null);
+    toast('サンプル譜面を開きました。☰ から .tja / .zip を開けます');
+  }
+  view.pos = 0;
+  updateHeader();
+}
+void boot();

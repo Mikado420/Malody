@@ -1,21 +1,26 @@
-import type { BarLine, Chart, Note, NoteType } from './types';
+import type { NoteType } from './types';
+import { newCourse, sortCourse, TPB, type EChart, type ECourse, type EEvent } from './model';
 
 /**
- * TJA パーサ（最小実装）
- * 対応: TITLE / SUBTITLE / BPM / OFFSET / WAVE / DEMOSTART / COURSE / LEVEL / BALLOON
+ * TJA → 編集用モデル（tick ベース）
+ * 対応: TITLE SUBTITLE BPM OFFSET WAVE DEMOSTART COURSE LEVEL BALLOON（他のヘッダは保持）
  *       #START #END #BPMCHANGE #SCROLL #MEASURE #DELAY #GOGOSTART #GOGOEND #BARLINEON #BARLINEOFF
- * 未対応（無視）: 譜面分岐 (#BRANCHSTART 等) の分岐先選択、#LYRIC など
- *   → 分岐は現状すべて「普通譜面 (#N)」だけを採用する
+ * 譜面分岐は「普通譜面 (#N)」だけ採用。2P 譜面 (#START P2) は無視。
  */
 
-const COURSE_NAMES = ['Easy', 'Normal', 'Hard', 'Oni', 'Edit'];
+const COURSE_KEYS = new Set([
+  'LEVEL', 'BALLOON', 'SCOREINIT', 'SCOREDIFF', 'STYLE', 'TOTAL', 'GAUGEINCR', 'HIDDENBRANCH',
+  'EXAM1', 'EXAM2', 'EXAM3', 'BALLOONNOR', 'BALLOONEXP', 'BALLOONMAS',
+]);
 
-function normalizeCourse(v: string): string {
+export function normalizeCourse(v: string): string {
   const s = v.trim().toLowerCase();
-  const idx = ['easy', 'normal', 'hard', 'oni', 'edit'].indexOf(s);
-  if (idx >= 0) return COURSE_NAMES[idx];
+  const names = ['easy', 'normal', 'hard', 'oni', 'edit'];
+  const display = ['Easy', 'Normal', 'Hard', 'Oni', 'Edit'];
+  const idx = names.indexOf(s);
+  if (idx >= 0) return display[idx];
   const n = Number(s);
-  if (Number.isInteger(n) && n >= 0 && n <= 4) return COURSE_NAMES[n];
+  if (Number.isInteger(n) && n >= 0 && n <= 4) return display[n];
   return v.trim() || 'Oni';
 }
 
@@ -23,75 +28,70 @@ type Item = { kind: 'note'; ch: string } | { kind: 'cmd'; name: string; arg: str
 
 const NOTE_CHARS = /[0-9AB]/;
 
-interface CourseHeader {
-  name: string;
-  level: number;
-  balloons: number[];
+const CHAR_TO_TYPE: Record<string, NoteType | undefined> = {
+  '1': 'don', '2': 'ka', '3': 'bigDon', '4': 'bigKa', '5': 'roll', '6': 'bigRoll',
+  '7': 'balloon', '9': 'balloon', A: 'bigDon', B: 'bigKa',
+};
+
+interface State {
+  tick: number;
+  measureTicks: number;
+  pendingMeasure: number | null; // 小節の途中にあった #MEASURE は次の小節から
+  balloonIndex: number;
+  openLong: number | null; // course.notes のインデックス
 }
 
-export function parseTJA(text: string): Chart {
-  const chart: Chart = {
-    title: '',
-    subtitle: '',
-    wave: '',
-    bpm: 120,
-    offset: 0,
-    demoStart: 0,
-    courses: [],
+export function parseTJA(text: string): EChart {
+  const chart: EChart = {
+    title: '', subtitle: '', wave: '', bpm: 120, offset: 0, demoStart: 0, extra: [], courses: [],
   };
 
-  let header: CourseHeader = { name: 'Oni', level: 0, balloons: [] };
+  let header = { name: 'Oni', level: 0, balloons: [] as number[], extra: [] as [string, string][] };
   let inChart = false;
-  let measureItems: Item[] = [];
-  // 譜面分岐: 'N' 以外の分岐中はノーツを読み飛ばす
+  let items: Item[] = [];
   let branch: 'none' | 'N' | 'E' | 'M' = 'none';
+  let course: ECourse = newCourse();
+  let st: State = newState();
 
-  // 譜面ごとの状態
-  let st = newState(chart);
-  let notes: Note[] = [];
-  let bars: BarLine[] = [];
+  const flushMeasure = () => {
+    processMeasure(items, st, course, header.balloons);
+    items = [];
+  };
 
-  const lines = text.replace(/^﻿/, '').split(/\r?\n/);
-  for (const raw of lines) {
+  for (const raw of text.replace(/^﻿/, '').split(/\r?\n/)) {
     const line = raw.replace(/\/\/.*$/, '').trim();
     if (!line) continue;
 
     if (line.startsWith('#')) {
-      const m = line.match(/^#([A-Z]+)\s*(.*)$/i);
+      const m = line.match(/^#([A-Z0-9]+)\s*(.*)$/i);
       if (!m) continue;
       const name = m[1].toUpperCase();
       const arg = m[2].trim();
 
       if (name === 'START') {
-        if (/P2/i.test(arg)) continue; // 2P 譜面は無視
+        if (/P2/i.test(arg)) { inChart = false; continue; }
         inChart = true;
         branch = 'none';
-        measureItems = [];
-        st = newState(chart);
-        notes = [];
-        bars = [];
+        items = [];
+        st = newState();
+        course = { ...newCourse(header.name, header.level), extra: header.extra.slice() };
         continue;
       }
       if (name === 'END') {
         if (!inChart) continue;
-        if (measureItems.some((i) => i.kind === 'note')) {
-          processMeasure(measureItems, st, notes, bars, header.balloons);
-        }
-        chart.courses.push({ name: header.name, level: header.level, notes, bars });
+        if (items.length) flushMeasure();
+        sortCourse(course);
+        chart.courses.push(course);
         inChart = false;
         continue;
       }
       if (!inChart) continue;
 
-      // 分岐: 普通譜面だけ読む
-      if (name === 'BRANCHSTART') { branch = 'none'; continue; }
-      if (name === 'N') { branch = 'N'; continue; }
-      if (name === 'E') { branch = 'E'; continue; }
-      if (name === 'M') { branch = 'M'; continue; }
-      if (name === 'BRANCHEND') { branch = 'none'; continue; }
+      if (name === 'BRANCHSTART' || name === 'BRANCHEND') { branch = 'none'; continue; }
+      if (name === 'N' || name === 'E' || name === 'M') { branch = name; continue; }
       if (branch === 'E' || branch === 'M') continue;
 
-      measureItems.push({ kind: 'cmd', name, arg });
+      items.push({ kind: 'cmd', name, arg });
       continue;
     }
 
@@ -102,156 +102,119 @@ export function parseTJA(text: string): Chart {
       const val = line.slice(idx + 1).trim();
       switch (key) {
         case 'TITLE': chart.title = val; break;
-        case 'SUBTITLE': chart.subtitle = val.replace(/^--|^\+\+/, ''); break;
+        case 'SUBTITLE': chart.subtitle = val; break;
         case 'BPM': chart.bpm = Number(val) || chart.bpm; break;
         case 'OFFSET': chart.offset = Number(val) || 0; break;
         case 'WAVE': chart.wave = val; break;
         case 'DEMOSTART': chart.demoStart = Number(val) || 0; break;
-        case 'COURSE': header = { ...header, name: normalizeCourse(val) }; break;
-        case 'LEVEL': header = { ...header, level: Number(val) || 0 }; break;
-        case 'BALLOON':
-          header = {
-            ...header,
-            balloons: val.split(',').map((s) => Number(s.trim())).filter((n) => n > 0),
-          };
+        case 'COURSE':
+          // 新しい難易度: 難易度ごとのヘッダをリセット
+          header = { name: normalizeCourse(val), level: 0, balloons: [], extra: [] };
           break;
+        case 'LEVEL': header.level = Number(val) || 0; break;
+        case 'BALLOON':
+          header.balloons = val.split(',').map((s) => Number(s.trim())).filter((n) => n > 0);
+          break;
+        default:
+          if (COURSE_KEYS.has(key)) header.extra.push([key, val]);
+          else if (!chart.extra.some(([k]) => k === key)) chart.extra.push([key, val]);
       }
       continue;
     }
 
     if (branch === 'E' || branch === 'M') continue;
 
-    // ノーツ行
     for (const ch of line) {
-      if (ch === ',') {
-        processMeasure(measureItems, st, notes, bars, header.balloons);
-        measureItems = [];
-      } else if (NOTE_CHARS.test(ch)) {
-        measureItems.push({ kind: 'note', ch });
-      }
+      if (ch === ',') flushMeasure();
+      else if (NOTE_CHARS.test(ch)) items.push({ kind: 'note', ch });
     }
   }
 
+  // #END が無いファイルへの保険
+  if (inChart) {
+    if (items.length) flushMeasure();
+    sortCourse(course);
+    chart.courses.push(course);
+  }
   return chart;
 }
 
-interface State {
-  time: number;
-  bpm: number;
-  scroll: number;
-  measure: number; // 小節の長さ（4/4 = 1）
-  gogo: boolean;
-  barline: boolean;
-  balloonIndex: number;
-  openLong: Note | null;
+function newState(): State {
+  return { tick: 0, measureTicks: TPB * 4, pendingMeasure: null, balloonIndex: 0, openLong: null };
 }
 
-function newState(chart: Chart): State {
-  return {
-    // `-chart.offset` だと OFFSET:0 のとき -0 になるので 0 から引く
-    time: 0 - chart.offset,
-    bpm: chart.bpm,
-    scroll: 1,
-    measure: 1,
-    gogo: false,
-    barline: true,
-    balloonIndex: 0,
-    openLong: null,
-  };
-}
-
-function applyCommand(st: State, name: string, arg: string) {
-  switch (name) {
-    case 'BPMCHANGE': {
-      const v = Number(arg);
-      if (v > 0) st.bpm = v;
-      break;
-    }
-    case 'SCROLL': {
-      const v = Number(arg);
-      if (Number.isFinite(v)) st.scroll = v;
-      break;
-    }
-    case 'MEASURE': {
-      const m = arg.match(/^\s*([\d.]+)\s*\/\s*([\d.]+)/);
-      if (m && Number(m[2]) > 0) st.measure = Number(m[1]) / Number(m[2]);
-      break;
-    }
-    case 'DELAY': {
-      const v = Number(arg);
-      if (Number.isFinite(v)) st.time += v;
-      break;
-    }
-    case 'GOGOSTART': st.gogo = true; break;
-    case 'GOGOEND': st.gogo = false; break;
-    case 'BARLINEON': st.barline = true; break;
-    case 'BARLINEOFF': st.barline = false; break;
-  }
-}
-
-const CHAR_TO_TYPE: Record<string, NoteType | undefined> = {
-  '1': 'don',
-  '2': 'ka',
-  '3': 'bigDon',
-  '4': 'bigKa',
-  '5': 'roll',
-  '6': 'bigRoll',
-  '7': 'balloon',
-  '9': 'balloon',
-  A: 'bigDon',
-  B: 'bigKa',
-};
-
-function processMeasure(
-  items: Item[],
-  st: State,
-  notes: Note[],
-  bars: BarLine[],
-  balloons: number[],
-) {
-  // 先頭（最初のノーツより前）の命令は、小節線より先に適用する
-  let i = 0;
-  while (i < items.length && items[i].kind === 'cmd') {
-    const it = items[i] as Extract<Item, { kind: 'cmd' }>;
-    applyCommand(st, it.name, it.arg);
-    i++;
+function processMeasure(items: Item[], st: State, course: ECourse, balloons: number[]) {
+  if (st.pendingMeasure !== null) {
+    st.measureTicks = st.pendingMeasure;
+    st.pendingMeasure = null;
   }
 
-  if (st.barline) bars.push({ time: st.time, bpm: st.bpm, scroll: st.scroll });
+  const noteCount = items.filter((i) => i.kind === 'note').length;
+  let noteIdx = 0;
+  let seenNote = false;
 
-  const noteCount = items.filter((it) => it.kind === 'note').length;
-  if (noteCount === 0) {
-    st.time += (240 / st.bpm) * st.measure;
-    return;
-  }
+  const tickOf = (i: number) =>
+    noteCount === 0 ? st.tick : st.tick + Math.round((i * st.measureTicks) / noteCount);
 
-  for (; i < items.length; i++) {
-    const it = items[i];
+  for (const it of items) {
     if (it.kind === 'cmd') {
-      applyCommand(st, it.name, it.arg);
+      const tick = tickOf(noteIdx);
+      if (it.name === 'MEASURE') {
+        const m = it.arg.match(/^\s*([\d.]+)\s*\/\s*([\d.]+)/);
+        if (!m || !(Number(m[2]) > 0)) continue;
+        const num = Number(m[1]);
+        const den = Number(m[2]);
+        const ticks = Math.max(1, Math.round((TPB * 4 * num) / den));
+        if (!seenNote) {
+          course.events.push({ tick: st.tick, kind: 'measure', num, den });
+          st.measureTicks = ticks;
+        } else {
+          course.events.push({ tick: st.tick + st.measureTicks, kind: 'measure', num, den });
+          st.pendingMeasure = ticks;
+        }
+        continue;
+      }
+      const ev = toEvent(it.name, it.arg, tick);
+      if (ev) course.events.push(ev);
       continue;
     }
+
+    seenNote = true;
+    const tick = tickOf(noteIdx);
+    noteIdx++;
     const ch = it.ch;
     if (ch === '8') {
-      if (st.openLong) {
-        st.openLong.endTime = st.time;
+      if (st.openLong !== null) {
+        course.notes[st.openLong].endTick = tick;
         st.openLong = null;
       }
-    } else {
-      const type = CHAR_TO_TYPE[ch];
-      if (type) {
-        const note: Note = { type, time: st.time, bpm: st.bpm, scroll: st.scroll, gogo: st.gogo };
-        if (type === 'roll' || type === 'bigRoll' || type === 'balloon') {
-          // 閉じられていない長いノーツがあれば、ここで閉じる
-          if (st.openLong) st.openLong.endTime = st.time;
-          if (type === 'balloon') {
-            note.hits = balloons[st.balloonIndex++] ?? 5;
-          }
-          st.openLong = note;
-        }
-        notes.push(note);
-      }
+      continue;
     }
-    st.time += ((240 / st.bpm) * st.measure) / noteCount;
+    const type = CHAR_TO_TYPE[ch];
+    if (!type) continue;
+    if (type === 'roll' || type === 'bigRoll' || type === 'balloon') {
+      if (st.openLong !== null) course.notes[st.openLong].endTick = tick;
+      if (type === 'balloon') course.notes.push({ tick, type, hits: balloons[st.balloonIndex++] ?? 5 });
+      else course.notes.push({ tick, type });
+      st.openLong = course.notes.length - 1;
+    } else {
+      course.notes.push({ tick, type });
+    }
+  }
+
+  st.tick += st.measureTicks;
+}
+
+function toEvent(name: string, arg: string, tick: number): EEvent | null {
+  const v = Number(arg);
+  switch (name) {
+    case 'BPMCHANGE': return v > 0 ? { tick, kind: 'bpm', value: v } : null;
+    case 'SCROLL': return Number.isFinite(v) && arg !== '' ? { tick, kind: 'scroll', value: v } : null;
+    case 'DELAY': return Number.isFinite(v) && arg !== '' ? { tick, kind: 'delay', value: v } : null;
+    case 'GOGOSTART': return { tick, kind: 'gogo', on: true };
+    case 'GOGOEND': return { tick, kind: 'gogo', on: false };
+    case 'BARLINEON': return { tick, kind: 'barline', on: true };
+    case 'BARLINEOFF': return { tick, kind: 'barline', on: false };
+    default: return null;
   }
 }

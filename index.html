@@ -3,50 +3,77 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
-    <meta name="theme-color" content="#14121a" />
-    <title>web-taiko</title>
+    <meta name="theme-color" content="#121019" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>Malody Web Editor</title>
   </head>
   <body>
-    <canvas id="game"></canvas>
-
-    <div id="menu" class="overlay">
-      <div class="panel">
-        <h1>web-taiko</h1>
-        <p class="hint">TJA譜面と音源ファイルをまとめて選んでください（曲なしでも遊べます）</p>
-
-        <label class="file">
-          <input id="files" type="file" multiple accept=".tja,.ogg,.mp3,.wav,.m4a,audio/*" />
-          <span>ファイルを選ぶ</span>
-        </label>
-        <p id="chartInfo" class="info">未選択</p>
-
-        <div class="row">
-          <label for="course">難易度</label>
-          <select id="course" disabled></select>
+    <div id="app">
+      <header class="topbar">
+        <button id="btnFile" class="icon" aria-label="ファイル">☰</button>
+        <div class="titlebox">
+          <div id="songTitle" class="title"></div>
+          <div id="songSub" class="sub"></div>
         </div>
-        <div class="row">
-          <label for="speed">速度 <output id="speedVal">1.0</output></label>
-          <input id="speed" type="range" min="0.5" max="4" step="0.1" value="1" />
-        </div>
-        <div class="row">
-          <label for="offset">オフセット <output id="offsetVal">0</output>ms</label>
-          <input id="offset" type="range" min="-200" max="200" step="5" value="0" />
-        </div>
+        <button id="btnUndo" class="icon" aria-label="元に戻す">↶</button>
+        <button id="btnRedo" class="icon" aria-label="やり直し">↷</button>
+        <button id="btnRate" class="chip" aria-label="再生速度">1.0x</button>
+        <button id="btnPlay" class="icon primary" aria-label="再生">▶</button>
+      </header>
 
-        <div class="buttons">
-          <button id="start" disabled>スタート</button>
-          <button id="demo" class="secondary">デモ譜面で遊ぶ</button>
+      <canvas id="editor"></canvas>
+
+      <footer class="toolbar">
+        <div id="tools" class="tools">
+          <button data-tool="don" class="tool don"><i></i>ドン</button>
+          <button data-tool="ka" class="tool ka"><i></i>カッ</button>
+          <button data-tool="bigDon" class="tool don big"><i></i>大ドン</button>
+          <button data-tool="bigKa" class="tool ka big"><i></i>大カッ</button>
+          <button data-tool="roll" class="tool roll"><i></i>連打</button>
+          <button data-tool="bigRoll" class="tool roll big"><i></i>大連打</button>
+          <button data-tool="balloon" class="tool balloon"><i></i>風船</button>
+          <button data-tool="erase" class="tool erase"><i></i>消去</button>
         </div>
+        <div class="row2">
+          <label class="divisor"><span>分割</span><select id="divisor"></select></label>
+          <button id="zoomOut" class="icon" aria-label="縮小">－</button>
+          <button id="zoomIn" class="icon" aria-label="拡大">＋</button>
+          <span class="spacer"></span>
+          <button id="btnEvents">イベント</button>
+          <button id="btnInfo">情報</button>
+          <button id="btnTest" class="primary">テスト</button>
+        </div>
+      </footer>
+    </div>
+
+    <div id="sheet" class="sheet hidden">
+      <div class="sheet-panel">
+        <div class="sheet-head">
+          <h2 id="sheetTitle"></h2>
+          <button id="sheetClose" class="icon" aria-label="閉じる">×</button>
+        </div>
+        <div id="sheetBody" class="sheet-body"></div>
       </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <!-- iPhone では accept に .tja を書くと選べなくなるので拡張子の制限はしない -->
+    <input type="file" id="fileOpen" multiple hidden />
+    <input type="file" id="fileAudio" hidden />
+
+    <div id="play" class="play hidden">
+      <canvas id="game"></canvas>
+      <button id="playExit" class="icon exit" aria-label="テストプレイを終了">×</button>
     </div>
 
     <div id="result" class="overlay hidden">
       <div class="panel">
         <h2>結果</h2>
-        <dl id="resultList"></dl>
+        <dl></dl>
         <div class="buttons">
-          <button id="retry">もう一度</button>
-          <button id="back" class="secondary">メニューへ</button>
+          <button id="retry" class="primary">もう一度</button>
+          <button id="back">エディタへ戻る</button>
         </div>
       </div>
     </div>

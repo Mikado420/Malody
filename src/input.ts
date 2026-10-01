@@ -21,6 +21,8 @@ export function bindInput(
 ): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (e.repeat) return;
+    const t = e.target;
+    if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return;
     const k = DEFAULT_KEYS[e.code];
     if (!k) return;
     e.preventDefault();

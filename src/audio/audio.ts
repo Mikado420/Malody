@@ -6,7 +6,7 @@ export class AudioEngine {
   readonly ctx = new AudioContext({ latencyHint: 'interactive' });
   private music: AudioBuffer | null = null;
   private source: AudioBufferSourceNode | null = null;
-  private startedAt = 0; // ctx 時刻で「曲の 0 秒」にあたる時刻
+  private startedAt = 0; // 再生を開始した ctx 時刻
   private readonly musicGain = this.ctx.createGain();
   private readonly sfxGain = this.ctx.createGain();
 
@@ -31,19 +31,31 @@ export class AudioEngine {
 
   /** leadIn 秒後に曲の 0 秒が来るように再生開始 */
   async start(leadIn: number) {
+    await this.startAt(-leadIn, 1);
+  }
+
+  /**
+   * 曲の songTime 秒の位置から rate 倍速で再生（songTime が負なら、その分待ってから曲が始まる）
+   */
+  async startAt(songTime: number, rate = 1) {
     await this.ctx.resume();
     this.stop();
-    this.startedAt = this.ctx.currentTime + leadIn;
-    if (this.music) {
+    this.rate = rate;
+    this.songStart = songTime;
+    this.startedAt = this.ctx.currentTime + 0.03;
+    this.playing = true;
+    if (this.music && songTime < this.music.duration) {
       const src = this.ctx.createBufferSource();
       src.buffer = this.music;
+      src.playbackRate.value = rate;
       src.connect(this.musicGain);
-      src.start(this.startedAt);
+      src.start(this.startedAt + Math.max(0, -songTime) / rate, Math.max(0, songTime));
       this.source = src;
     }
   }
 
   stop() {
+    this.playing = false;
     if (this.source) {
       try { this.source.stop(); } catch { /* 既に停止済み */ }
       this.source.disconnect();
@@ -54,8 +66,12 @@ export class AudioEngine {
   /** 現在の曲の再生位置（秒）。出力遅延を補正 */
   now(): number {
     const latency = this.ctx.outputLatency || this.ctx.baseLatency || 0;
-    return this.ctx.currentTime - this.startedAt - latency;
+    return this.songStart + (this.ctx.currentTime - this.startedAt - latency) * this.rate;
   }
+
+  playing = false;
+  private rate = 1;
+  private songStart = 0;
 
   /** 曲が無いとき用のメトロノーム音 */
   playTick(strong: boolean) {
