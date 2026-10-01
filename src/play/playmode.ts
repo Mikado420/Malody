@@ -36,11 +36,12 @@ export class PlayMode {
         const L = this.renderer.layout;
         return { x: L.drumX, y: L.drumY, r: L.drumR, top: L.laneY + L.laneH };
       },
-      (kind, side) => {
+      (kind, side, at) => {
         if (!this.active || !this.game) return;
         this.audio.playHit(kind);
         this.renderer.pushHit(kind, side);
-        this.game.hit(kind, this.time());
+        // 叩いた瞬間の時刻で判定（処理が遅れてもずれない）
+        this.game.hit(kind, this.time(at));
       },
     );
     window.addEventListener('keydown', (e) => {
@@ -52,8 +53,8 @@ export class PlayMode {
     return this.active;
   }
 
-  private time() {
-    return this.audio.now() - this.settings.offset / 1000;
+  private time(perfMs = performance.now()) {
+    return this.audio.now(perfMs) - this.settings.offset / 1000;
   }
 
   /** fromTime 秒の位置から（2秒前から助走して）開始 */
@@ -146,9 +147,27 @@ export class PlayMode {
       ['連打', String(s.rolls)],
       ['精度', `${acc.toFixed(2)}%`],
     ];
+    // 叩いたタイミングの平均のずれ（オートのときは出さない）
+    const d = g.deltas;
+    const calib = this.result.querySelector<HTMLElement>('.calib')!;
+    if (!this.settings.auto && d.length >= 8) {
+      const mean = d.reduce((a, b) => a + b, 0) / d.length;
+      const sd = Math.sqrt(d.reduce((a, b) => a + (b - mean) ** 2, 0) / d.length);
+      const ms = Math.round(mean * 1000);
+      rows.push(['平均のずれ', `${ms > 0 ? '+' : ''}${ms}ms（${Math.abs(ms) <= 5 ? 'ちょうど' : ms > 0 ? '遅め' : '早め'}）`]);
+      rows.push(['ばらつき', `±${Math.round(sd * 1000)}ms`]);
+      this.suggested = Math.round(this.settings.offset + mean * 1000);
+      calib.classList.toggle('hidden', Math.abs(ms) <= 5);
+      calib.querySelector('button')!.textContent = `判定調整を ${this.suggested}ms にする（今は ${this.settings.offset}ms）`;
+    } else {
+      calib.classList.add('hidden');
+    }
     this.result.querySelector('dl')!.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     this.result.classList.remove('hidden');
   }
+
+  /** 結果画面で提案する判定調整の値（ms） */
+  suggested = 0;
 
   close() {
     this.finish();

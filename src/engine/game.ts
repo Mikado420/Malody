@@ -50,6 +50,8 @@ export class Game {
   /** 次に判定する普通ノーツのインデックス */
   private cursor = 0;
   private readonly hitIdx: number[];
+  /** 叩いたノーツのずれ（秒、＋で遅い）。色が合っていたものだけ。結果画面で平均を出して判定調整に使う */
+  readonly deltas: number[] = [];
   onJudge: (e: JudgeEvent) => void = () => {};
   /** 連打・風船を叩いたとき */
   onRoll: (s: NoteState) => void = () => {};
@@ -99,7 +101,10 @@ export class Game {
       if (ad <= WINDOW.bad) {
         const colorOk = (kind === 'don') === isDon(s.note.type);
         let judge: Judge = 'bad';
-        if (colorOk) judge = ad <= WINDOW.good ? 'good' : ad <= WINDOW.ok ? 'ok' : 'bad';
+        if (colorOk) {
+          judge = ad <= WINDOW.good ? 'good' : ad <= WINDOW.ok ? 'ok' : 'bad';
+          this.deltas.push(delta);
+        }
         this.apply(s, judge, delta);
         return;
       }
@@ -157,6 +162,7 @@ export class Game {
     const unit = 100 / Math.max(1, this.hitIdx.length);
     const dg = judge === 'good' ? unit : judge === 'ok' ? unit * 0.5 : -unit * 2;
     st.gauge = Math.min(100, Math.max(0, st.gauge + dg));
+    if (st.gauge > 100 - 1e-6) st.gauge = 100; // 小数の誤差で満タンにならないのを防ぐ
     this.onJudge({ judge, note: s.note, delta, missed: !!s.missed });
   }
 }

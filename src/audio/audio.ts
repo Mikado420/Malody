@@ -46,6 +46,7 @@ export class AudioEngine {
     this.stop();
     this.rate = rate;
     this.songStart = songTime;
+    this.clockOffset = null;
     this.startedAt = this.ctx.currentTime + 0.03;
     this.playing = true;
     if (this.music && songTime < this.music.duration) {
@@ -68,9 +69,30 @@ export class AudioEngine {
   }
 
   /** 現在の曲の再生位置（秒）。出力遅延を補正 */
-  now(): number {
+  now(perfMs = performance.now()): number {
+    return this.songStart + (this.contextTimeAt(perfMs) - this.startedAt) * this.rate;
+  }
+
+  /** ctx の時刻と performance.now() の差（なめらかにしたもの） */
+  private clockOffset: number | null = null;
+
+  /**
+   * perfMs（performance.now() 基準。イベントの timeStamp も同じ基準）の時点で、
+   * スピーカーから実際に聞こえている音の ctx 時刻。
+   * - getOutputTimestamp() は「いま出力されている音の ctx 時刻」と「その時刻」の組を返すので、出力の遅れが含まれる
+   * - currentTime は端末によって 10〜20ms 刻みでしか進まないので、performance.now() に結び付けてなめらかにする
+   */
+  private contextTimeAt(perfMs: number): number {
+    const ts = this.ctx.getOutputTimestamp?.();
+    if (ts && ts.performanceTime && ts.performanceTime > 0 && ts.contextTime !== undefined) {
+      const off = ts.contextTime - ts.performanceTime / 1000;
+      if (this.clockOffset === null || Math.abs(off - this.clockOffset) > 0.03) this.clockOffset = off;
+      else this.clockOffset += (off - this.clockOffset) * 0.02;
+      return perfMs / 1000 + this.clockOffset;
+    }
+    // 未対応のブラウザ: 報告されている出力遅延を引く
     const latency = this.ctx.outputLatency || this.ctx.baseLatency || 0;
-    return this.songStart + (this.ctx.currentTime - this.startedAt - latency) * this.rate;
+    return this.ctx.currentTime - latency - (performance.now() - perfMs) / 1000;
   }
 
   playing = false;

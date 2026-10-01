@@ -380,7 +380,7 @@ function renderSheet() {
 
       <h3>テストプレイ・再生</h3>
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
-      <label class="field"><span>判定調整 ms</span><input type="range" min="-200" max="200" step="5" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
+      <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
       <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
       <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>
@@ -618,6 +618,12 @@ async function startTest() {
 }
 
 $('btnTest').addEventListener('click', () => void startTest());
+$('applyCalib').addEventListener('click', () => {
+  settings.offset = Math.max(-300, Math.min(300, play.suggested));
+  saveSettings();
+  $('applyCalib').closest('.calib')!.classList.add('hidden');
+  toast(`判定調整を ${settings.offset}ms にしました`);
+});
 $('playExit').addEventListener('click', () => play.close());
 $('back').addEventListener('click', () => play.close());
 $('retry').addEventListener('click', () => void startTest());
@@ -638,6 +644,11 @@ async function boot() {
   updateHeader();
 }
 void boot();
+
+// 動作確認用（URL に ?debug を付けたときだけ）
+if (new URLSearchParams(location.search).has('debug')) {
+  (window as unknown as { __malody: unknown }).__malody = { ed, view, play, audio, settings };
+}
 
 startAutoUpdate({
   canReload: () => !play.isActive && !playing,

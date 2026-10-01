@@ -324,3 +324,7 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weig
   /* 回転中はノッチ等の余白の向きが変わるので、左右の余白を上下の値から取る */
   #app { padding: var(--safe-r) var(--safe-b) 0 var(--safe-t); }
 }
+
+.calib { display: flex; flex-direction: column; gap: 8px; }
+.calib .note { color: var(--sub); font-size: 12px; line-height: 1.6; margin: 0; }
+.calib button { background: #3a2f1c; color: var(--accent); font-weight: 700; padding: 10px; white-space: normal; }
