@@ -5,25 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <meta name="theme-color" content="#121019" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&display=swap" rel="stylesheet" />
     <title>Malody Web Editor</title>
   </head>
   <body>
     <div id="app">
-      <header class="topbar">
-        <button id="btnFile" class="icon" aria-label="ファイル">☰</button>
-        <div class="titlebox">
-          <div id="songTitle" class="title"></div>
-          <div id="songSub" class="sub"></div>
-        </div>
-        <button id="btnUndo" class="icon" aria-label="元に戻す">↶</button>
-        <button id="btnRedo" class="icon" aria-label="やり直し">↷</button>
-        <button id="btnRate" class="chip" aria-label="再生速度">1.0x</button>
-        <button id="btnPlay" class="icon primary" aria-label="再生">▶</button>
-      </header>
-
-      <canvas id="editor"></canvas>
-
-      <footer class="toolbar">
+      <div class="stage">
+        <canvas id="editor"></canvas>
         <div id="tools" class="tools">
           <button data-tool="don" class="tool don"><i></i>ドン</button>
           <button data-tool="ka" class="tool ka"><i></i>カッ</button>
@@ -34,16 +24,18 @@
           <button data-tool="balloon" class="tool balloon"><i></i>風船</button>
           <button data-tool="erase" class="tool erase"><i></i>消去</button>
         </div>
-        <div class="row2">
-          <label class="divisor"><span>分割</span><select id="divisor"></select></label>
-          <button id="zoomOut" class="icon" aria-label="縮小">－</button>
-          <button id="zoomIn" class="icon" aria-label="拡大">＋</button>
-          <span class="spacer"></span>
-          <button id="btnEvents">イベント</button>
-          <button id="btnInfo">情報</button>
-          <button id="btnTest" class="primary">テスト</button>
-        </div>
-      </footer>
+      </div>
+      <nav class="side">
+        <button id="btnUndo" title="元に戻す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+        <button id="btnRedo" title="やり直し"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+        <button id="btnMetro" title="メトロノーム"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l4 18H5z"/><path d="M12 16 18 6"/><path d="M7.5 15h9"/></svg></button>
+        <button id="btnTest" title="テストプレイ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10h18v10H3z"/><path d="m3 10 1.5-5.5 16 0L19 10"/><path d="m8 4.5 2 5.5M13.5 4.5l2 5.5"/></svg></button>
+        <button id="btnFile" title="ファイル・保存"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3"/><path d="M8 21v-7h8v7"/></svg></button>
+        <button id="btnInfo" title="譜面情報"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5z"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4.5"/></svg></button>
+        <button id="btnEvents" title="イベント（BPM・拍子など）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V3"/><path d="M6 4h12l-2.5 4.5L18 13H6"/></svg></button>
+        <button id="btnRate" title="再生速度"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 17a8.5 8.5 0 1 1 17 0"/><path d="m12 17 4.5-5"/></svg><small>1.0x</small></button>
+        <label class="divbtn" title="分割"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8v20H8z"/><path d="M8 6h4M8 10h5M8 14h4M8 18h5"/></svg><small id="divLabel">1/4</small><select id="divisor"></select></label>
+      </nav>
     </div>
 
     <div id="sheet" class="sheet hidden">

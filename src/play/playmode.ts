@@ -8,6 +8,8 @@ export interface PlaySettings {
   speed: number;
   /** 判定オフセット（ms）。＋で判定を遅らせる */
   offset: number;
+  /** オート（譜面確認用に自動で叩く） */
+  auto?: boolean;
 }
 
 /**
@@ -55,11 +57,13 @@ export class PlayMode {
   }
 
   /** fromTime 秒の位置から（2秒前から助走して）開始 */
-  async start(course: Course, fromTime: number, info: { title: string; course: string }) {
+  async start(course: Course, fromTime: number, info: { title: string; course: string; level: number }) {
     const from = Math.max(fromTime, (course.notes[0]?.time ?? 0) - 1);
     const notes = course.notes.filter((n) => (n.endTime ?? n.time) >= from - 0.05);
     const game = new Game(notes);
-    game.onJudge = (e) => this.renderer.pushJudge(e.judge);
+    game.onJudge = (e) => this.renderer.pushJudge(e);
+    game.onRoll = (st) => this.renderer.pushRoll(st);
+    this.renderer.reset();
     this.game = game;
 
     this.root.classList.remove('hidden');
@@ -72,10 +76,13 @@ export class PlayMode {
     const lastTime = Math.max(from, ...notes.map((n) => n.endTime ?? n.time));
     const endAt = Math.max(lastTime + 2, Math.min(this.audio.musicDuration, lastTime + 4));
 
+    this.autoIdx = 0;
+    this.autoRoll = -1;
     cancelAnimationFrame(this.raf);
     const loop = () => {
       if (!this.active) return;
       const now = this.time();
+      if (this.settings.auto) this.autoPlay(game, now);
       game.update(now);
       this.renderer.draw(game, course.bars, now, info);
       if (now > endAt || (game.finished && now > lastTime + 1.5)) {
@@ -85,6 +92,39 @@ export class PlayMode {
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
+  }
+
+  private autoIdx = 0;
+  private autoRoll = -1;
+  private autoSide: 'L' | 'R' = 'L';
+
+  private autoHit(game: Game, kind: 'don' | 'ka', at: number) {
+    this.autoSide = this.autoSide === 'L' ? 'R' : 'L';
+    this.audio.playHit(kind);
+    this.renderer.pushHit(kind, this.autoSide);
+    game.hit(kind, at);
+  }
+
+  private autoPlay(game: Game, now: number) {
+    const st = game.states;
+    while (this.autoIdx < st.length && st[this.autoIdx].note.time <= now) {
+      const s = st[this.autoIdx++];
+      const t = s.note.type;
+      if (s.done) continue;
+      if (t === 'don' || t === 'bigDon') this.autoHit(game, 'don', s.note.time);
+      else if (t === 'ka' || t === 'bigKa') this.autoHit(game, 'ka', s.note.time);
+    }
+    // 連打・風船は 1 秒に 15 回
+    for (const s of st) {
+      const n = s.note;
+      if (n.time > now) break;
+      if (s.done || n.endTime === undefined || now > n.endTime) continue;
+      if (now - this.autoRoll >= 1 / 15) {
+        this.autoRoll = now;
+        this.autoHit(game, 'don', now);
+      }
+      break;
+    }
   }
 
   finish() {

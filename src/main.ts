@@ -20,18 +20,20 @@ const esc = (s: string) =>
 
 const settings = {
   divisor: 4,
-  zoom: 120,
+  zoom: 220,
   rate: 1,
   speed: 1,
   offset: 0,
   hitSound: true,
   metronome: false,
+  auto: false,
 };
 try {
-  Object.assign(settings, JSON.parse(localStorage.getItem('malody-web:settings') ?? '{}'));
+  // 横スクロール化で拡大率の意味が変わったので v2 のキーで保存
+  Object.assign(settings, JSON.parse(localStorage.getItem('malody-web:settings2') ?? '{}'));
 } catch { /* 使えない環境 */ }
 const saveSettings = () => {
-  try { localStorage.setItem('malody-web:settings', JSON.stringify(settings)); } catch { /* 無視 */ }
+  try { localStorage.setItem('malody-web:settings2', JSON.stringify(settings)); } catch { /* 無視 */ }
 };
 
 // ---------- 本体 ----------
@@ -40,7 +42,7 @@ const audio = new AudioEngine();
 const ed = new Editor();
 ed.divisor = DIVISORS.includes(settings.divisor) ? settings.divisor : 4;
 const view = new EditorView($<HTMLCanvasElement>('editor'), ed);
-view.setZoom(settings.zoom);
+view.zoom = Math.min(1600, Math.max(20, settings.zoom || 220));
 const play = new PlayMode($('play'), $<HTMLCanvasElement>('game'), $('result'), audio, settings);
 
 let playable: Note[] = [];
@@ -69,7 +71,36 @@ async function setAudio(file: AudioFile | null, save = true) {
     toast(`「${file?.name}」はこのブラウザで再生できません（mp3 / m4a なら再生できます）`);
   }
   if (save) void saveAudio(file);
+  view.setWave(...computePeaks());
   updateHeader();
+}
+
+/** 波形用に 1 秒あたり 400 個の最大振幅を作る */
+function computePeaks(): [Float32Array | null, number] {
+  const buf = audio.buffer;
+  if (!buf) return [null, 0];
+  const rate = 400;
+  const n = Math.ceil(buf.duration * rate);
+  const peaks = new Float32Array(n);
+  const per = buf.sampleRate / rate;
+  for (let ch = 0; ch < Math.min(2, buf.numberOfChannels); ch++) {
+    const data = buf.getChannelData(ch);
+    for (let i = 0; i < n; i++) {
+      const a = Math.floor(i * per);
+      const b = Math.min(data.length, Math.floor((i + 1) * per));
+      let m = peaks[i];
+      for (let k = a; k < b; k += 4) {
+        const v = data[k] < 0 ? -data[k] : data[k];
+        if (v > m) m = v;
+      }
+      peaks[i] = m;
+    }
+  }
+  // 小さい曲でも見やすいように正規化
+  let max = 0;
+  for (const v of peaks) if (v > max) max = v;
+  if (max > 0) for (let i = 0; i < n; i++) peaks[i] = Math.min(1, peaks[i] / max);
+  return [peaks, rate];
 }
 
 // ---------- 再生 ----------
@@ -86,14 +117,15 @@ async function startPlayback() {
   await audio.startAt(from, settings.rate);
   lastTime = from;
   playing = true;
-  $('btnPlay').textContent = '❚❚';
+  view.playing = true;
+  view.invalidate();
 }
 
 function stopPlayback() {
   if (!playing) return;
   playing = false;
   audio.stop();
-  $('btnPlay').textContent = '▶';
+  view.playing = false;
   view.invalidate();
 }
 
@@ -135,13 +167,12 @@ requestAnimationFrame(loop);
 // ---------- ヘッダ・ツールバー ----------
 
 function updateHeader() {
-  const c = ed.course;
-  $('songTitle').textContent = ed.chart.title || '(無題)';
-  const audioLabel = ed.audio ? '' : ' · 音源なし';
-  $('songSub').textContent = `${c.name} ★${c.level} · ${c.notes.length}ノーツ${audioLabel}`;
   $<HTMLButtonElement>('btnUndo').disabled = !ed.canUndo;
   $<HTMLButtonElement>('btnRedo').disabled = !ed.canRedo;
-  $('btnRate').textContent = `${settings.rate.toFixed(settings.rate === 1 ? 1 : 2)}x`;
+  $('btnRate').querySelector('small')!.textContent = `${settings.rate.toFixed(settings.rate === 1 ? 1 : 2)}x`;
+  $('btnMetro').classList.toggle('on', settings.metronome);
+  $('divLabel').textContent = `1/${ed.divisor}`;
+  view.invalidate();
 }
 
 function setTool(t: Tool) {
@@ -163,16 +194,22 @@ divSel.innerHTML = DIVISORS.map((d) => `<option value="${d}">1/${d}</option>`).j
 divSel.value = String(ed.divisor);
 divSel.addEventListener('change', () => {
   ed.divisor = Number(divSel.value);
+  updateHeader();
   settings.divisor = ed.divisor;
   saveSettings();
   view.invalidate();
 });
 
-$('zoomIn').addEventListener('click', () => { view.setZoom(view.zoom * 1.25); settings.zoom = view.zoom; saveSettings(); });
-$('zoomOut').addEventListener('click', () => { view.setZoom(view.zoom / 1.25); settings.zoom = view.zoom; saveSettings(); });
+view.onZoomChange = (z) => { settings.zoom = z; saveSettings(); };
+$('btnMetro').addEventListener('click', () => {
+  settings.metronome = !settings.metronome;
+  saveSettings();
+  updateHeader();
+  toast(settings.metronome ? 'メトロノーム ON' : 'メトロノーム OFF');
+});
 $('btnUndo').addEventListener('click', () => ed.undo());
 $('btnRedo').addEventListener('click', () => ed.redo());
-$('btnPlay').addEventListener('click', () => (playing ? stopPlayback() : void startPlayback()));
+view.onPlayToggle = () => (playing ? stopPlayback() : void startPlayback());
 $('btnRate').addEventListener('click', () => {
   const rates = [1, 0.75, 0.5, 0.25];
   settings.rate = rates[(rates.indexOf(settings.rate) + 1) % rates.length] ?? 1;
@@ -229,8 +266,8 @@ window.addEventListener('keydown', (e) => {
     view.pos = Math.max(0, ed.snap(view.pos) + ticks);
     view.invalidate();
   };
-  if (e.code === 'ArrowUp') move(ed.step);
-  else if (e.code === 'ArrowDown') move(-ed.step);
+  if (e.code === 'ArrowRight' || e.code === 'ArrowUp') move(ed.step);
+  else if (e.code === 'ArrowLeft' || e.code === 'ArrowDown') move(-ed.step);
   else if (e.code === 'PageUp') move(ed.measureOf(view.pos).length);
   else if (e.code === 'PageDown') move(-ed.measureOf(Math.max(0, view.pos - 1)).length);
   else if (e.code === 'Home') move(-view.pos);
@@ -325,6 +362,7 @@ function renderSheet() {
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
       <label class="field"><span>判定調整 ms</span><input type="range" min="-200" max="200" step="5" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
+      <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
   } else if (sheet === 'events') {
     $('sheetTitle').textContent = 'イベント';
@@ -550,7 +588,7 @@ async function startTest() {
     return;
   }
   const from = ed.timing.tickToTime(ed.snap(Math.max(0, view.pos)));
-  await play.start(course, from, { title: ed.chart.title, course: `${ed.course.name} ★${ed.course.level}` });
+  await play.start(course, from, { title: ed.chart.title, course: ed.course.name, level: ed.course.level });
 }
 
 $('btnTest').addEventListener('click', () => void startTest());

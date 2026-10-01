@@ -13,12 +13,15 @@ export interface NoteState {
   judge?: Judge;
   /** 連打数・風船の打数 */
   count: number;
+  /** 叩かずに見逃した（画面左まで流れ続ける） */
+  missed?: boolean;
 }
 
 export interface JudgeEvent {
   judge: Judge;
   note: Note;
   delta: number; // 叩いた時刻 - ノーツ時刻（＋で遅い）
+  missed: boolean;
 }
 
 export interface Stats {
@@ -29,18 +32,24 @@ export interface Stats {
   maxCombo: number;
   rolls: number;
   score: number;
+  /** 魂ゲージ 0〜100（80 でクリア） */
+  gauge: number;
 }
+
+export const CLEAR_LINE = 80;
 
 /**
  * 判定ロジック本体。描画や入力から独立しているのでテストしやすい。
  */
 export class Game {
   readonly states: NoteState[];
-  readonly stats: Stats = { good: 0, ok: 0, bad: 0, combo: 0, maxCombo: 0, rolls: 0, score: 0 };
+  readonly stats: Stats = { good: 0, ok: 0, bad: 0, combo: 0, maxCombo: 0, rolls: 0, score: 0, gauge: 0 };
   /** 次に判定する普通ノーツのインデックス */
   private cursor = 0;
   private readonly hitIdx: number[];
   onJudge: (e: JudgeEvent) => void = () => {};
+  /** 連打・風船を叩いたとき */
+  onRoll: (s: NoteState) => void = () => {};
 
   constructor(notes: Note[]) {
     this.states = notes
@@ -64,6 +73,7 @@ export class Game {
       const s = this.states[this.hitIdx[this.cursor]];
       if (s.done) { this.cursor++; continue; }
       if (now - s.note.time > WINDOW.bad) {
+        s.missed = true;
         this.apply(s, 'bad', now - s.note.time);
         this.cursor++;
       } else break;
@@ -110,6 +120,7 @@ export class Game {
         this.stats.rolls++;
         this.stats.score += n.type === 'bigRoll' ? 200 : 100;
       }
+      this.onRoll(ls);
       return;
     }
   }
@@ -138,6 +149,10 @@ export class Game {
       if (s.note.gogo) pts = Math.round(pts * 1.2);
       st.score += pts;
     }
-    this.onJudge({ judge, note: s.note, delta });
+    // 全部「良」でちょうど満タン、「可」は半分、「不可」は 2 倍減る
+    const unit = 100 / Math.max(1, this.hitIdx.length);
+    const dg = judge === 'good' ? unit : judge === 'ok' ? unit * 0.5 : -unit * 2;
+    st.gauge = Math.min(100, Math.max(0, st.gauge + dg));
+    this.onJudge({ judge, note: s.note, delta, missed: !!s.missed });
   }
 }

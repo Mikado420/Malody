@@ -21,6 +21,10 @@ export class AudioEngine {
     this.music = buf ? await this.ctx.decodeAudioData(buf) : null;
   }
 
+  get buffer() {
+    return this.music;
+  }
+
   get hasMusic() {
     return this.music !== null;
   }
