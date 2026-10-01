@@ -112,26 +112,72 @@ export class AudioEngine {
     osc.stop(t + 0.05);
   }
 
-  /** 叩いた音（簡易シンセ。素材差し替え時はここを AudioBuffer 再生に） */
-  playHit(kind: 'don' | 'ka') {
-    const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    if (kind === 'don') {
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(160, t);
-      osc.frequency.exponentialRampToValueAtTime(60, t + 0.12);
-      g.gain.setValueAtTime(1, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
-    } else {
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(1200, t);
-      osc.frequency.exponentialRampToValueAtTime(700, t + 0.05);
-      g.gain.setValueAtTime(0.5, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.08);
+  // ---------- 打音 ----------
+  // 叩くたびに音を合成すると、速く叩いたときに端末の負荷で音が途切れることがあるので、
+  // 打音は最初に一度だけ AudioBuffer にしておき、叩くたびにそれを鳴らすだけにする。
+
+  private hitBuffers: Record<'don' | 'ka', AudioBuffer | null> = { don: null, ka: null };
+  private customHit: Record<'don' | 'ka', AudioBuffer | null> = { don: null, ka: null };
+  private voices: Record<'don' | 'ka', { src: AudioBufferSourceNode; g: GainNode }[]> = { don: [], ka: [] };
+
+  /** 自分で用意した打音（ogg / mp3 / wav など）。null で内蔵の音に戻す */
+  async setCustomHit(kind: 'don' | 'ka', data: ArrayBuffer | null) {
+    this.customHit[kind] = data ? await this.ctx.decodeAudioData(data.slice(0)) : null;
+  }
+
+  hasCustomHit(kind: 'don' | 'ka') {
+    return this.customHit[kind] !== null;
+  }
+
+  /** 内蔵の打音（オリジナルの合成音）を AudioBuffer として作る */
+  private builtinHit(kind: 'don' | 'ka'): AudioBuffer {
+    const cached = this.hitBuffers[kind];
+    if (cached) return cached;
+    const sr = this.ctx.sampleRate;
+    const len = Math.round(sr * (kind === 'don' ? 0.22 : 0.1));
+    const buf = this.ctx.createBuffer(1, len, sr);
+    const d = buf.getChannelData(0);
+    let phase = 0;
+    for (let i = 0; i < len; i++) {
+      const t = i / sr;
+      if (kind === 'don') {
+        const f = 60 + 100 * Math.exp(-t / 0.035); // 160Hz → 60Hz
+        phase += (2 * Math.PI * f) / sr;
+        d[i] = Math.sin(phase) * Math.exp(-t / 0.05) * 0.95;
+      } else {
+        const f = 700 + 500 * Math.exp(-t / 0.012);
+        phase += (2 * Math.PI * f) / sr;
+        const tri = (2 / Math.PI) * Math.asin(Math.sin(phase));
+        d[i] = (tri * 0.45 + (Math.random() * 2 - 1) * 0.15) * Math.exp(-t / 0.022);
+      }
     }
-    osc.connect(g).connect(this.sfxGain);
-    osc.start(t);
-    osc.stop(t + 0.2);
+    this.hitBuffers[kind] = buf;
+    return buf;
+  }
+
+  /** 叩いた音。同じ種類の音は同時に 4 つまで（古いものから素早く消す） */
+  playHit(kind: 'don' | 'ka') {
+    const ctx = this.ctx;
+    if (ctx.state !== 'running') void ctx.resume();
+    const t = ctx.currentTime;
+    const list = this.voices[kind];
+    while (list.length >= 4) {
+      const old = list.shift()!;
+      old.g.gain.setTargetAtTime(0, t, 0.005);
+      try { old.src.stop(t + 0.03); } catch { /* 停止済み */ }
+    }
+    const src = ctx.createBufferSource();
+    src.buffer = this.customHit[kind] ?? this.builtinHit(kind);
+    const g = ctx.createGain();
+    src.connect(g).connect(this.sfxGain);
+    src.start(t);
+    const v = { src, g };
+    list.push(v);
+    src.onended = () => {
+      const i = list.indexOf(v);
+      if (i >= 0) list.splice(i, 1);
+      src.disconnect();
+      g.disconnect();
+    };
   }
 }

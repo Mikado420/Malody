@@ -77,7 +77,10 @@ export class Renderer {
   private rollFx: { count: number; t: number; balloon: boolean } | null = null;
   private labels = new WeakMap<Game, Map<Note, string>>();
   private topPattern: CanvasPattern | null = null;
-  private bandPattern: CanvasPattern | null = null;
+  private topTile: HTMLCanvasElement | null = null;
+  private bandTile: HTMLCanvasElement | null = null;
+  /** 動かない背景（上の模様・下の背景・帯）を前もって描いておいたもの */
+  private bg: HTMLCanvasElement | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!;
@@ -89,7 +92,8 @@ export class Renderer {
   // ---------- レイアウト ----------
 
   resize() {
-    this.dpr = window.devicePixelRatio || 1;
+    // 高解像度の端末でも描く量を抑える（3倍だと1フレームの塗りが多すぎて、叩いた処理が遅れることがある）
+    this.dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
     this.canvas.width = Math.round(w * this.dpr);
@@ -115,6 +119,64 @@ export class Renderer {
       drumY: this.sy(this.pad.y),
       drumR: r * s,
     };
+    this.buildBackground();
+  }
+
+  /** 動かない背景を一度だけ描いておく（毎フレームはこれをコピーするだけ） */
+  private buildBackground() {
+    const bg = this.bg ?? document.createElement('canvas');
+    bg.width = this.canvas.width;
+    bg.height = this.canvas.height;
+    const c = bg.getContext('2d')!;
+    c.fillStyle = '#000';
+    c.fillRect(0, 0, bg.width, bg.height);
+    c.setTransform(this.dpr * this.s, 0, 0, this.dpr * this.s, this.dpr * this.ox, this.dpr * this.oy);
+    c.beginPath();
+    c.rect(0, 0, REF_W, REF_H);
+    c.clip();
+    const V = this.vis;
+    // 上の模様
+    c.fillStyle = (this.topTile && c.createPattern(this.topTile, 'repeat')) || '#e43b55';
+    c.fillRect(V.x0, V.y0, V.x1 - V.x0, LANE_TOP - V.y0);
+    // 下の背景
+    const top = TEXT_BOTTOM;
+    const g = c.createLinearGradient(0, top, 0, V.y1);
+    g.addColorStop(0, '#2b2148');
+    g.addColorStop(1, '#5b3360');
+    c.fillStyle = g;
+    c.fillRect(V.x0, top, V.x1 - V.x0, V.y1 - top);
+    if (!this.touch) {
+      // 提灯の列
+      c.strokeStyle = 'rgba(0,0,0,0.5)';
+      c.lineWidth = 3;
+      c.beginPath();
+      c.moveTo(V.x0, top + 60);
+      for (let x = V.x0; x <= V.x1 + 200; x += 200) c.quadraticCurveTo(x + 100, top + 100, x + 200, top + 60);
+      c.stroke();
+      for (let x = Math.floor(V.x0 / 200) * 200 + 100; x < V.x1; x += 200) {
+        const y = top + 120;
+        c.fillStyle = '#d8392a';
+        c.beginPath();
+        c.ellipse(x, y, 34, 44, 0, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = '#1b1210';
+        c.fillRect(x - 18, y - 50, 36, 10);
+        c.fillRect(x - 18, y + 40, 36, 10);
+        c.fillStyle = 'rgba(255,230,160,0.35)';
+        c.beginPath();
+        c.ellipse(x, y, 18, 36, 0, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+    // 一番下の帯
+    c.save();
+    c.translate(0, V.y1 - 66);
+    c.fillStyle = (this.bandTile && c.createPattern(this.bandTile, 'repeat')) || '#d6402c';
+    c.fillRect(V.x0, 0, V.x1 - V.x0, 66);
+    c.restore();
+    c.fillStyle = '#120c0a';
+    c.fillRect(V.x0, V.y1 - 70, V.x1 - V.x0, 4);
+    this.bg = bg;
   }
 
   private sx(x: number) { return x * this.s + this.ox; }
@@ -137,6 +199,7 @@ export class Renderer {
       }
     };
     for (const [x, y] of [[0, 30], [120, 30], [60, 60], [0, 90], [120, 90], [60, 0], [-60, 60], [180, 60]]) wave(x, y);
+    this.topTile = t;
     this.topPattern = this.ctx.createPattern(t, 'repeat');
 
     // 下の帯: 色違いの市松
@@ -156,7 +219,7 @@ export class Renderer {
         d.stroke();
       }
     }
-    this.bandPattern = this.ctx.createPattern(b, 'repeat');
+    this.bandTile = b;
   }
 
   // ---------- 演出の受け口 ----------
@@ -213,8 +276,12 @@ export class Renderer {
     const gogo = course.gogo.some(([a, b]) => now >= a && now < b);
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    if (this.bg && this.bg.width === this.canvas.width && this.bg.height === this.canvas.height) {
+      ctx.drawImage(this.bg, 0, 0);
+    } else {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    }
     ctx.setTransform(this.dpr * this.s, 0, 0, this.dpr * this.s, this.dpr * this.ox, this.dpr * this.oy);
     ctx.save();
     ctx.beginPath();
@@ -244,67 +311,32 @@ export class Renderer {
 
   private drawTop(V: Rect, gogo: boolean, wall: number) {
     const ctx = this.ctx;
-    ctx.fillStyle = this.topPattern ?? '#e43b55';
-    ctx.fillRect(V.x0, V.y0, V.x1 - V.x0, LANE_TOP - V.y0);
+    if (!this.bg) {
+      ctx.fillStyle = this.topPattern ?? '#e43b55';
+      ctx.fillRect(V.x0, V.y0, V.x1 - V.x0, LANE_TOP - V.y0);
+    }
     if (gogo) {
       ctx.fillStyle = `rgba(255,190,60,${0.16 + 0.08 * Math.sin(wall / 120)})`;
       ctx.fillRect(V.x0, V.y0, V.x1 - V.x0, LANE_TOP - V.y0);
     }
   }
 
+  /** 下の背景は前もって描いてあるので、ここでは舞う花びら（パソコンのみ）だけ描く */
   private drawBottom(V: Rect, wall: number) {
+    if (this.touch) return;
     const ctx = this.ctx;
     const top = TEXT_BOTTOM;
-    const g = ctx.createLinearGradient(0, top, 0, V.y1);
-    g.addColorStop(0, '#2b2148');
-    g.addColorStop(1, '#5b3360');
-    ctx.fillStyle = g;
-    ctx.fillRect(V.x0, top, V.x1 - V.x0, V.y1 - top);
-
-    if (!this.touch) {
-      // 提灯の列
-      ctx.strokeStyle = 'rgba(0,0,0,0.5)';
-      ctx.lineWidth = 3;
+    ctx.fillStyle = 'rgba(255,190,215,0.8)';
+    for (let i = 0; i < 26; i++) {
+      const sp = 40 + (i * 37) % 60;
+      const x = V.x0 + (((i * 173 + wall / 1000 * sp * 2) % (V.x1 - V.x0 + 100)) - 50);
+      const y = top + 30 + (((i * 97 + wall / 1000 * sp) % (V.y1 - top - 90)));
       ctx.beginPath();
-      ctx.moveTo(V.x0, top + 60);
-      for (let x = V.x0; x <= V.x1 + 200; x += 200) ctx.quadraticCurveTo(x + 100, top + 100, x + 200, top + 60);
-      ctx.stroke();
-      for (let x = Math.floor(V.x0 / 200) * 200 + 100; x < V.x1; x += 200) {
-        const sway = Math.sin(wall / 700 + x) * 3;
-        const y = top + 120;
-        ctx.fillStyle = '#d8392a';
-        ctx.beginPath();
-        ctx.ellipse(x + sway, y, 34, 44, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = '#1b1210';
-        ctx.fillRect(x + sway - 18, y - 50, 36, 10);
-        ctx.fillRect(x + sway - 18, y + 40, 36, 10);
-        ctx.fillStyle = 'rgba(255,230,160,0.35)';
-        ctx.beginPath();
-        ctx.ellipse(x + sway, y, 18, 36, 0, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // 舞う花びら
-      ctx.fillStyle = 'rgba(255,190,215,0.8)';
-      for (let i = 0; i < 26; i++) {
-        const sp = 40 + (i * 37) % 60;
-        const x = V.x0 + (((i * 173 + wall / 1000 * sp * 2) % (V.x1 - V.x0 + 100)) - 50);
-        const y = top + 30 + (((i * 97 + wall / 1000 * sp) % (V.y1 - top - 90)));
-        ctx.beginPath();
-        ctx.ellipse(x, y, 9, 5, (wall / 600 + i) % Math.PI, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      ctx.ellipse(x, y, 9, 5, (wall / 600 + i) % Math.PI, 0, Math.PI * 2);
+      ctx.fill();
     }
-
-    // 一番下の帯
-    ctx.save();
-    ctx.translate(0, V.y1 - 66);
-    ctx.fillStyle = this.bandPattern ?? '#d6402c';
-    ctx.fillRect(V.x0, 0, V.x1 - V.x0, 66);
-    ctx.restore();
-    ctx.fillStyle = '#120c0a';
-    ctx.fillRect(V.x0, V.y1 - 70, V.x1 - V.x0, 4);
   }
+
 
   private drawLane(V: Rect, game: Game, bars: Course['bars'], now: number, gogo: boolean, wall: number) {
     const ctx = this.ctx;

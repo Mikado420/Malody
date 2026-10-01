@@ -8,7 +8,7 @@ import { DEMO_TJA } from './demo';
 import { DIVISORS, Editor, type Tool } from './editor/editor';
 import { EditorView, eventText } from './editor/view';
 import { loadFiles, type AudioFile } from './io/load';
-import { loadAudio, loadChart, saveAudio, saveChart } from './io/storage';
+import { loadAudio, loadChart, loadHitSound, saveAudio, saveChart, saveHitSound } from './io/storage';
 import { writeZip } from './io/zip';
 import { PlayMode } from './play/playmode';
 import { fitRoot } from './orient';
@@ -382,6 +382,13 @@ function renderSheet() {
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
       <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
+      <h3>打音</h3>
+      <p class="note">ドン: ${esc(hitNames.don ?? '内蔵の音')} ／ カッ: ${esc(hitNames.ka ?? '内蔵の音')}<br>
+        ファイル名に「don」が入っているものをドン、「ka」が入っているものをカッにします（例: dong.ogg / ka.ogg）。読み込んだ音はこの端末の中だけに保存されます。</p>
+      <div class="btns">
+        <button data-act="hitLoad">打音ファイルを選ぶ</button>
+        <button data-act="hitReset" ${hitNames.don || hitNames.ka ? '' : 'disabled'}>内蔵の音に戻す</button>
+      </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
       <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
@@ -593,6 +600,16 @@ async function fileAction(act: string) {
     const name = COURSE_NAMES.find((n) => !used.has(n)) ?? 'Edit';
     ed.addCourse(name, act === 'dupCourse' ? ed.course.level : 1, act === 'dupCourse' ? ed.course : undefined);
     toast(`${name} を${act === 'dupCourse' ? '複製して' : ''}追加しました`);
+  } else if (act === 'hitLoad') {
+    $<HTMLInputElement>('fileHit').click();
+  } else if (act === 'hitReset') {
+    for (const k of ['don', 'ka'] as const) {
+      await audio.setCustomHit(k, null);
+      hitNames[k] = null;
+      void saveHitSound(k, null);
+    }
+    renderSheet();
+    toast('打音を内蔵の音に戻しました');
   } else if (act === 'resetZoom') {
     settings.zoomSet = false;
     saveSettings();
@@ -602,6 +619,43 @@ async function fileAction(act: string) {
     if (confirm(`${ed.course.name} を削除しますか？`)) ed.removeCourse(ed.courseIndex);
   }
 }
+
+// ---------- 打音 ----------
+
+const hitNames: Record<'don' | 'ka', string | null> = { don: null, ka: null };
+
+async function applyHitSound(kind: 'don' | 'ka', f: AudioFile | null, save: boolean) {
+  try {
+    await audio.setCustomHit(kind, f ? f.data : null);
+    hitNames[kind] = f ? f.name : null;
+    if (save) void saveHitSound(kind, f);
+    return true;
+  } catch {
+    toast(`「${f?.name}」はこのブラウザで再生できません`);
+    return false;
+  }
+}
+
+$<HTMLInputElement>('fileHit').addEventListener('change', async () => {
+  const input = $<HTMLInputElement>('fileHit');
+  const files = Array.from(input.files ?? []);
+  input.value = '';
+  if (!files.length) return;
+  const pick = (re: RegExp) => files.find((f) => re.test(f.name.replace(/\.[^.]+$/, '')));
+  let don = pick(/don/i);
+  let ka = pick(/(^|[^a-z])ka|katsu|kat/i);
+  // 名前で分けられないときは 1 つ目をドン、2 つ目をカッ
+  if (!don && !ka) [don, ka] = files;
+  const done: string[] = [];
+  for (const [kind, f] of [['don', don], ['ka', ka]] as const) {
+    if (!f) continue;
+    if (await applyHitSound(kind, { name: f.name, data: await f.arrayBuffer() }, true)) {
+      done.push(kind === 'don' ? 'ドン' : 'カッ');
+    }
+  }
+  if (done.length) toast(`${done.join('・')}の打音を読み込みました`);
+  renderSheet();
+});
 
 // ---------- テストプレイ ----------
 
@@ -632,6 +686,10 @@ play.onExit = () => view.invalidate();
 // ---------- 起動 ----------
 
 async function boot() {
+  for (const k of ['don', 'ka'] as const) {
+    const f = await loadHitSound(k);
+    if (f) await applyHitSound(k, f, false);
+  }
   const saved = await loadChart();
   if (saved?.chart?.courses?.length) {
     ed.load(saved.chart, null, saved.courseIndex);
