@@ -1,11 +1,8 @@
 import type { HitKind } from './engine/game';
 import { localPoint } from './orient';
 
-/** タッチ用の太鼓で、面（ドン）の半径が太鼓全体の何割か */
-export const FACE_RATIO = 0.8;
-
-/** at = 叩いた瞬間（performance.now() 基準の ms） */
-export type HitHandler = (kind: HitKind, side: 'L' | 'R', at: number) => void;
+/** at = 叩いた瞬間（performance.now() 基準の ms）、pt = タッチした場所（キーボードのときはなし） */
+export type HitHandler = (kind: HitKind, side: 'L' | 'R', at: number, pt?: { x: number; y: number }) => void;
 
 /** イベントの timeStamp を performance.now() 基準の時刻として使う（古いブラウザの別基準の値は捨てる） */
 function eventTime(ts: number): number {
@@ -23,11 +20,11 @@ export const DEFAULT_KEYS: Record<string, { kind: HitKind; side: 'L' | 'R' }> = 
 
 /**
  * キーボードとタッチ（ポインタ）入力。
- * タッチは太鼓の中心からの距離で ドン/カッ を判定する。
+ * タッチは太鼓の面の楕円の中か外かで ドン/カッ を判定する。
  */
 export function bindInput(
   canvas: HTMLCanvasElement,
-  getDrum: () => { x: number; y: number; r: number },
+  getDrum: () => { x: number; y: number; rx: number; ry: number },
   onHit: HitHandler,
 ): () => void {
   const onKey = (e: KeyboardEvent) => {
@@ -43,10 +40,11 @@ export function bindInput(
   const hitAt = (clientX: number, clientY: number, at: number) => {
     const { x: px, y: py } = localPoint({ clientX, clientY }, canvas);
     const d = getDrum();
-    // 画面のどこを叩いても反応する（太鼓の面の円の中＝ドン、それ以外はすべてカッ）
-    const dist = Math.hypot(px - d.x, py - d.y);
+    // 画面のどこを叩いても反応する（太鼓の面の楕円の中＝ドン、それ以外はすべてカッ）
+    const nx = (px - d.x) / d.rx;
+    const ny = (py - d.y) / d.ry;
     const side = px < d.x ? 'L' : 'R';
-    onHit(dist <= d.r * FACE_RATIO ? 'don' : 'ka', side, at);
+    onHit(nx * nx + ny * ny <= 1 ? 'don' : 'ka', side, at, { x: px, y: py });
   };
 
   // タッチは touchstart で直接受ける。

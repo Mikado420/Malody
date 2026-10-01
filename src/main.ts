@@ -685,9 +685,27 @@ play.onExit = () => view.invalidate();
 
 // ---------- 起動 ----------
 
+/**
+ * サイトに置かれた打音（public/sounds/dong.* と ka.*）を探す。
+ * リポジトリに打音ファイルを置けば、全員の既定の打音になる（端末で読み込んだ音があればそちらが優先）。
+ */
+async function siteHitSound(kind: 'don' | 'ka'): Promise<AudioFile | null> {
+  const names = kind === 'don' ? ['dong', 'don'] : ['ka'];
+  for (const n of names) {
+    for (const ext of ['ogg', 'mp3', 'm4a', 'wav']) {
+      try {
+        const res = await fetch(`sounds/${n}.${ext}`, { cache: 'no-cache' });
+        const type = res.headers.get('content-type') ?? '';
+        if (res.ok && !type.includes('text/html')) return { name: `${n}.${ext}`, data: await res.arrayBuffer() };
+      } catch { /* ない */ }
+    }
+  }
+  return null;
+}
+
 async function boot() {
   for (const k of ['don', 'ka'] as const) {
-    const f = await loadHitSound(k);
+    const f = (await loadHitSound(k)) ?? (await siteHitSound(k));
     if (f) await applyHitSound(k, f, false);
   }
   const saved = await loadChart();

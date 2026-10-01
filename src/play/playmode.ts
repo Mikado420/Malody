@@ -34,12 +34,13 @@ export class PlayMode {
       canvas,
       () => {
         const L = this.renderer.layout;
-        return { x: L.drumX, y: L.drumY, r: L.drumR };
+        return { x: L.drumX, y: L.drumY, rx: L.drumRx, ry: L.drumRy };
       },
-      (kind, side, at) => {
+      (kind, side, at, pt) => {
         if (!this.active || !this.game) return;
         this.audio.playHit(kind);
         this.renderer.pushHit(kind, side);
+        if (pt) this.renderer.pushTouch(kind, pt.x, pt.y);
         // 叩いた瞬間の時刻で判定（処理が遅れてもずれない）
         this.game.hit(kind, this.time(at));
       },

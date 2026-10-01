@@ -1,6 +1,5 @@
 import type { Course, Note } from '../chart/types';
 import { CLEAR_LINE, type Game, type HitKind, type Judge, type JudgeEvent, type NoteState } from '../engine/game';
-import { FACE_RATIO } from '../input';
 import { BIG_SCALE, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
 
 /**
@@ -47,7 +46,9 @@ export interface Layout {
   judgeX: number;
   drumX: number;
   drumY: number;
-  drumR: number;
+  /** 面（ドン）の楕円の半径（画面 px） */
+  drumRx: number;
+  drumRy: number;
 }
 
 const ease = (x: number) => 1 - (1 - x) * (1 - x);
@@ -64,11 +65,13 @@ export class Renderer {
   private ox = 0;
   private oy = 0;
   private vis = { x0: 0, y0: 0, x1: REF_W, y1: REF_H };
-  private pad = { x: 0, y: 0, r: 0 }; // 画面下の太鼓（基準座標）
+  /** 画面下の太鼓（画面 px） */
+  private pad = { x: 0, y: 0, faceRx: 1, faceRy: 1, rimRx: 1, rimRy: 1 };
 
   private bursts: Burst[] = [];
   private flyers: Flyer[] = [];
   private flashes: Flash[] = [];
+  private touches: { kind: HitKind; x: number; y: number; t: number }[] = [];
   private judgeFx: { judge: Judge; t: number } | null = null;
   private comboPop = 0;
   private lastCombo = 0;
@@ -106,18 +109,31 @@ export class Renderer {
     const s = this.s;
     this.vis = { x0: 0, y0: 0, x1: REF_W, y1: REF_H };
 
-    // 画面下の太鼓（タッチ用）: 下半分いっぱいの大きな太鼓。下側は画面外にはみ出す
-    const r = 400;
-    this.pad = { x: REF_W / 2, y: TEXT_BOTTOM + 14 + r, r };
+    // タッチ用の太鼓（画面 px）。斜めから見た太鼓のような横長の楕円で、16:9 の外の黒帯まで含めた
+    // 画面の横幅いっぱいに置く。横持ちで両手の親指が自然に置かれる左右の下側も面（ドン）に入る。
+    {
+      const laneBottom = this.sy(TEXT_BOTTOM);
+      const cy = h + (h - laneBottom) * 0.12;
+      const rimRy = cy - laneBottom - 8 * (h / 400);
+      this.pad = {
+        x: w / 2,
+        y: cy,
+        rimRx: w * 0.5,
+        rimRy,
+        faceRx: w * 0.44,
+        faceRy: rimRy * 0.82,
+      };
+    }
 
     this.layout = {
       w, h,
       laneY: this.sy(LANE_TOP),
       laneH: (TEXT_BOTTOM - LANE_TOP) * s,
       judgeX: this.sx(JX),
-      drumX: this.sx(this.pad.x),
-      drumY: this.sy(this.pad.y),
-      drumR: r * s,
+      drumX: this.pad.x,
+      drumY: this.pad.y,
+      drumRx: this.pad.faceRx,
+      drumRy: this.pad.faceRy,
     };
     this.buildBackground();
   }
@@ -303,8 +319,11 @@ export class Renderer {
     this.drawJudgeText(wall);
     this.drawFlyers(wall);
     this.drawBanner(wall);
-    if (this.touch) this.drawPad(wall);
     ctx.restore();
+    if (this.touch) {
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      this.drawPad(wall);
+    }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
@@ -800,50 +819,70 @@ export class Renderer {
   /** 画面下の太鼓（タッチ用）。後ろの背景が見えるように半透明 */
   private drawPad(wall: number) {
     const ctx = this.ctx;
-    const { x, y, r } = this.pad;
-    const face = r * FACE_RATIO;
+    const P = this.pad;
+    const ell = (rx: number, ry: number) => {
+      ctx.beginPath();
+      ctx.ellipse(P.x, P.y, rx, ry, 0, 0, Math.PI * 2);
+    };
     ctx.save();
-    ctx.globalAlpha = 0.55;
-    // 縁（カッ）
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.globalAlpha = 0.5;
+    ell(P.rimRx, P.rimRy); // 縁（カッ）
     ctx.fillStyle = '#8a2f1a';
     ctx.fill();
-    ctx.lineWidth = 6;
+    ctx.lineWidth = 3;
     ctx.strokeStyle = '#1f0c06';
     ctx.stroke();
-    // 面（ドン）
-    ctx.beginPath();
-    ctx.arc(x, y, face, 0, Math.PI * 2);
+    ell(P.faceRx, P.faceRy); // 面（ドン）
     ctx.fillStyle = '#f4e6c8';
     ctx.fill();
     ctx.stroke();
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(x - 2, y - face, 4, face * 2);
+    ctx.fillRect(P.x - 2, P.y - P.faceRy, 4, P.faceRy * 2);
     ctx.restore();
 
+    // 叩いた側の面・縁が光る
     for (const f of this.flashes) {
       const a = 1 - (wall - f.t) / 150;
       if (a <= 0) continue;
       const start = f.side === 'L' ? Math.PI / 2 : -Math.PI / 2;
+      ctx.save();
       ctx.beginPath();
       if (f.kind === 'don') {
-        ctx.moveTo(x, y);
-        ctx.arc(x, y, face, start, start + Math.PI);
-        ctx.fillStyle = `rgba(255,80,40,${0.55 * a})`;
+        ctx.moveTo(P.x, P.y);
+        ctx.ellipse(P.x, P.y, P.faceRx, P.faceRy, 0, start, start + Math.PI);
+        ctx.fillStyle = `rgba(255,80,40,${0.45 * a})`;
         ctx.fill();
       } else {
-        ctx.arc(x, y, (r + face) / 2, start, start + Math.PI);
-        ctx.lineWidth = r - face;
-        ctx.strokeStyle = `rgba(70,200,240,${0.7 * a})`;
-        ctx.stroke();
+        ctx.ellipse(P.x, P.y, P.rimRx, P.rimRy, 0, start, start + Math.PI);
+        ctx.ellipse(P.x, P.y, P.faceRx, P.faceRy, 0, start + Math.PI, start, true);
+        ctx.fillStyle = `rgba(70,200,240,${0.6 * a})`;
+        ctx.fill();
       }
+      ctx.restore();
     }
-    ctx.font = `700 26px ${FONT}`;
+
+    // 指が触れた場所の波紋（ドン＝赤、カッ＝青）。どちらと判定されたかが分かるように
+    for (const t of this.touches) {
+      const p = (wall - t.t) / 260;
+      if (p < 0 || p > 1) continue;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, (30 + 70 * ease(p)) * this.s, 0, Math.PI * 2);
+      ctx.lineWidth = (10 * (1 - p) + 2) * this.s;
+      ctx.strokeStyle = t.kind === 'don' ? `rgba(255,70,40,${1 - p})` : `rgba(60,190,240,${1 - p})`;
+      ctx.stroke();
+    }
+
+    ctx.font = `700 ${Math.round(26 * this.s)}px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillText('面＝ドン　それ以外（画面のどこでも）＝カッ', x, y - face + 40);
+    ctx.fillText('面＝ドン　それ以外（画面のどこでも）＝カッ', P.x, P.y - P.faceRy + 40 * this.s);
+  }
+
+  /** 指が触れた場所（画面 px）を記録して波紋を出す */
+  pushTouch(kind: HitKind, sx: number, sy: number) {
+    this.touches.push({ kind, x: sx, y: sy, t: performance.now() });
+    if (this.touches.length > 10) this.touches.shift();
   }
 }
 
