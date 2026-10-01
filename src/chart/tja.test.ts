@@ -182,6 +182,34 @@ describe('Game 判定', () => {
     ]);
   });
 
+  const mk = (spec: [string, number, number?][]) =>
+    spec.map(([type, time, endTime]) => ({ type, time, endTime, bpm: 120, scroll: 1, gogo: false, hits: 5 })) as never;
+
+  it('1つ見逃しても、次のノーツは叩いた時刻に近いほうで判定される', () => {
+    // 16分（0.1秒間隔）の連打で 1 つ目を叩かず、2 つ目以降をちょうどで叩く
+    const g = new Game(mk([['don', 1], ['don', 1.1], ['don', 1.2], ['don', 1.3]]));
+    g.hit('don', 1.1);
+    g.hit('don', 1.2);
+    g.hit('don', 1.3);
+    g.update(1.5);
+    expect([g.stats.good, g.stats.bad]).toEqual([3, 1]);
+  });
+
+  it('大音符を両手で叩いた 2 打目は次のノーツに使われない', () => {
+    const g = new Game(mk([['bigDon', 1], ['don', 1.1]]));
+    g.hit('don', 1.0);
+    g.hit('don', 1.02); // 両手の 2 打目
+    g.hit('don', 1.1);
+    expect([g.stats.good, g.stats.bad]).toEqual([2, 0]);
+  });
+
+  it('連打の最中に叩いた分は、すぐ後のノーツの判定に使われない', () => {
+    const g = new Game(mk([['roll', 1, 1.5], ['don', 1.55]]));
+    for (const t of [1.0, 1.1, 1.2, 1.3, 1.45, 1.5]) g.hit('don', t);
+    g.hit('don', 1.55);
+    expect([g.stats.rolls, g.stats.good, g.stats.bad]).toEqual([6, 1, 0]);
+  });
+
   it('見逃しは不可', () => {
     const g = new Game(notes);
     g.update(1.5);

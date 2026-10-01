@@ -7,6 +7,9 @@ export type HitKind = 'don' | 'ka';
 /** 浮動小数点の誤差の吸収（0.001ms） */
 const EPS = 1e-6;
 
+/** 大音符の両手打ちを待つ時間（秒）。TNDE の BigNotesWaitTime と同じ 50ms */
+export const BIG_WAIT = 0.05;
+
 export const WINDOW = { good: 0.025, ok: 0.075, bad: 0.114 } as const;
 
 export interface NoteState {
@@ -90,34 +93,28 @@ export class Game {
     }
   }
 
+  /** 大音符を叩いた直後の、両手打ちの 2 打目を待っている状態 */
+  private bigWait: { kind: HitKind; at: number } | null = null;
+
   /** 叩いたときに呼ぶ */
   hit(kind: HitKind, now: number) {
-    // 1) 判定幅内の普通ノーツを優先
-    const s = this.nextHitNote();
-    if (s) {
-      const delta = now - s.note.time;
-      // 境界ちょうど（例: 25ms）が浮動小数点の誤差で外れないよう、わずかに余裕を持たせる
-      const ad = Math.abs(delta) - EPS;
-      if (ad <= WINDOW.bad) {
-        const colorOk = (kind === 'don') === isDon(s.note.type);
-        let judge: Judge = 'bad';
-        if (colorOk) {
-          judge = ad <= WINDOW.good ? 'good' : ad <= WINDOW.ok ? 'ok' : 'bad';
-          this.deltas.push(delta);
-        }
-        this.apply(s, judge, delta);
-        return;
-      }
+    // 1) 大音符の両手打ち: 大音符を叩いてから 50ms 以内の同じ色の 2 打目は、次のノーツの判定に使わない
+    //    （使うと次のノーツが「早い不可」になる。TNDE の BigNotesWaitTime=50ms と同じ考え方）
+    const bw = this.bigWait;
+    if (bw && kind === bw.kind && now >= bw.at - EPS && now - bw.at <= BIG_WAIT + EPS) {
+      this.bigWait = null;
+      this.stats.score += 500;
+      return;
     }
 
-    // 2) 連打・風船の最中なら加算
+    // 2) 連打・風船の最中なら、そちらに入れる（次のノーツを早く叩いたことにしない）
     for (const ls of this.states) {
       const n = ls.note;
       if (ls.done || isHitNote(n.type)) continue;
       if (now < n.time) break; // states は時刻順
       if (now > (n.endTime ?? n.time)) continue;
       if (n.type === 'balloon') {
-        if (kind !== 'don') return;
+        if (kind !== 'don') return; // 風船はドンだけ。カッは何も起きない
         ls.count++;
         this.stats.score += 300;
         if (ls.count >= (n.hits ?? 5)) {
@@ -132,14 +129,36 @@ export class Game {
       this.onRoll(ls);
       return;
     }
-  }
 
-  private nextHitNote(): NoteState | undefined {
+    // 3) 判定幅の中で、叩いた時刻にいちばん近い普通ノーツを判定する
+    //    （いちばん古いノーツにすると、1つ見逃しただけで後のノーツが全部「遅い」扱いになってしまう）
+    let best: NoteState | undefined;
+    let bestAd = Infinity;
     for (let i = this.cursor; i < this.hitIdx.length; i++) {
-      const s = this.states[this.hitIdx[i]];
-      if (!s.done) return s;
+      const st = this.states[this.hitIdx[i]];
+      const d = now - st.note.time;
+      if (d < -WINDOW.bad - EPS) break; // ここから先はもっと未来
+      if (st.done) continue;
+      const ad = Math.abs(d);
+      if (ad <= WINDOW.bad + EPS && ad < bestAd - 1e-9) {
+        best = st;
+        bestAd = ad;
+      }
     }
-    return undefined;
+    if (!best) return;
+
+    const delta = now - best.note.time;
+    // 境界ちょうど（例: 25ms）が浮動小数点の誤差で外れないよう、わずかに余裕を持たせる
+    const ad = Math.abs(delta) - EPS;
+    const colorOk = (kind === 'don') === isDon(best.note.type);
+    let judge: Judge = 'bad';
+    if (colorOk) {
+      judge = ad <= WINDOW.good ? 'good' : ad <= WINDOW.ok ? 'ok' : 'bad';
+      this.deltas.push(delta);
+    }
+    this.apply(best, judge, delta);
+    const big = best.note.type === 'bigDon' || best.note.type === 'bigKa';
+    this.bigWait = big && judge !== 'bad' ? { kind, at: now } : null;
   }
 
   private apply(s: NoteState, judge: Judge, delta: number) {
