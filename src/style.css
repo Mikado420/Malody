@@ -262,9 +262,10 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .play { touch-action: none; -webkit-touch-callout: none; }
 .play canvas { width: 100%; height: 100%; display: block; touch-action: none; -webkit-touch-callout: none; }
 .play .exit {
+  /* 親指が当たりやすい下側を避けて右上に置く */
   position: absolute;
   right: calc(8px + var(--safe-r));
-  bottom: calc(12px + var(--safe-b));
+  top: calc(8px + var(--safe-t));
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
 }

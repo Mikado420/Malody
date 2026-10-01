@@ -811,7 +811,7 @@ export class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillText('面＝ドン　縁・外側＝カッ', x, y - face + 40);
+    ctx.fillText('面＝ドン　それ以外（画面のどこでも）＝カッ', x, y - face + 40);
   }
 }
 

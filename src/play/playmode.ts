@@ -34,7 +34,7 @@ export class PlayMode {
       canvas,
       () => {
         const L = this.renderer.layout;
-        return { x: L.drumX, y: L.drumY, r: L.drumR, top: L.laneY + L.laneH };
+        return { x: L.drumX, y: L.drumY, r: L.drumR };
       },
       (kind, side, at) => {
         if (!this.active || !this.game) return;

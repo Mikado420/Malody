@@ -27,7 +27,7 @@ export const DEFAULT_KEYS: Record<string, { kind: HitKind; side: 'L' | 'R' }> = 
  */
 export function bindInput(
   canvas: HTMLCanvasElement,
-  getDrum: () => { x: number; y: number; r: number; top: number },
+  getDrum: () => { x: number; y: number; r: number },
   onHit: HitHandler,
 ): () => void {
   const onKey = (e: KeyboardEvent) => {
@@ -43,7 +43,7 @@ export function bindInput(
   const hitAt = (clientX: number, clientY: number, at: number) => {
     const { x: px, y: py } = localPoint({ clientX, clientY }, canvas);
     const d = getDrum();
-    if (py < d.top) return; // レーンより上は無視
+    // 画面のどこを叩いても反応する（太鼓の面の円の中＝ドン、それ以外はすべてカッ）
     const dist = Math.hypot(px - d.x, py - d.y);
     const side = px < d.x ? 'L' : 'R';
     onHit(dist <= d.r * FACE_RATIO ? 'don' : 'ka', side, at);
