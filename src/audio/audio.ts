@@ -46,8 +46,12 @@ export class AudioEngine {
     this.stop();
     this.rate = rate;
     this.songStart = songTime;
-    this.clockOffset = null;
     this.startedAt = this.ctx.currentTime + 0.03;
+    this.samples = [];
+    this.sampleCount = 0;
+    this.bigDiffCount = 0;
+    this.lastSample = -Infinity;
+    this.perfZero = this.perfZeroCandidate() ?? performance.now() + 30;
     this.playing = true;
     if (this.music && songTime < this.music.duration) {
       const src = this.ctx.createBufferSource();
@@ -90,34 +94,100 @@ export class AudioEngine {
     }
   }
 
-  /** 現在の曲の再生位置（秒）。出力遅延を補正 */
+  /**
+   * 現在の曲の再生位置（秒）。perfMs は performance.now() 基準の時刻（イベントの timeStamp も同じ基準）。
+   *
+   * 時計は「端末の高精度タイマー（performance.now）」で進め、音の再生位置はそのずれを少しずつ直すのにだけ使う。
+   * 音の再生位置（AudioContext の currentTime / getOutputTimestamp）は端末によって 10〜40ms 刻みでしか進まなかったり、
+   * 値が行ったり来たりするので、そのまま使うと判定が数十 ms 単位でぶれて、正確に叩いても可・不可になることがある。
+   */
   now(perfMs = performance.now()): number {
-    return this.songStart + (this.contextTimeAt(perfMs) - this.startedAt) * this.rate;
+    this.refineClock();
+    return this.songStart + ((perfMs - this.perfZero) / 1000) * this.rate;
   }
 
-  /** ctx の時刻と performance.now() の差（なめらかにしたもの） */
-  private clockOffset: number | null = null;
+  /** ctx の startedAt の音が実際に聞こえる performance.now() の時刻（ms） */
+  private perfZero = 0;
+  private samples: number[] = [];
+  private lastSample = -Infinity;
+
+  /** いまの音の再生位置から求めた perfZero の候補。使える値がないときは null */
+  private perfZeroCandidate(): number | null {
+    const perf = performance.now();
+    const heard = this.heardContextTime(perf);
+    if (heard === null) return null;
+    return perf + (this.startedAt - heard) * 1000;
+  }
+
+  /** 再生開始から何回照らし合わせたか（最初のうちはすぐ合わせる） */
+  private sampleCount = 0;
+  private bigDiffCount = 0;
 
   /**
-   * perfMs（performance.now() 基準。イベントの timeStamp も同じ基準）の時点で、
-   * スピーカーから実際に聞こえている音の ctx 時刻。
-   * - getOutputTimestamp() は「いま出力されている音の ctx 時刻」と「その時刻」の組を返すので、出力の遅れが含まれる
-   * - currentTime は端末によって 10〜20ms 刻みでしか進まないので、performance.now() に結び付けてなめらかにする
+   * 0.1 秒ごとに音の再生位置と照らし合わせて、時計のずれを直す。
+   * - 直近 11 回（約 1 秒）の、外れ値を除いた平均を使うので、たまに外れた値が来ても影響しない
+   * - 再生開始から 2 秒間はすぐ合わせる
+   * - それ以降、15ms 未満のずれは 0.1 秒あたり 1ms ずつ寄せる（判定や見た目が細かく揺れない）
+   * - 15ms 以上のずれ（音が一瞬止まって曲が遅れた等）は 0.1 秒ごとに 25% ずつ素早く寄せる
+   * - 0.1 秒以上のずれが続いたとき（アプリに戻ってきた等）は一気に合わせる
    */
-  private contextTimeAt(perfMs: number): number {
+  private refineClock() {
+    if (!this.playing) return;
+    const perf = performance.now();
+    if (perf - this.lastSample < 100) return;
+    this.lastSample = perf;
+    const c = this.perfZeroCandidate();
+    if (c === null) return;
+    this.samples.push(c);
+    if (this.samples.length > 11) this.samples.shift();
+    this.sampleCount++;
+    // 外れ値に強い平均: 大きい側・小さい側の 1/4 ずつを捨てて、真ん中の値を平均する
+    const sorted = [...this.samples].sort((a, b) => a - b);
+    const cut = Math.floor(sorted.length / 4);
+    const mid = sorted.slice(cut, sorted.length - cut);
+    const med = mid.reduce((a, b) => a + b, 0) / mid.length;
+    const diff = med - this.perfZero;
+    if (this.sampleCount <= 20) {
+      this.perfZero = med;
+      return;
+    }
+    this.bigDiffCount = Math.abs(diff) > 100 ? this.bigDiffCount + 1 : 0;
+    if (this.bigDiffCount >= 3) {
+      this.perfZero = med;
+      this.bigDiffCount = 0;
+    } else if (Math.abs(diff) >= 15) {
+      this.perfZero += diff * 0.25;
+    } else {
+      this.perfZero += Math.max(-1, Math.min(1, diff));
+    }
+  }
+
+  /** 一度でも getOutputTimestamp の正しい値が取れたら、以後はそれだけを使う（方式を混ぜると値が跳ぶ） */
+  private tsReliable = false;
+
+  /**
+   * perfMs の時点でスピーカーから聞こえている音の ctx 時刻（の推定）。使える値がないときは null。
+   * - getOutputTimestamp() があれば「いま出力されている音の ctx 時刻」と「その時刻」の組から求める（出力の遅れを含む）
+   * - なければ currentTime から端末が申告している出力の遅れを引く
+   */
+  private heardContextTime(perfMs: number): number | null {
     const ts = this.ctx.getOutputTimestamp?.();
-    if (ts && ts.performanceTime && ts.performanceTime > 0 && ts.contextTime !== undefined) {
+    if (ts && ts.performanceTime && ts.performanceTime > 0 && ts.contextTime) {
       const off = ts.contextTime - ts.performanceTime / 1000;
       // 明らかにおかしい値（出力の遅れがマイナス、または 0.5 秒以上）は使わない
       const lat = this.ctx.currentTime - (performance.now() / 1000 + off);
-      if (lat > -0.02 && lat < 0.5) {
-        if (this.clockOffset === null || Math.abs(off - this.clockOffset) > 0.03) this.clockOffset = off;
-        else this.clockOffset += (off - this.clockOffset) * 0.02;
+      if (lat > -0.05 && lat < 0.5) {
+        if (!this.tsReliable) {
+          // ここから getOutputTimestamp の値だけを使う。それまでの別方式の値は捨てる
+          this.tsReliable = true;
+          this.samples = [];
+          this.sampleCount = 0;
+        }
         this.clockMode = 'outputTimestamp';
-        return perfMs / 1000 + this.clockOffset;
+        return perfMs / 1000 + off;
       }
     }
-    // 未対応のブラウザ: 報告されている出力遅延を引く
+    if (this.tsReliable) return null;
     this.clockMode = 'outputLatency';
     const latency = this.ctx.outputLatency || this.ctx.baseLatency || 0;
     return this.ctx.currentTime - latency - (performance.now() - perfMs) / 1000;
@@ -127,7 +197,7 @@ export class AudioEngine {
 
   /** 診断用: 時計の方式と、推定している出力の遅れ（ms） */
   clockInfo() {
-    const lat = this.ctx.currentTime - this.contextTimeAt(performance.now());
+    const lat = this.ctx.currentTime - (this.startedAt + (performance.now() - this.perfZero) / 1000);
     return {
       mode: this.clockMode,
       latencyMs: Math.round(lat * 1000),
