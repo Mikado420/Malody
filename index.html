@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+    <meta name="theme-color" content="#14121a" />
+    <title>web-taiko</title>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="menu" class="overlay">
+      <div class="panel">
+        <h1>web-taiko</h1>
+        <p class="hint">TJA譜面と音源ファイルをまとめて選んでください（曲なしでも遊べます）</p>
+
+        <label class="file">
+          <input id="files" type="file" multiple accept=".tja,.ogg,.mp3,.wav,.m4a,audio/*" />
+          <span>ファイルを選ぶ</span>
+        </label>
+        <p id="chartInfo" class="info">未選択</p>
+
+        <div class="row">
+          <label for="course">難易度</label>
+          <select id="course" disabled></select>
+        </div>
+        <div class="row">
+          <label for="speed">速度 <output id="speedVal">1.0</output></label>
+          <input id="speed" type="range" min="0.5" max="4" step="0.1" value="1" />
+        </div>
+        <div class="row">
+          <label for="offset">オフセット <output id="offsetVal">0</output>ms</label>
+          <input id="offset" type="range" min="-200" max="200" step="5" value="0" />
+        </div>
+
+        <div class="buttons">
+          <button id="start" disabled>スタート</button>
+          <button id="demo" class="secondary">デモ譜面で遊ぶ</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="result" class="overlay hidden">
+      <div class="panel">
+        <h2>結果</h2>
+        <dl id="resultList"></dl>
+        <div class="buttons">
+          <button id="retry">もう一度</button>
+          <button id="back" class="secondary">メニューへ</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

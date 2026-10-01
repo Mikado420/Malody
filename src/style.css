@@ -1,0 +1,101 @@
+:root {
+  --bg: #14121a;
+  --panel: #221f2b;
+  --text: #f4f1fa;
+  --sub: #a49fb2;
+  --accent: #f2493a;
+  --accent2: #3fb5e0;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+#game {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  touch-action: none;
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(10, 9, 14, 0.82);
+  backdrop-filter: blur(4px);
+}
+.hidden { display: none; }
+
+.panel {
+  width: min(420px, 100%);
+  background: var(--panel);
+  border-radius: 16px;
+  padding: 24px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+h1, h2 { margin: 0; }
+h1 { font-size: 28px; letter-spacing: 0.02em; }
+.hint, .info { margin: 0; color: var(--sub); font-size: 13px; line-height: 1.5; }
+.info { color: var(--text); }
+
+.file input { display: none; }
+.file span {
+  display: block;
+  text-align: center;
+  padding: 12px;
+  border: 2px dashed #4a4558;
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.row { display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
+select, input[type='range'] { width: 100%; }
+select {
+  padding: 8px;
+  border-radius: 8px;
+  background: #2e2a38;
+  color: var(--text);
+  border: 1px solid #4a4558;
+  font-size: 15px;
+}
+
+.buttons { display: flex; gap: 10px; }
+button {
+  flex: 1;
+  padding: 12px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+button.secondary { background: #3a3546; }
+button:disabled { opacity: 0.4; cursor: default; }
+
+dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+dt { color: var(--sub); }
+dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
