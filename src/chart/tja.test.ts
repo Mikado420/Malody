@@ -157,18 +157,28 @@ describe('zip', () => {
 });
 
 describe('Game 判定', () => {
+  const mk = (spec: [string, number, number?][]) =>
+    spec.map(([type, time, endTime]) => ({ type, time, endTime, bpm: 120, scroll: 1, gogo: false, hits: 5 })) as never;
+
   const chart = parseTJA(BASIC);
   const notes = toPlayable(chart, chart.courses[0]).notes;
 
-  it('良・可・色違い', () => {
+  it('良・可、色違いは判定しない（ノーツは残る）', () => {
     const g = new Game(notes);
     g.hit('don', 0.01);
     g.hit('ka', 1.06);
-    g.hit('ka', 2.0);
-    expect(g.stats.good).toBe(1);
-    expect(g.stats.ok).toBe(1);
-    expect(g.stats.bad).toBe(1);
-    expect(g.stats.maxCombo).toBe(2);
+    g.hit('ka', 2.0); // ドンをカッで叩いた → 何も起きない
+    expect([g.stats.good, g.stats.ok, g.stats.bad, g.stats.combo]).toEqual([1, 1, 0, 2]);
+    g.hit('don', 2.01); // 同じノーツをドンで叩き直せる
+    expect([g.stats.good, g.stats.combo]).toEqual([2, 3]);
+  });
+
+  it('ドンとカッが混ざっていても、叩いた色のノーツで判定される', () => {
+    // ドン(1.00) カッ(1.05) が近い。カッをちょうどで叩くと、近いドンではなくカッが良になる
+    const g = new Game(mk([['don', 1], ['ka', 1.05]]));
+    g.hit('ka', 1.05);
+    g.hit('don', 1.0);
+    expect([g.stats.good, g.stats.bad]).toEqual([2, 0]);
   });
 
   it('判定幅は 良 25ms / 可 75ms / 不可 114ms', () => {
@@ -181,9 +191,6 @@ describe('Game 判定', () => {
       'good', 'good', 'ok', 'ok', 'ok', 'bad', 'bad', 'bad', 'none', 'none',
     ]);
   });
-
-  const mk = (spec: [string, number, number?][]) =>
-    spec.map(([type, time, endTime]) => ({ type, time, endTime, bpm: 120, scroll: 1, gogo: false, hits: 5 })) as never;
 
   it('1つ見逃しても、次のノーツは叩いた時刻に近いほうで判定される', () => {
     // 16分（0.1秒間隔）の連打で 1 つ目を叩かず、2 つ目以降をちょうどで叩く

@@ -130,8 +130,9 @@ export class Game {
       return;
     }
 
-    // 3) 判定幅の中で、叩いた時刻にいちばん近い普通ノーツを判定する
-    //    （いちばん古いノーツにすると、1つ見逃しただけで後のノーツが全部「遅い」扱いになってしまう）
+    // 3) 判定幅の中で、叩いた色と同じ色のノーツのうち、叩いた時刻にいちばん近いものを判定する
+    //    - 色違いのノーツは対象にしない（色違いで叩いても不可にはせず、ノーツは残る。TNDE/TJAPlayer3 と同じ）
+    //    - いちばん古いノーツにすると、1つ見逃しただけで後のノーツが全部「遅い」扱いになってしまう
     let best: NoteState | undefined;
     let bestAd = Infinity;
     for (let i = this.cursor; i < this.hitIdx.length; i++) {
@@ -139,23 +140,20 @@ export class Game {
       const d = now - st.note.time;
       if (d < -WINDOW.bad - EPS) break; // ここから先はもっと未来
       if (st.done) continue;
+      if ((kind === 'don') !== isDon(st.note.type)) continue;
       const ad = Math.abs(d);
       if (ad <= WINDOW.bad + EPS && ad < bestAd - 1e-9) {
         best = st;
         bestAd = ad;
       }
     }
-    if (!best) return;
+    if (!best) return; // 判定幅の中に同じ色のノーツがない: 音が鳴るだけ
 
     const delta = now - best.note.time;
     // 境界ちょうど（例: 25ms）が浮動小数点の誤差で外れないよう、わずかに余裕を持たせる
     const ad = Math.abs(delta) - EPS;
-    const colorOk = (kind === 'don') === isDon(best.note.type);
-    let judge: Judge = 'bad';
-    if (colorOk) {
-      judge = ad <= WINDOW.good ? 'good' : ad <= WINDOW.ok ? 'ok' : 'bad';
-      this.deltas.push(delta);
-    }
+    const judge: Judge = ad <= WINDOW.good ? 'good' : ad <= WINDOW.ok ? 'ok' : 'bad';
+    this.deltas.push(delta);
     this.apply(best, judge, delta);
     const big = best.note.type === 'bigDon' || best.note.type === 'bigKa';
     this.bigWait = big && judge !== 'bad' ? { kind, at: now } : null;
