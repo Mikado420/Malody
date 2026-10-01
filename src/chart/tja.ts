@@ -148,7 +148,8 @@ interface State {
 
 function newState(chart: Chart): State {
   return {
-    time: -chart.offset,
+    // `-chart.offset` だと OFFSET:0 のとき -0 になるので 0 から引く
+    time: 0 - chart.offset,
     bpm: chart.bpm,
     scroll: 1,
     measure: 1,
