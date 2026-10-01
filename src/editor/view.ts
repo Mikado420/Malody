@@ -1,39 +1,64 @@
 import { TPB, type EEvent } from '../chart/model';
-import { BIG_SCALE, drawAny, hexPath, isBig } from '../render/notes';
-import type { Editor } from './editor';
+import { drawAny, hexPath } from '../render/notes';
 import { localPoint } from '../orient';
+import type { Editor } from './editor';
 
 /**
  * Malody 風の横スクロール作譜画面。
- *  左端の列 … 拡大縮小（六角形）、再生ボタン（六角形）、現在時刻
- *  上段    … 音源の波形（レーンと同じ時間軸）
- *  中段    … ノーツのレーン。中心線上の点が拍の分割
- *  下段    … イベント（BPM 変更など）
+ * Malody の太鼓エディタのスクリーンショット（2000×924）から測った座標を「基準座標」とし、
+ * 画面の高さに合わせて拡大縮小する（横幅は画面に合わせて伸びる）。
+ *   左の列 (x 0〜235)     … 拡大縮小・再生の六角形、再生位置の線
+ *   x 262 付近            … 曲の長さ（上）と現在時刻（下）を縦書きで
+ *   レーン (y 352〜570)   … ノーツ（半径 54、大音符 83）と拍の点
+ *   レーンの上 (y 120〜340) … 音源の波形
  * 横ドラッグ＝スクロール、タップ＝配置、2本指ピンチ＝拡大縮小、波形をタップ＝その位置へ移動。
  */
 
+export const REF_H = 924;
+const R = {
+  colLine1: 160,
+  laneX: 235,
+  laneTop: 352,
+  laneBottom: 570,
+  laneCY: 461,
+  noteR: 54,
+  bigR: 83,
+  play: { x: 230, y: 461, r: 55 },
+  zoomOut: { x: 24, y: 50, r: 36 },
+  zoomIn: { x: 24, y: 128, r: 36 },
+  timeX: 262,
+  waveX: 300,
+  waveTop: 118,
+  waveBottom: 336,
+  evTop: 576,
+  evBottom: 616,
+  info: { x: 300, y: 70 },
+  posLabel: { x: 300, y: 650 },
+  beatPx: 400, // 初期の拡大率（1拍あたり）
+};
+
 const C = {
   bg: '#000000',
-  col: '#0b0b0d',
-  colEdge: '#4a4a4f',
-  lane: '#1a1a1a',
-  laneEdge: '#d0d0d0',
+  col: '#000000',
+  colLine: '#6a6a70',
+  lane: '#1b1b1b',
+  laneEdge: '#c8c8c8',
   gogo: 'rgba(255,110,40,0.16)',
-  measure: 'rgba(255,255,255,0.85)',
+  measure: 'rgba(255,255,255,0.8)',
   text: '#f4f4f4',
   sub: '#9a9aa2',
-  playhead: '#ffffff',
-  hex: '#9c9ca4',
+  hex: '#9a9aa0',
+  hexEdge: '#e8e8ec',
   wave: '#e8605e',
   event: '#c27dff',
 };
 
 /** 拍の中の位置の細かさ別の点の色（Malody 風） */
 const DOT_COLORS: Record<number, string> = {
-  1: '#e0e0e0',
-  2: '#c04fd8',
+  1: '#d8d8dc',
+  2: '#b23fcf',
   3: '#e0457b',
-  4: '#3fa6c9',
+  4: '#3a9fc6',
   6: '#e8a33c',
   8: '#d8d050',
   12: '#55c08a',
@@ -62,30 +87,27 @@ const fmtTime = (t: number) => {
 };
 
 interface Box { x: number; y: number; r: number }
-type Lay = EditorView['L'];
-
-// プレイ画面の基準（src/render/renderer.ts と同じ値）
-const PLAY_H = 1125;
-const PLAY_LANE_H = 210;
-const PLAY_NOTE_R = 47;
-const PLAY_BEAT_PX = 1470 / 4;
 
 export class EditorView {
   private readonly ctx: CanvasRenderingContext2D;
   w = 0;
   h = 0;
+  /** 基準座標 → 画面 px の倍率（画面の高さ / 924） */
+  s = 1;
   /** 判定線（再生位置）の tick */
   pos = 0;
   /** 1拍あたりの px */
-  zoom = 220;
+  zoom = 180;
   playing = false;
-  /** 波形（1 秒あたり rate 個の最大振幅） */
+  /** 曲の長さ（秒）。左上に縦書きで表示 */
+  duration = 0;
   private wave: { peaks: Float32Array; rate: number } | null = null;
 
   onTap: (tick: number) => void = () => {};
   onUserScroll: () => void = () => {};
   onPlayToggle: () => void = () => {};
   onZoomChange: (z: number) => void = () => {};
+  onResize: () => void = () => {};
 
   private pointers = new Map<number, { x: number; y: number }>();
   private drag: { startX: number; startY: number; lastX: number; moved: boolean } | null = null;
@@ -104,10 +126,12 @@ export class EditorView {
     const dpr = window.devicePixelRatio || 1;
     this.w = this.canvas.clientWidth;
     this.h = this.canvas.clientHeight;
+    this.s = Math.max(0.2, this.h / REF_H);
     this.canvas.width = Math.round(this.w * dpr);
     this.canvas.height = Math.round(this.h * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.invalidate();
+    this.onResize();
   }
 
   invalidate() {
@@ -119,39 +143,38 @@ export class EditorView {
     this.invalidate();
   }
 
-  // ---------- レイアウト ----------
+  // ---------- レイアウト（基準座標 × 倍率） ----------
 
-  /**
-   * レイアウト（上から 情報行・波形・レーン・イベント行）。
-   * レーンの高さ・ノーツの大きさはプレイ画面（2000×1125 基準のレーン 210px・ノーツ半径 47px）と同じ比率。
-   */
   get L() {
-    const colW = 56;
-    const infoH = 22;
-    const evH = 28;
-    const laneH = Math.round(Math.max(56, (this.h * PLAY_LANE_H) / PLAY_H));
-    const r = Math.max(12, (this.h * PLAY_NOTE_R) / PLAY_H);
-    const waveH = Math.round(Math.max(40, Math.min(this.h * 0.32, this.h - infoH - evH - laneH - 24)));
-    const total = infoH + waveH + 4 + laneH + evH;
-    const top = Math.max(0, Math.round((this.h - total) / 2));
-    const waveY = top + infoH;
-    const laneY = waveY + waveH + 4;
-    const evY = laneY + laneH;
-    const playX = colW + Math.min(110, (this.w - colW) * 0.14);
-    const hexR = Math.min(24, Math.max(16, this.h * 0.055));
+    const s = this.s;
+    const box = (b: { x: number; y: number; r: number }): Box => ({ x: b.x * s, y: b.y * s, r: b.r * s });
+    const laneY = R.laneTop * s;
+    const laneH = (R.laneBottom - R.laneTop) * s;
     return {
-      colW, laneH, waveH, top, waveY, laneY, evY, evH, playX,
-      cy: laneY + laneH / 2,
-      r,
-      zoomOut: { x: colW / 2, y: waveY + hexR + 4, r: hexR } as Box,
-      zoomIn: { x: colW / 2, y: waveY + hexR * 3 + 12, r: hexR } as Box,
-      play: { x: colW / 2, y: laneY + laneH / 2, r: Math.min(hexR + 3, laneH / 2 + 4) } as Box,
+      s,
+      colW: R.laneX * s,
+      colLine1: R.colLine1 * s,
+      laneY,
+      laneH,
+      evY: R.laneBottom * s,
+      evH: (R.evBottom - R.evTop) * s,
+      evTop: R.evTop * s,
+      cy: R.laneCY * s,
+      playX: R.laneX * s,
+      r: R.noteR * s,
+      bigR: R.bigR * s,
+      waveX: R.waveX * s,
+      waveY: R.waveTop * s,
+      waveH: (R.waveBottom - R.waveTop) * s,
+      zoomOut: box(R.zoomOut),
+      zoomIn: box(R.zoomIn),
+      play: box(R.play),
     };
   }
 
-  /** プレイ画面（ハイスピード 1.0）と同じ見た目の拡大率（1拍あたりの px） */
-  get playZoom() {
-    return (this.h * PLAY_BEAT_PX) / PLAY_H;
+  /** 初期の拡大率（Malody と同じ間隔） */
+  get defaultZoom() {
+    return R.beatPx * this.s;
   }
 
   xOf(tick: number) {
@@ -168,15 +191,16 @@ export class EditorView {
   }
 
   setZoom(z: number) {
-    this.zoom = Math.min(1600, Math.max(20, z));
+    this.zoom = Math.min(2400, Math.max(20, z));
     this.onZoomChange(this.zoom);
     this.invalidate();
   }
 
   // ---------- 入力 ----------
 
+  /** 小さい画面でも押しやすいよう、当たり判定は見た目より少し大きく */
   private inBox(b: Box, x: number, y: number) {
-    return Math.hypot(x - b.x, y - b.y) <= b.r + 6;
+    return Math.hypot(x - b.x, y - b.y) <= Math.max(b.r + 6, 22);
   }
 
   private bind() {
@@ -196,8 +220,9 @@ export class EditorView {
 
     c.addEventListener('pointermove', (e) => {
       const pt = localPoint(e, c);
+      const L = this.L;
       if (e.pointerType === 'mouse') {
-        this.hoverX = pt.y >= this.L.laneY - 10 && pt.y <= this.L.evY + 10 && pt.x > this.L.colW ? pt.x : null;
+        this.hoverX = pt.y >= L.laneY - 10 && pt.y <= L.evTop + L.evH && pt.x > L.colW ? pt.x : null;
         this.invalidate();
       }
       if (!this.pointers.has(e.pointerId)) return;
@@ -210,11 +235,9 @@ export class EditorView {
       }
       if (!this.drag) return;
       const dx = pt.x - this.drag.lastX;
-      if (!this.drag.moved && Math.abs(pt.x - this.drag.startX) > 8) {
-        if (this.drag.startX > this.L.colW) {
-          this.drag.moved = true;
-          this.onUserScroll();
-        }
+      if (!this.drag.moved && Math.abs(pt.x - this.drag.startX) > 8 && this.drag.startX > L.colW) {
+        this.drag.moved = true;
+        this.onUserScroll();
       }
       if (this.drag.moved) this.scrollBy((-dx / this.zoom) * TPB);
       this.drag.lastX = pt.x;
@@ -262,14 +285,14 @@ export class EditorView {
     if (this.inBox(L.zoomOut, x, y)) return this.setZoom(this.zoom / 1.25);
     if (this.inBox(L.play, x, y)) return this.onPlayToggle();
     if (x <= L.colW) return;
-    if (y >= L.waveY && y < L.laneY - 2) {
+    if (y >= L.waveY && y <= L.waveY + L.waveH) {
       // 波形をタップ → その位置へ移動
       this.onUserScroll();
       this.pos = Math.max(0, this.ed.snap(this.tickOf(x)));
       this.invalidate();
       return;
     }
-    if (y >= L.laneY - 12 && y <= L.evY + L.evH) this.onTap(this.tickOf(x));
+    if (y >= L.laneY - L.r * 0.5 && y <= L.evTop + L.evH) this.onTap(this.tickOf(x));
   }
 
   // ---------- 描画 ----------
@@ -283,24 +306,25 @@ export class EditorView {
   private draw() {
     const { ctx, ed } = this;
     const L = this.L;
+    const s = L.s;
     const course = ed.course;
-    const leftTick = this.tickOf(L.colW - 80);
-    const rightTick = this.tickOf(this.w + 80);
+    const leftTick = this.tickOf(L.colW - L.bigR * 2);
+    const rightTick = this.tickOf(this.w + L.bigR * 2);
 
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, this.w, this.h);
 
-    // 上の情報
-    ctx.font = '600 12px system-ui, sans-serif';
+    // 曲名など（波形の上）
+    ctx.font = `600 ${Math.round(26 * s)}px system-ui, sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = C.sub;
     const info = `${ed.chart.title || '(無題)'}  ·  ${course.name} ★${course.level}  ·  ${course.notes.length}ノーツ${ed.audio ? '' : '  ·  音源なし'}`;
-    ctx.fillText(info, L.colW + 10, L.top + 9, Math.max(40, this.w - L.colW - 230));
+    ctx.fillText(info, L.waveX, R.info.y * s, Math.max(40, this.w - L.waveX - 10));
 
     // 波形
-    ctx.fillStyle = '#0d0d0f';
-    ctx.fillRect(L.colW, L.waveY, this.w - L.colW, L.waveH);
+    ctx.fillStyle = '#0c0c0e';
+    ctx.fillRect(L.waveX, L.waveY, this.w - L.waveX, L.waveH);
     this.drawWave(L);
 
     // レーン
@@ -324,8 +348,9 @@ export class EditorView {
     }
 
     ctx.fillStyle = C.laneEdge;
-    ctx.fillRect(L.colW, L.laneY, this.w - L.colW, 1.5);
-    ctx.fillRect(L.colW, L.laneY + L.laneH - 1.5, this.w - L.colW, 1.5);
+    const edge = Math.max(1, 2 * s);
+    ctx.fillRect(L.colW, L.laneY - edge / 2, this.w - L.colW, edge);
+    ctx.fillRect(L.colW, L.laneY + L.laneH - edge / 2, this.w - L.colW, edge);
 
     // グリッド（小節線＋分割の点）
     const ms = ed.measuresUntil(Math.max(0, rightTick));
@@ -336,35 +361,31 @@ export class EditorView {
       if (m.start > rightTick) break;
       const count = Math.round(m.length / step);
       for (let k = 1; k < count; k++) {
-        if (stepPx < 7 && ((k * step) % TPB) !== 0) continue;
         const rel = k * step;
+        const inBeat = rel % TPB;
+        if (stepPx < 7 && inBeat !== 0) continue;
         const x = this.xOf(m.start + rel);
         if (x < L.colW || x > this.w) continue;
-        const inBeat = rel % TPB;
         const d = inBeat === 0 ? 1 : TPB / gcd(TPB, inBeat);
         ctx.fillStyle = DOT_COLORS[d] ?? '#6c6c74';
-        hexPath(ctx, x, L.cy, inBeat === 0 ? 6 : 4.5);
+        hexPath(ctx, x, L.cy, (inBeat === 0 ? 13 : 9) * s);
         ctx.fill();
-        if (inBeat === 0) {
-          ctx.fillStyle = 'rgba(255,255,255,0.35)';
-          ctx.fillRect(x - 0.5, L.laneY, 1, 7);
-          ctx.fillRect(x - 0.5, L.laneY + L.laneH - 7, 1, 7);
-        }
       }
       const x = this.xOf(m.start);
       if (x >= L.colW - 1 && x <= this.w + 1) {
         ctx.fillStyle = C.measure;
-        ctx.fillRect(Math.round(x) - 1, L.waveY, 2, L.evY - L.waveY);
-        ctx.font = '600 13px ui-monospace, monospace';
+        const lw = Math.max(1, 2 * s);
+        ctx.fillRect(x - lw / 2, L.waveY, lw, L.evY - L.waveY);
+        ctx.font = `600 ${Math.round(28 * s)}px ui-monospace, monospace`;
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         ctx.fillStyle = C.text;
-        ctx.fillText(String(m.index + 1), x + 4, L.waveY + 3);
+        ctx.fillText(String(m.index + 1), x + 6 * s, L.waveY + 6 * s);
       }
     }
 
-    // イベント
-    ctx.font = '600 11px system-ui, sans-serif';
+    // イベント（レーンの下）
+    ctx.font = `600 ${Math.round(22 * s)}px system-ui, sans-serif`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
     let lastTick = NaN;
@@ -378,43 +399,43 @@ export class EditorView {
       ctx.fillStyle = C.event;
       ctx.beginPath();
       ctx.moveTo(x, L.evY + 2);
-      ctx.lineTo(x - 5, L.evY + 9);
-      ctx.lineTo(x + 5, L.evY + 9);
+      ctx.lineTo(x - 10 * s, L.evTop + 4 * s);
+      ctx.lineTo(x + 10 * s, L.evTop + 4 * s);
       ctx.closePath();
       ctx.fill();
       const t = eventText(e);
       const tw = ctx.measureText(t).width;
-      const ex = x + 4 + stack * (tw + 14);
-      ctx.fillStyle = 'rgba(194,125,255,0.18)';
-      ctx.fillRect(ex, L.evY + 10, tw + 10, 15);
+      const ex = x + 6 * s + stack * (tw + 26 * s);
+      ctx.fillStyle = 'rgba(194,125,255,0.2)';
+      ctx.fillRect(ex, L.evTop + 8 * s, tw + 16 * s, 30 * s);
       ctx.fillStyle = '#e6cfff';
-      ctx.fillText(t, ex + 5, L.evY + 18);
+      ctx.fillText(t, ex + 8 * s, L.evTop + 23 * s);
     }
 
     // ノーツ（後ろから描く）
     ctx.save();
     ctx.beginPath();
-    ctx.rect(L.colW, L.laneY - L.r, this.w - L.colW, L.laneH + L.r * 2);
+    ctx.rect(L.colW, L.laneY - L.bigR, this.w - L.colW, L.laneH + L.bigR * 2);
     ctx.clip();
     const notes = course.notes;
     for (let i = notes.length - 1; i >= 0; i--) {
       const n = notes[i];
       const endT = n.endTick ?? n.tick;
       if (endT < leftTick || n.tick > rightTick) continue;
-      const r = isBig(n.type) ? L.r * BIG_SCALE : L.r;
+      const big = n.type === 'bigDon' || n.type === 'bigKa' || n.type === 'bigRoll';
       const x = this.xOf(n.tick);
       const ex = n.endTick !== undefined ? this.xOf(n.endTick) : undefined;
-      drawAny(ctx, n.type, x, L.cy, r, ex, n.type === 'balloon' ? n.hits ?? 5 : null);
+      drawAny(ctx, n.type, x, L.cy, big ? L.bigR : L.r, ex, n.type === 'balloon' ? n.hits ?? 5 : null);
     }
 
     // 連打の始点（終点待ち）
     if (ed.pendingLong !== null) {
       const x = this.xOf(ed.pendingLong);
-      ctx.setLineDash([5, 5]);
+      ctx.setLineDash([8 * s, 8 * s]);
       ctx.strokeStyle = '#fbbf14';
-      ctx.lineWidth = 3;
+      ctx.lineWidth = Math.max(2, 5 * s);
       ctx.beginPath();
-      ctx.arc(x, L.cy, L.r * 1.1, 0, Math.PI * 2);
+      ctx.arc(x, L.cy, L.r * 1.15, 0, Math.PI * 2);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -431,27 +452,19 @@ export class EditorView {
         ctx.arc(x, L.cy, L.r, 0, Math.PI * 2);
         ctx.stroke();
       } else {
-        drawAny(ctx, ed.tool, x, L.cy, isBig(ed.tool) ? L.r * BIG_SCALE : L.r, x + this.zoom);
+        const big = ed.tool === 'bigDon' || ed.tool === 'bigKa' || ed.tool === 'bigRoll';
+        drawAny(ctx, ed.tool, x, L.cy, big ? L.bigR : L.r, x + this.zoom);
       }
       ctx.globalAlpha = 1;
     }
     ctx.restore();
 
-    // 判定線より左（過去）は暗く
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
-    ctx.fillRect(L.colW, L.waveY, L.playX - L.colW, L.evY + L.evH - L.waveY);
-
-    // 判定線
-    ctx.fillStyle = C.playhead;
-    ctx.fillRect(L.playX - 1, L.waveY, 2, L.evY - L.waveY);
-    ctx.fillRect(L.play.x, L.cy - 1, L.playX - L.play.x, 2);
-    ctx.fillStyle = '#ffb02e';
-    ctx.beginPath();
-    ctx.moveTo(L.playX, L.laneY - 2);
-    ctx.lineTo(L.playX - 6, L.laneY - 10);
-    ctx.lineTo(L.playX + 6, L.laneY - 10);
-    ctx.closePath();
-    ctx.fill();
+    // 現在位置（小節・拍）
+    ctx.font = `600 ${Math.round(26 * s)}px system-ui, sans-serif`;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = C.sub;
+    ctx.fillText(ed.label(Math.max(0, ed.snap(this.pos))), R.posLabel.x * s, R.posLabel.y * s);
 
     this.drawColumn(L);
   }
@@ -461,20 +474,20 @@ export class EditorView {
     const ctx = this.ctx;
     const mid = L.waveY + L.waveH / 2;
     ctx.fillStyle = 'rgba(255,255,255,0.08)';
-    ctx.fillRect(L.colW, mid, this.w - L.colW, 1);
+    ctx.fillRect(L.waveX, mid, this.w - L.waveX, 1);
     if (!wv) {
-      ctx.font = '12px system-ui, sans-serif';
+      ctx.font = `${Math.round(24 * L.s)}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = '#55555c';
-      ctx.fillText('音源なし（ファイル → 音源を差し替え）', (L.colW + this.w) / 2, mid);
+      ctx.fillText('音源なし（ファイル → 音源を差し替え）', (L.waveX + this.w) / 2, mid);
       return;
     }
     const t = this.ed.timing;
     const step = 2;
-    let prevT = t.tickToTime(this.tickOf(L.colW));
+    let prevT = t.tickToTime(this.tickOf(L.waveX));
     ctx.fillStyle = C.wave;
-    for (let x = L.colW; x < this.w; x += step) {
+    for (let x = L.waveX; x < this.w; x += step) {
       const nextT = t.tickToTime(this.tickOf(x + step));
       let i0 = Math.floor(Math.min(prevT, nextT) * wv.rate);
       let i1 = Math.ceil(Math.max(prevT, nextT) * wv.rate);
@@ -489,36 +502,50 @@ export class EditorView {
     }
   }
 
+  /** 左の列（Malody と同じ配置） */
   private drawColumn(L: Lay) {
     const ctx = this.ctx;
+    const s = L.s;
     ctx.fillStyle = C.col;
     ctx.fillRect(0, 0, L.colW, this.h);
-    ctx.fillStyle = C.colEdge;
-    ctx.fillRect(L.colW - 1, 0, 1, this.h);
+    ctx.fillStyle = C.colLine;
+    const lw = Math.max(1, 2 * s);
+    ctx.fillRect(L.colLine1, 0, lw, this.h);
+    ctx.fillRect(L.colW - lw, 0, lw, L.laneY);
+    ctx.fillRect(L.colW - lw, L.evY, lw, this.h - L.evY);
+
+    // 再生位置の線（左端から再生ボタンまで）
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, L.cy - lw / 2, L.play.x, lw);
+    ctx.fillStyle = '#ffb02e';
+    hexPath(ctx, 6 * s, L.cy, 9 * s);
+    ctx.fill();
 
     const hex = (b: Box, label: 'plus' | 'minus' | 'play' | 'pause') => {
       ctx.save();
       ctx.translate(b.x, b.y);
       hexPath(ctx, 0, 0, b.r);
-      ctx.fillStyle = label === 'play' || label === 'pause' ? '#7d7d86' : C.hex;
+      ctx.fillStyle = C.hex;
       ctx.fill();
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = '#d9d9de';
+      ctx.lineWidth = Math.max(1.5, 4 * s);
+      ctx.strokeStyle = C.hexEdge;
       ctx.stroke();
       ctx.fillStyle = '#fff';
+      const k = b.r;
       if (label === 'plus' || label === 'minus') {
-        ctx.fillRect(-b.r * 0.42, -2, b.r * 0.84, 4);
-        if (label === 'plus') ctx.fillRect(-2, -b.r * 0.42, 4, b.r * 0.84);
+        const t = Math.max(2, k * 0.12);
+        ctx.fillRect(-k * 0.42, -t / 2, k * 0.84, t);
+        if (label === 'plus') ctx.fillRect(-t / 2, -k * 0.42, t, k * 0.84);
       } else if (label === 'play') {
         ctx.beginPath();
-        ctx.moveTo(-b.r * 0.28, -b.r * 0.4);
-        ctx.lineTo(b.r * 0.45, 0);
-        ctx.lineTo(-b.r * 0.28, b.r * 0.4);
+        ctx.moveTo(-k * 0.28, -k * 0.36);
+        ctx.lineTo(k * 0.42, 0);
+        ctx.lineTo(-k * 0.28, k * 0.36);
         ctx.closePath();
         ctx.fill();
       } else {
-        ctx.fillRect(-b.r * 0.32, -b.r * 0.36, b.r * 0.22, b.r * 0.72);
-        ctx.fillRect(b.r * 0.1, -b.r * 0.36, b.r * 0.22, b.r * 0.72);
+        ctx.fillRect(-k * 0.3, -k * 0.34, k * 0.2, k * 0.68);
+        ctx.fillRect(k * 0.1, -k * 0.34, k * 0.2, k * 0.68);
       }
       ctx.restore();
     };
@@ -526,12 +553,24 @@ export class EditorView {
     hex(L.zoomIn, 'plus');
     hex(L.play, this.playing ? 'pause' : 'play');
 
-    // 現在時刻と位置（上の情報行の右端）
+    // 曲の長さ（上）と現在時刻（下）を縦書きで（Malody と同じ位置）
     const time = this.ed.timing.tickToTime(Math.max(0, this.pos));
-    ctx.font = '600 13px ui-monospace, Menlo, monospace';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'middle';
+    ctx.font = `700 ${Math.round(34 * s)}px ui-monospace, Menlo, monospace`;
     ctx.fillStyle = '#fff';
-    ctx.fillText(`${this.ed.label(Math.max(0, this.ed.snap(this.pos)))}  ${fmtTime(time)}`, this.w - 10, L.top + 9);
+    ctx.textBaseline = 'middle';
+    const vtext = (text: string, x: number, y: number, align: CanvasTextAlign) => {
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = align;
+      ctx.shadowColor = 'rgba(255,255,255,0.35)';
+      ctx.shadowBlur = 6 * s;
+      ctx.fillText(text, 0, 0);
+      ctx.restore();
+    };
+    if (this.duration > 0) vtext(fmtTime(this.duration), R.timeX * s, 24 * s, 'right');
+    vtext(fmtTime(time), R.timeX * s, this.h - 24 * s, 'left');
   }
 }
+
+type Lay = EditorView['L'];

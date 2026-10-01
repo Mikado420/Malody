@@ -33,9 +33,8 @@ export function bindInput(
     onHit(k.kind, k.side);
   };
 
-  const onPointer = (e: PointerEvent) => {
-    e.preventDefault();
-    const { x: px, y: py } = localPoint(e, canvas);
+  const hitAt = (clientX: number, clientY: number) => {
+    const { x: px, y: py } = localPoint({ clientX, clientY }, canvas);
     const d = getDrum();
     if (py < d.top) return; // レーンより上は無視
     const dist = Math.hypot(px - d.x, py - d.y);
@@ -43,10 +42,35 @@ export function bindInput(
     onHit(dist <= d.r * FACE_RATIO ? 'don' : 'ka', side);
   };
 
+  // タッチは touchstart で直接受ける。
+  // pointer イベントだと端末によってはダブルタップ・長押しの判定で連続タップが間引かれるため。
+  // 1回の touchstart に複数の指が入っていることもあるので changedTouches を全部処理する。
+  const onTouchStart = (e: TouchEvent) => {
+    e.preventDefault();
+    for (const t of Array.from(e.changedTouches)) hitAt(t.clientX, t.clientY);
+  };
+  const block = (e: Event) => e.preventDefault();
+
+  const onPointer = (e: PointerEvent) => {
+    if (e.pointerType === 'touch') return; // タッチは touchstart 側で処理
+    e.preventDefault();
+    hitAt(e.clientX, e.clientY);
+  };
+
+  canvas.addEventListener('touchstart', onTouchStart, { passive: false });
+  canvas.addEventListener('touchmove', block, { passive: false });
+  canvas.addEventListener('touchend', block, { passive: false });
+  canvas.addEventListener('contextmenu', block);
+  canvas.addEventListener('dblclick', block);
   window.addEventListener('keydown', onKey);
   canvas.addEventListener('pointerdown', onPointer);
   return () => {
     window.removeEventListener('keydown', onKey);
     canvas.removeEventListener('pointerdown', onPointer);
+    canvas.removeEventListener('touchstart', onTouchStart);
+    canvas.removeEventListener('touchmove', block);
+    canvas.removeEventListener('touchend', block);
+    canvas.removeEventListener('contextmenu', block);
+    canvas.removeEventListener('dblclick', block);
   };
 }
