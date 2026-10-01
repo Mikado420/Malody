@@ -3,8 +3,11 @@ import { isDon, isHitNote, type Note } from '../chart/types';
 export type Judge = 'good' | 'ok' | 'bad';
 export type HitKind = 'don' | 'ka';
 
-/** 判定幅（秒）。片側の幅 */
-export const WINDOW = { good: 0.035, ok: 0.09, bad: 0.12 } as const;
+/** 判定幅（秒）。片側の幅。本家と同じ 良 ±25ms / 可 ±75ms / 不可 ±114ms */
+/** 浮動小数点の誤差の吸収（0.001ms） */
+const EPS = 1e-6;
+
+export const WINDOW = { good: 0.025, ok: 0.075, bad: 0.114 } as const;
 
 export interface NoteState {
   note: Note;
@@ -72,7 +75,7 @@ export class Game {
     while (this.cursor < this.hitIdx.length) {
       const s = this.states[this.hitIdx[this.cursor]];
       if (s.done) { this.cursor++; continue; }
-      if (now - s.note.time > WINDOW.bad) {
+      if (now - s.note.time > WINDOW.bad + EPS) {
         s.missed = true;
         this.apply(s, 'bad', now - s.note.time);
         this.cursor++;
@@ -91,7 +94,8 @@ export class Game {
     const s = this.nextHitNote();
     if (s) {
       const delta = now - s.note.time;
-      const ad = Math.abs(delta);
+      // 境界ちょうど（例: 25ms）が浮動小数点の誤差で外れないよう、わずかに余裕を持たせる
+      const ad = Math.abs(delta) - EPS;
       if (ad <= WINDOW.bad) {
         const colorOk = (kind === 'don') === isDon(s.note.type);
         let judge: Judge = 'bad';
