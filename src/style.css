@@ -52,7 +52,8 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   position: absolute;
   inset: 0;
   display: flex;
-  padding: var(--safe-t) var(--safe-r) 0 var(--safe-l);
+  /* Malody と同じく画面の端から端まで使う（フルサイズ） */
+  padding: 0;
 }
 .stage {
   position: relative;
@@ -330,7 +331,7 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weig
     transform: translateX(var(--vw, 100vw)) rotate(90deg);
   }
   /* 回転中はノッチ等の余白の向きが変わるので、左右の余白を上下の値から取る */
-  #app { padding: var(--safe-r) var(--safe-b) 0 var(--safe-t); }
+  #app { padding: 0; }
 }
 
 .calib { display: flex; flex-direction: column; gap: 8px; }

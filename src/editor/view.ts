@@ -7,7 +7,8 @@ import type { Editor } from './editor';
  * Malody 風の横スクロール作譜画面。
  * Malody の太鼓エディタのスクリーンショット（2000×924）から測った座標を「基準座標」とし、
  * 画面の高さに合わせて拡大縮小する（横幅は画面に合わせて伸びる）。
- *   左の列 (x 0〜235)     … 拡大縮小・再生の六角形、再生位置の線
+ *   左の列 (x 0〜235)     … 拡大縮小・再生の六角形、再生位置の線、x 160〜235 は密度推移（上下にドラッグで移動）
+ *   判定枠 (x 410)        … 再生位置。Malody と同じ金色の二重の輪
  *   x 262 付近            … 曲の長さ（上）と現在時刻（下）を縦書きで
  *   レーン (y 352〜570)   … ノーツ（半径 54、大音符 83）と拍の点
  *   レーンの上 (y 120〜340) … 音源の波形
@@ -24,6 +25,9 @@ const R = {
   noteR: 54,
   bigR: 83,
   play: { x: 230, y: 461, r: 55 },
+  judgeX: 410, // 判定枠（再生位置）
+  judgeR: 72,
+  judgeR2: 49,
   zoomOut: { x: 24, y: 50, r: 36 },
   zoomIn: { x: 24, y: 128, r: 36 },
   timeX: 262,
@@ -110,7 +114,7 @@ export class EditorView {
   onResize: () => void = () => {};
 
   private pointers = new Map<number, { x: number; y: number }>();
-  private drag: { startX: number; startY: number; lastX: number; moved: boolean } | null = null;
+  private drag: { startX: number; startY: number; lastX: number; moved: boolean; scrub?: boolean } | null = null;
   private pinch: { d0: number; z0: number } | null = null;
   private hoverX: number | null = null;
   private dirty = true;
@@ -160,7 +164,7 @@ export class EditorView {
       evH: (R.evBottom - R.evTop) * s,
       evTop: R.evTop * s,
       cy: R.laneCY * s,
-      playX: R.laneX * s,
+      playX: R.judgeX * s,
       r: R.noteR * s,
       bigR: R.bigR * s,
       waveX: R.waveX * s,
@@ -183,6 +187,29 @@ export class EditorView {
 
   tickOf(x: number) {
     return this.pos + ((x - this.L.playX) / this.zoom) * TPB;
+  }
+
+  /** 密度推移の縦の範囲（下が曲の始め、上が終わり） */
+  private get graph() {
+    const s = this.L.s;
+    return { top: 18 * s, bottom: this.h - 18 * s };
+  }
+
+  /** 曲の長さ（秒）。音源がなければ最後のノーツ＋2 秒 */
+  private songLength() {
+    const notes = this.ed.course.notes;
+    let last = 0;
+    for (const n of notes) last = Math.max(last, n.endTick ?? n.tick);
+    const lastT = notes.length ? this.ed.timing.tickToTime(last) + 2 : 0;
+    return Math.max(this.duration, lastT, 1);
+  }
+
+  private scrubTo(y: number) {
+    const g = this.graph;
+    const p = Math.min(1, Math.max(0, (g.bottom - y) / (g.bottom - g.top)));
+    const tick = this.ed.timing.timeToTick(p * this.songLength());
+    this.pos = Math.max(0, this.ed.snap(tick));
+    this.invalidate();
   }
 
   scrollBy(ticks: number) {
@@ -215,6 +242,14 @@ export class EditorView {
         this.drag = null;
       } else if (this.pointers.size === 1) {
         this.drag = { startX: pt.x, startY: pt.y, lastX: pt.x, moved: false };
+        // 密度推移の列を押したら、上下に動かしてその位置へ移動する
+        const L = this.L;
+        if (pt.x >= L.colLine1 && pt.x <= L.colW && !this.inBox(L.play, pt.x, pt.y)) {
+          this.drag.scrub = true;
+          this.drag.moved = true;
+          this.onUserScroll();
+          this.scrubTo(pt.y);
+        }
       }
     });
 
@@ -234,6 +269,10 @@ export class EditorView {
         return;
       }
       if (!this.drag) return;
+      if (this.drag.scrub) {
+        this.scrubTo(pt.y);
+        return;
+      }
       const dx = pt.x - this.drag.lastX;
       if (!this.drag.moved && Math.abs(pt.x - this.drag.startX) > 8 && this.drag.startX > L.colW) {
         this.drag.moved = true;
@@ -412,6 +451,18 @@ export class EditorView {
       ctx.fillText(t, ex + 8 * s, L.evTop + 23 * s);
     }
 
+    // 判定枠（Malody と同じ金色の二重の輪。ここが再生位置）
+    ctx.lineWidth = Math.max(1.5, 4 * s);
+    ctx.strokeStyle = '#e0a400';
+    ctx.beginPath();
+    ctx.arc(L.playX, L.cy, R.judgeR * s, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.lineWidth = Math.max(1, 3 * s);
+    ctx.strokeStyle = '#8a6a10';
+    ctx.beginPath();
+    ctx.arc(L.playX, L.cy, R.judgeR2 * s, 0, Math.PI * 2);
+    ctx.stroke();
+
     // ノーツ（後ろから描く）
     ctx.save();
     ctx.beginPath();
@@ -502,6 +553,43 @@ export class EditorView {
     }
   }
 
+  /**
+   * 密度推移（Malody の左の列と同じ縦向き。下が曲の始め、上が終わり）。
+   * 曲を短い区間に分け、1 秒あたりのノーツ数を右端から左へ伸びる棒で描く。今の位置に横線
+   */
+  private drawDensity(L: Lay) {
+    const ctx = this.ctx;
+    const s = L.s;
+    const g = this.graph;
+    const x1 = L.colW - Math.max(1, 2 * s);
+    const maxW = L.colW - L.colLine1 - 8 * s;
+    const len = this.songLength();
+    const step = Math.max(3, 7 * s);
+    const n = Math.max(8, Math.floor((g.bottom - g.top) / step));
+    const counts = new Float32Array(n);
+    const timing = this.ed.timing;
+    for (const note of this.ed.course.notes) {
+      const t = timing.tickToTime(note.tick);
+      const i = Math.floor((t / len) * n);
+      if (i >= 0 && i < n) counts[i] += 1;
+    }
+    let max = 0;
+    for (const c of counts) max = Math.max(max, c);
+    ctx.fillStyle = C.wave;
+    const bh = ((g.bottom - g.top) / n) * 0.8;
+    for (let i = 0; i < n; i++) {
+      if (!counts[i] || !max) continue;
+      const w = Math.max(1, (counts[i] / max) * maxW);
+      const y = g.bottom - ((i + 1) * (g.bottom - g.top)) / n;
+      ctx.fillRect(x1 - w, y, w, bh);
+    }
+    // 今の位置
+    const now = timing.tickToTime(Math.max(0, this.pos));
+    const y = g.bottom - (Math.min(1, now / len)) * (g.bottom - g.top);
+    ctx.fillStyle = '#ffb02e';
+    ctx.fillRect(L.colLine1, y - Math.max(1, 1.5 * s), L.colW - L.colLine1, Math.max(2, 3 * s));
+  }
+
   /** 左の列（Malody と同じ配置） */
   private drawColumn(L: Lay) {
     const ctx = this.ctx;
@@ -513,6 +601,8 @@ export class EditorView {
     ctx.fillRect(L.colLine1, 0, lw, this.h);
     ctx.fillRect(L.colW - lw, 0, lw, L.laneY);
     ctx.fillRect(L.colW - lw, L.evY, lw, this.h - L.evY);
+
+    this.drawDensity(L);
 
     // 再生位置の線（左端から再生ボタンまで）
     ctx.fillStyle = '#fff';
