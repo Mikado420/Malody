@@ -691,7 +691,12 @@ async function startTest() {
     return;
   }
   const from = ed.timing.tickToTime(ed.snap(Math.max(0, view.pos)));
-  await play.start(course, from, { title: ed.chart.title, course: ed.course.name, level: ed.course.level });
+  await play.start(course, from, {
+    title: ed.chart.title,
+    course: ed.course.name,
+    level: ed.course.level,
+    genre: ed.chart.extra.find(([k]) => k.toUpperCase() === 'GENRE')?.[1],
+  });
 }
 
 $('btnTest').addEventListener('click', () => void startTest());

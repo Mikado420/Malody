@@ -3,19 +3,20 @@ import type { NoteType } from '../chart/types';
 /**
  * 太鼓風のノーツ描画（プレイ画面とエディタで共通）。
  * 公式素材は使わず、色・縁取りの比率だけを合わせたオリジナル描画。
- *   外側の黒縁 → 白い縁 → 本体（上が明るいグラデーション）
+ *   外側の黒縁 → 白い縁 → 本体（つやのない平らな色。参考動画の比率: 黒縁 10%・白縁 19%）
  */
 
 export const COLOR = {
-  don: '#f2442b',
-  donLight: '#ff7b5c',
-  ka: '#5ec4d4',
-  kaLight: '#9be3ec',
-  roll: '#fbbf14',
-  rollLight: '#ffe27a',
-  balloon: '#ff8a1c',
-  balloonLight: '#ffc07a',
-  outline: '#1f1613',
+  don: '#e6352e',
+  donLight: '#e6352e',
+  ka: '#4ecbbe',
+  kaLight: '#4ecbbe',
+  roll: '#f7c11b',
+  rollLight: '#f7c11b',
+  balloon: '#e8731d',
+  balloonLight: '#e8731d',
+  outline: '#1a1617',
+  ring: '#f8eee2',
 };
 
 export const isBig = (t: NoteType) => t === 'bigDon' || t === 'bigKa' || t === 'bigRoll';
@@ -69,33 +70,24 @@ export function drawNoteHead(ctx: CanvasRenderingContext2D, x: number, y: number
 }
 
 function drawNoteHeadRaw(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, type: NoteType) {
-  const [body, light] = colorsOf(type);
+  const [body] = colorsOf(type);
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fillStyle = COLOR.outline;
   ctx.fill();
   ctx.beginPath();
   ctx.arc(x, y, r * 0.9, 0, Math.PI * 2);
-  ctx.fillStyle = '#fff';
+  ctx.fillStyle = COLOR.ring;
   ctx.fill();
-  const g = ctx.createLinearGradient(x, y - r * 0.76, x, y + r * 0.76);
-  g.addColorStop(0, light);
-  g.addColorStop(0.45, body);
-  g.addColorStop(1, body);
   ctx.beginPath();
-  ctx.arc(x, y, r * 0.76, 0, Math.PI * 2);
-  ctx.fillStyle = g;
-  ctx.fill();
-  // つや
-  ctx.beginPath();
-  ctx.ellipse(x - r * 0.22, y - r * 0.36, r * 0.3, r * 0.14, -0.35, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255,255,255,0.28)';
+  ctx.arc(x, y, r * 0.73, 0, Math.PI * 2);
+  ctx.fillStyle = body;
   ctx.fill();
 }
 
 /** 連打（頭は x1、尾は x2。横向き） */
 export function drawRoll(ctx: CanvasRenderingContext2D, x1: number, x2: number, y: number, r: number, type: NoteType) {
-  const [body, light] = colorsOf(type);
+  const [body] = colorsOf(type);
   const left = Math.min(x1, x2);
   const right = Math.max(x1, x2);
   const bar = (rr: number, fill: string | CanvasGradient) => {
@@ -108,12 +100,8 @@ export function drawRoll(ctx: CanvasRenderingContext2D, x1: number, x2: number, 
     ctx.fill();
   };
   bar(r, COLOR.outline);
-  bar(r * 0.9, '#fff');
-  const g = ctx.createLinearGradient(0, y - r * 0.76, 0, y + r * 0.76);
-  g.addColorStop(0, light);
-  g.addColorStop(0.45, body);
-  g.addColorStop(1, body);
-  bar(r * 0.76, g);
+  bar(r * 0.9, COLOR.ring);
+  bar(r * 0.73, body);
   drawNoteHead(ctx, x1, y, r, type);
 }
 

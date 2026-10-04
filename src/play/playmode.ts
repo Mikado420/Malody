@@ -122,7 +122,7 @@ export class PlayMode {
   }
 
   /** fromTime 秒の位置から（2秒前から助走して）開始。clicks を渡すとその時刻にクリック音を鳴らす */
-  async start(course: Course, fromTime: number, info: { title: string; course: string; level: number }, clicks?: number[]) {
+  async start(course: Course, fromTime: number, info: { title: string; course: string; level: number; genre?: string }, clicks?: number[]) {
     if (!clicks) this.calibrating = false;
     const from = Math.max(fromTime, (course.notes[0]?.time ?? 0) - 1);
     const notes = course.notes.filter((n) => (n.endTime ?? n.time) >= from - 0.05);
