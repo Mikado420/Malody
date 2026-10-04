@@ -6,6 +6,17 @@ import { Renderer } from '../render/renderer';
 import { BUILD_ID } from '../update';
 import { suggestDonWidth, zoneSamples } from './zone';
 
+/** Expo Go のアプリ（expo/App.js）の中で動いているか */
+export function isNativeHost() {
+  return !!(window as unknown as { ReactNativeWebView?: unknown }).ReactNativeWebView;
+}
+
+/** アプリへ知らせる（プレイ中だけアプリが指を受け取る） */
+function postNative(msg: object) {
+  const rn = (window as unknown as { ReactNativeWebView?: { postMessage(s: string): void } }).ReactNativeWebView;
+  rn?.postMessage(JSON.stringify(msg));
+}
+
 export interface PlaySettings {
   speed: number;
   /** 判定オフセット（ms）。＋で判定を遅らせる */
@@ -120,7 +131,8 @@ export class PlayMode {
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
     this.renderer.donWidth = this.settings.donWidth ?? 0.6;
-    this.renderer.restZone = !!this.settings.restZone;
+    // Expo Go のアプリの中ではアプリが指を受け取るので、指置きはいらない
+    this.renderer.restZone = !!this.settings.restZone && !isNativeHost();
     this.input.refresh();
     resetTouchStats();
     this.raw = [];
@@ -131,6 +143,7 @@ export class PlayMode {
     this.renderer.resize();
     this.renderer.speed = this.settings.speed;
     this.active = true;
+    postNative({ type: 'play', active: true });
     await this.audio.startAt(from - 2, 1);
     for (const t of clicks ?? []) this.audio.scheduleTick(t);
 
@@ -207,6 +220,7 @@ export class PlayMode {
   finish() {
     if (!this.active) return;
     this.active = false;
+    postNative({ type: 'play', active: false });
     cancelAnimationFrame(this.raf);
     this.audio.stop();
     const g = this.game;
@@ -298,10 +312,10 @@ export class PlayMode {
       `${c.latencyMs}ms（${c.mode === 'outputTimestamp' ? '再生位置から' : '端末の申告値'}、申告 ${c.outputLatencyMs}/${c.baseLatencyMs}ms）`,
     ]);
     const S = touchStats;
-    if (S.starts + S.recovered + S.pointers > 0) {
+    if (S.starts + S.recovered + S.pointers + S.native > 0) {
       rows.push([
         'タッチ',
-        `${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・瞬間移動 ${S.jumps}・指置き ${S.rests}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
+        `${isNativeHost() ? `アプリ方式 ${S.native}・` : ''}${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・瞬間移動 ${S.jumps}・指置き ${S.rests}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
       ]);
     }
     const P = this.perf;
@@ -347,8 +361,8 @@ export class PlayMode {
     const f = (t: number) => t.toFixed(3);
     const S = touchStats;
     const lines = [
-      `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${this.settings.pointerInput ? 'pointer' : 'touch'}${this.settings.passiveTouch ? '+passive' : ''}${this.settings.restZone ? '+rest' : ''} ua ${navigator.userAgent}`,
-      `touchstart ${S.starts} pointerdown ${S.pointers} recovered ${S.recovered} jumps ${S.jumps} rests ${S.rests} cancel ${S.cancels}/${S.pointerCancels} maxFingers ${S.maxFingers}`,
+      `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${isNativeHost() ? 'native' : this.settings.pointerInput ? 'pointer' : 'touch'}${this.settings.passiveTouch ? '+passive' : ''}${this.settings.restZone ? '+rest' : ''} ua ${navigator.userAgent}`,
+      `touchstart ${S.starts} pointerdown ${S.pointers} recovered ${S.recovered} jumps ${S.jumps} rests ${S.rests} native ${S.native} cancel ${S.cancels}/${S.pointerCancels} maxFingers ${S.maxFingers}`,
     ];
     const items: { t: number; s: string }[] = this.raw.map((r) => ({ t: r.t, s: `    ${r.s}` }));
     for (const x of g.log) {

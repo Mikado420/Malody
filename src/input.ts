@@ -39,6 +39,8 @@ export const touchStats = {
   jumps: 0,
   /** 指置きの場所に触れた回数 */
   rests: 0,
+  /** Expo Go のアプリ側から届いたタッチ */
+  native: 0,
 };
 
 export function resetTouchStats() {
@@ -239,6 +241,32 @@ export function bindInput(
     attached = passive;
   };
   attach(usePassive());
+
+  // Expo Go のアプリ（expo/App.js）の中で動いているとき: プレイ中はアプリが指を受け取ってここへ渡す。
+  // x, y は画面に対する割合、ts はアプリ側の時刻（ms）。アプリ側の時刻とこちらの時刻の差の最小値を
+  // 「届くまでの遅れがいちばん少なかったとき」とみなして、叩いた瞬間の時刻に直す
+  let nativeOffset = Infinity;
+  (window as unknown as { __nativeHit?: unknown }).__nativeHit = (nx: number, ny: number, ts?: number, tag?: string) => {
+    const cx = nx * window.innerWidth;
+    const cy = ny * window.innerHeight;
+    const el = document.elementFromPoint(cx, cy);
+    const btn = el instanceof Element ? el.closest('button') : null;
+    if (btn) {
+      btn.click();
+      return;
+    }
+    const now = performance.now();
+    let at = now;
+    if (typeof ts === 'number' && isFinite(ts)) {
+      // アプリ側の時刻の基準が変わった（アプリの再起動など）ときは測り直す
+      if (Math.abs(now - ts - nativeOffset) > 1000) nativeOffset = now - ts;
+      nativeOffset = Math.min(nativeOffset, now - ts);
+      at = Math.min(now, ts + nativeOffset);
+    }
+    touchStats.native++;
+    onRaw(`n-${tag ?? 'start'} @${nx.toFixed(2)},${ny.toFixed(2)} lag=${Math.round(now - at)}`, at);
+    hitAt(cx, cy, at);
+  };
   root.addEventListener('contextmenu', block);
   root.addEventListener('dblclick', block);
   window.addEventListener('keydown', onKey);
