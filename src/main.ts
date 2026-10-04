@@ -733,7 +733,7 @@ play.onExit = () => view.invalidate();
 async function siteHitSound(kind: HitSound): Promise<AudioFile | null> {
   const names = kind === 'don' ? ['dong', 'don'] : kind === 'ka' ? ['ka'] : ['balloon', 'Balloon'];
   for (const n of names) {
-    for (const ext of ['ogg', 'mp3', 'm4a', 'wav']) {
+    for (const ext of ['wav', 'ogg', 'mp3', 'm4a']) {
       try {
         const res = await fetch(`sounds/${n}.${ext}`, { cache: 'no-cache' });
         const type = res.headers.get('content-type') ?? '';
