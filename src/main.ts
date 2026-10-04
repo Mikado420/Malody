@@ -10,7 +10,7 @@ import { EditorView, eventText } from './editor/view';
 import { loadFiles, type AudioFile } from './io/load';
 import { loadAudio, loadChart, loadHitSound, saveAudio, saveChart, saveHitSound } from './io/storage';
 import { writeZip } from './io/zip';
-import { PlayMode } from './play/playmode';
+import { PlayMode, isNativeHost } from './play/playmode';
 import { fitRoot } from './orient';
 import { BUILD_ID, startAutoUpdate } from './update';
 
@@ -38,6 +38,7 @@ const settings = {
   // iPhone / iPad の Safari は両手交互の速い連打でタッチを落とすので、既定で指置きを使う
   restZone: /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
   passiveTouch: false,
+  nativeMode: 'rn' as 'rn' | 'gh',
   /** タッチ用の中央のドンの帯の幅 */
   donWidth: 0.6,
 };
@@ -404,6 +405,8 @@ function renderSheet() {
       <p class="note">スマホで叩くときの、中央のドンの帯の幅です（左右の残りがカッ）。ドンのつもりがカッになるときは大きく、カッのつもりがドンになるときは小さくしてください。</p>
       <label class="field"><span>画面上部を指置きにする</span><input type="checkbox" data-set="restZone" ${settings.restZone ? 'checked' : ''}></label>
       <p class="note">iPhone では、両手交互で速く叩いて「指が 1 本も触れていない瞬間」に次の指が触れると、そのタッチが届かないことがあります。オンにするとレーンより上が「指置き」になり（触れても反応しません）、そこに指を 1 本ずっと置いたまま叩くと起きにくくなります。</p>
+      ${isNativeHost() ? `<label class="field"><span>アプリでのタッチの受け取り方</span><select data-set="nativeMode"><option value="rn" ${settings.nativeMode === 'rn' ? 'selected' : ''}>React Native</option><option value="gh" ${settings.nativeMode === 'gh' ? 'selected' : ''}>Gesture Handler</option></select></label>
+      <p class="note">Expo Go のアプリの中で、プレイ中の指をどの仕組みで受け取るかです。取りこぼすときは切り替えて試してください。</p>` : ''}
       <label class="field"><span>タッチをポインター方式で受け取る</span><input type="checkbox" data-set="pointerInput" ${settings.pointerInput ? 'checked' : ''}></label>
       <p class="note">両手で交互に叩くと反応しないことがあるときに切り替えて試してください（iPhone の受け取り方が変わります）。</p>
       <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>
@@ -481,6 +484,7 @@ $('sheetBody').addEventListener('input', (e) => {
   const key = el.dataset.set as keyof typeof settings | undefined;
   if (!key) return;
   if (el.type === 'checkbox') (settings[key] as boolean) = el.checked;
+  else if (el instanceof HTMLSelectElement || isNaN(Number(el.value))) (settings[key] as unknown as string) = el.value;
   else {
     (settings[key] as number) = Number(el.value);
     const out = el.parentElement?.querySelector('output');

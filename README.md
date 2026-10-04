@@ -36,7 +36,7 @@ iPhone の Safari（WebKit）は、両手交互で速く叩いて「指が 1 本
 
 - **指置き**: iPhone では最初からレーンより上が「指置き」になっています。そこに指を 1 本置いたまま叩くと取りこぼしません
 - **Expo Go で動かす**（無料・スマホだけで可）: App Store の「Expo Go」を入れ、iPhone で次のリンクを開いて Expo Go で起動します。プレイ中だけアプリの仕組みで指を受け取るので、指置きなしで叩けます
-  - https://snack.expo.dev/?sourceUrl=https%3A%2F%2Fmikado420.github.io%2FMalody%2Fexpo%2FApp.js&platform=ios&name=Malody&dependencies=react-native-webview%2Cexpo-screen-orientation%2Cexpo-status-bar
+  - https://snack.expo.dev/?sourceUrl=https%3A%2F%2Fmikado420.github.io%2FMalody%2Fexpo%2FApp.js&platform=ios&name=Malody&dependencies=react-native-webview%2Cexpo-screen-orientation%2Cexpo-status-bar%2Creact-native-gesture-handler
   - アプリ本体は [public/expo/App.js](public/expo/App.js)。中身は Web 版をそのまま表示するので、Web 版を更新すればアプリでも新しくなります
 
 ### 判定

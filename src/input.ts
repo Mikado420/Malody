@@ -246,7 +246,7 @@ export function bindInput(
   // x, y は画面に対する割合、ts はアプリ側の時刻（ms）。アプリ側の時刻とこちらの時刻の差の最小値を
   // 「届くまでの遅れがいちばん少なかったとき」とみなして、叩いた瞬間の時刻に直す
   let nativeOffset = Infinity;
-  (window as unknown as { __nativeHit?: unknown }).__nativeHit = (nx: number, ny: number, ts?: number, tag?: string) => {
+  (window as unknown as { __nativeHit?: unknown }).__nativeHit = (nx: number, ny: number, ts?: number, tag?: string, seq?: number) => {
     const cx = nx * window.innerWidth;
     const cy = ny * window.innerHeight;
     const el = document.elementFromPoint(cx, cy);
@@ -264,7 +264,7 @@ export function bindInput(
       at = Math.min(now, ts + nativeOffset);
     }
     touchStats.native++;
-    onRaw(`n-${tag ?? 'start'} @${nx.toFixed(2)},${ny.toFixed(2)} lag=${Math.round(now - at)}`, at);
+    onRaw(`n-${tag ?? 'start'} #${seq ?? '?'} @${nx.toFixed(2)},${ny.toFixed(2)} lag=${Math.round(now - at)}`, at);
     hitAt(cx, cy, at);
   };
   root.addEventListener('contextmenu', block);

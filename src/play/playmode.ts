@@ -29,6 +29,8 @@ export interface PlaySettings {
   showTiming?: boolean;
   /** タッチを passive で受け取る（iPhone が指を待たずに次へ進むように） */
   passiveTouch?: boolean;
+  /** Expo Go のアプリでのタッチの受け取り方 */
+  nativeMode?: 'rn' | 'gh';
   /** 画面上部を指置きにする（叩いても反応しない） */
   restZone?: boolean;
   /** 指のタッチをポインターイベントで受け取る（iPhone の取りこぼし対策の切り替え） */
@@ -143,6 +145,7 @@ export class PlayMode {
     this.renderer.resize();
     this.renderer.speed = this.settings.speed;
     this.active = true;
+    postNative({ type: 'mode', mode: this.settings.nativeMode ?? 'rn' });
     postNative({ type: 'play', active: true });
     await this.audio.startAt(from - 2, 1);
     for (const t of clicks ?? []) this.audio.scheduleTick(t);
@@ -315,7 +318,7 @@ export class PlayMode {
     if (S.starts + S.recovered + S.pointers + S.native > 0) {
       rows.push([
         'タッチ',
-        `${isNativeHost() ? `アプリ方式 ${S.native}・` : ''}${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・瞬間移動 ${S.jumps}・指置き ${S.rests}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
+        `${isNativeHost() ? `アプリ方式（${this.settings.nativeMode ?? 'rn'}）${S.native}・` : ''}${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・瞬間移動 ${S.jumps}・指置き ${S.rests}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
       ]);
     }
     const P = this.perf;
@@ -361,7 +364,7 @@ export class PlayMode {
     const f = (t: number) => t.toFixed(3);
     const S = touchStats;
     const lines = [
-      `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${isNativeHost() ? 'native' : this.settings.pointerInput ? 'pointer' : 'touch'}${this.settings.passiveTouch ? '+passive' : ''}${this.settings.restZone ? '+rest' : ''} ua ${navigator.userAgent}`,
+      `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${isNativeHost() ? `native-${this.settings.nativeMode ?? 'rn'}` : this.settings.pointerInput ? 'pointer' : 'touch'}${this.settings.passiveTouch ? '+passive' : ''}${this.settings.restZone ? '+rest' : ''} ua ${navigator.userAgent}`,
       `touchstart ${S.starts} pointerdown ${S.pointers} recovered ${S.recovered} jumps ${S.jumps} rests ${S.rests} native ${S.native} cancel ${S.cancels}/${S.pointerCancels} maxFingers ${S.maxFingers}`,
     ];
     const items: { t: number; s: string }[] = this.raw.map((r) => ({ t: r.t, s: `    ${r.s}` }));
