@@ -122,12 +122,25 @@ export class PlayMode {
     this.autoIdx = 0;
     this.autoRoll = -1;
     cancelAnimationFrame(this.raf);
+    this.perf = { frames: 0, work: 0, workMax: 0, gapMax: 0, slow: 0, last: 0 };
     const loop = () => {
       if (!this.active) return;
+      const t0 = performance.now();
+      const P = this.perf;
+      if (P.last) {
+        const gap = t0 - P.last;
+        if (gap > P.gapMax) P.gapMax = gap;
+        if (gap > 34) P.slow++;
+      }
+      P.last = t0;
       const now = this.time();
       if (this.settings.auto && !this.calibrating) this.autoPlay(game, now);
       game.update(now);
       this.renderer.draw(game, course, now, info);
+      const w = performance.now() - t0;
+      P.frames++;
+      P.work += w;
+      if (w > P.workMax) P.workMax = w;
       if (now > endAt || (game.finished && now > lastTime + 1.5)) {
         this.finish();
         return;
@@ -136,6 +149,9 @@ export class PlayMode {
     };
     this.raf = requestAnimationFrame(loop);
   }
+
+  /** 描画の重さの記録（結果画面の診断用） */
+  perf = { frames: 0, work: 0, workMax: 0, gapMax: 0, slow: 0, last: 0 };
 
   private autoIdx = 0;
   private autoRoll = -1;
@@ -235,6 +251,13 @@ export class PlayMode {
     ]);
     if (touchStats.starts + touchStats.recovered > 0) {
       rows.push(['タッチ', `${touchStats.starts}（取りこぼしを補った ${touchStats.recovered}）`]);
+    }
+    const P = this.perf;
+    if (P.frames) {
+      rows.push([
+        '描画',
+        `1コマ平均 ${(P.work / P.frames).toFixed(1)}ms・最大 ${P.workMax.toFixed(0)}ms／コマ落ち ${P.slow}回（最長 ${P.gapMax.toFixed(0)}ms）`,
+      ]);
     }
     rows.push(['判定調整', `${this.settings.offset}ms`]);
     rows.push(['バージョン', BUILD_ID.slice(0, 7)]);

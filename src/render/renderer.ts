@@ -1,6 +1,6 @@
 import type { Course, Note } from '../chart/types';
 import { CLEAR_LINE, type Game, type HitKind, type Judge, type JudgeEvent, type NoteState } from '../engine/game';
-import { BIG_SCALE, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
+import { BIG_SCALE, drawCachedText, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
 
 /**
  * テストプレイ画面。太鼓の達人のプレイ画面（2000×1125 のスクリーンショット）から
@@ -148,6 +148,7 @@ export class Renderer {
     c.fillStyle = '#000';
     c.fillRect(0, 0, bg.width, bg.height);
     c.setTransform(this.dpr * this.s, 0, 0, this.dpr * this.s, this.dpr * this.ox, this.dpr * this.oy);
+    c.save();
     c.beginPath();
     c.rect(0, 0, REF_W, REF_H);
     c.clip();
@@ -193,6 +194,12 @@ export class Renderer {
     c.restore();
     c.fillStyle = '#120c0a';
     c.fillRect(V.x0, V.y1 - 70, V.x1 - V.x0, 4);
+    c.restore(); // 16:9 の枠の切り抜きを外す（太鼓は黒帯の上まで描く）
+    // タッチ用の太鼓（画面 px の座標系）
+    if (this.touch) {
+      c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      this.drawPadShape(c);
+    }
     this.bg = bg;
   }
 
@@ -466,7 +473,7 @@ export class Renderer {
 
       const label = labels.get(n);
       if (label && x > LANE_X - 40) {
-        outlinedText(ctx, label, x, (LANE_BOTTOM + TEXT_BOTTOM) / 2 + 1, '#fff', '#1d1715', 7);
+        drawCachedText(ctx, label, x, (LANE_BOTTOM + TEXT_BOTTOM) / 2 + 1, `800 31px ${FONT}`, '#fff', '#1d1715', 7);
       }
     }
     ctx.restore();
@@ -836,9 +843,8 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** 画面下の太鼓（タッチ用）。後ろの背景が見えるように半透明 */
-  private drawPad(wall: number) {
-    const ctx = this.ctx;
+  /** 太鼓の形（半透明）。画面 px の座標系で描く */
+  private drawPadShape(ctx: CanvasRenderingContext2D) {
     const P = this.pad;
     const ell = (rx: number, ry: number) => {
       ctx.beginPath();
@@ -859,6 +865,14 @@ export class Renderer {
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     ctx.fillRect(P.x - 2, P.y - P.faceRy, 4, P.faceRy * 2);
     ctx.restore();
+  }
+
+  /** 画面下の太鼓（タッチ用）。後ろの背景が見えるように半透明 */
+  private drawPad(wall: number) {
+    const ctx = this.ctx;
+    const P = this.pad;
+    // 太鼓そのものは動かないので背景と一緒に前もって描いてある（drawPadShape）。ここでは光と波紋だけ
+    if (!this.bg) this.drawPadShape(ctx);
 
     // 叩いた側の面・縁が光る
     for (const f of this.flashes) {

@@ -50,7 +50,10 @@ const spriteCache = new Map<string, HTMLCanvasElement>();
 export function drawNoteHead(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, type: NoteType) {
   const m = ctx.getTransform();
   const scale = Math.hypot(m.a, m.b) || 1;
-  const pr = Math.max(1, Math.round(r * scale)); // 端末ピクセルでの半径
+  // 端末ピクセルでの半径。少しずつ大きさが変わる音符（ゲージへ飛ぶ音符など）でも絵を作り直さないよう、
+  // 大きさを 8 段階刻み（約 9%）にまとめ、少し大きめの絵を縮小して貼る
+  const want = Math.max(1, r * scale);
+  const pr = want <= 8 ? Math.ceil(want) : Math.ceil(Math.pow(1.09, Math.ceil(Math.log(want) / Math.log(1.09))));
   const key = `${type}:${pr}`;
   let sp = spriteCache.get(key);
   if (!sp) {
@@ -61,7 +64,7 @@ export function drawNoteHead(ctx: CanvasRenderingContext2D, x: number, y: number
     drawNoteHeadRaw(c, pr + 2, pr + 2, pr, type);
     spriteCache.set(key, sp);
   }
-  const half = (pr + 2) / scale;
+  const half = ((pr + 2) / scale) * (want / pr);
   ctx.drawImage(sp, x - half, y - half, half * 2, half * 2);
 }
 
@@ -177,4 +180,40 @@ export function outlinedText(
   ctx.strokeText(text, x, y);
   ctx.fillStyle = fill;
   ctx.fillText(text, x, y);
+}
+
+const textCache = new Map<string, HTMLCanvasElement>();
+
+/**
+ * 縁取り文字を絵として前もって作っておき、毎フレームは貼るだけにする（音符の下の「ドン」「カッ」など、
+ * 1 フレームに何十個も描く文字向け）。font はピクセル指定（例 '800 31px ...'）。
+ */
+export function drawCachedText(
+  ctx: CanvasRenderingContext2D, text: string, x: number, y: number, font: string, fill: string, stroke: string, width: number,
+) {
+  const m = ctx.getTransform();
+  const scale = Math.hypot(m.a, m.b) || 1;
+  const q = Math.round(scale * 20) / 20; // 拡大率が少し変わったくらいでは作り直さない
+  const key = `${text}|${font}|${fill}|${stroke}|${width}|${q}`;
+  let sp = textCache.get(key);
+  if (!sp) {
+    if (textCache.size > 200) textCache.clear();
+    sp = document.createElement('canvas');
+    const c0 = sp.getContext('2d')!;
+    c0.font = font;
+    const w = c0.measureText(text).width;
+    const px = Number(/(\d+(?:\.\d+)?)px/.exec(font)?.[1] ?? 20);
+    sp.width = Math.ceil((w + width * 2 + 4) * q);
+    sp.height = Math.ceil((px * 1.4 + width * 2) * q);
+    const c = sp.getContext('2d')!;
+    c.scale(q, q);
+    c.font = font;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    outlinedText(c, text, sp.width / q / 2, sp.height / q / 2, fill, stroke, width);
+    textCache.set(key, sp);
+  }
+  const w = sp.width / q;
+  const h = sp.height / q;
+  ctx.drawImage(sp, x - w / 2, y - h / 2, w, h);
 }
