@@ -4,6 +4,7 @@ import { Game } from '../engine/game';
 import { bindInput, touchStats } from '../input';
 import { Renderer } from '../render/renderer';
 import { BUILD_ID } from '../update';
+import { suggestDonWidth, zoneSamples } from './zone';
 
 export interface PlaySettings {
   speed: number;
@@ -11,8 +12,8 @@ export interface PlaySettings {
   offset: number;
   /** オート（譜面確認用に自動で叩く） */
   auto?: boolean;
-  /** タッチ用の太鼓の面（ドン）の大きさ */
-  faceScale?: number;
+  /** タッチ用: 中央のドンの帯の幅（画面の幅に対する割合） */
+  donWidth?: number;
   /** 叩くたびにずれ（ms）を表示する */
   showTiming?: boolean;
 }
@@ -40,7 +41,7 @@ export class PlayMode {
       canvas,
       () => {
         const L = this.renderer.layout;
-        return { x: L.drumX, y: L.drumY, rx: L.drumRx, ry: L.drumRy };
+        return { x: L.drumX, half: L.drumHalf };
       },
       (kind, side, at, pt) => {
         if (!this.active || !this.game) return;
@@ -106,7 +107,7 @@ export class PlayMode {
     game.onJudge = (e) => this.renderer.pushJudge(e);
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
-    this.renderer.faceScale = this.settings.faceScale ?? 1.2;
+    this.renderer.donWidth = this.settings.donWidth ?? 0.6;
     touchStats.starts = 0;
     touchStats.recovered = 0;
     this.game = game;
@@ -267,12 +268,8 @@ export class PlayMode {
           else none++;
         }
         const parts = [];
-        const nearEdge = rings.filter((r) => r > 1 && r < 1.15).length;
-        if (wrong && nearEdge >= Math.max(2, wrong / 3)) {
-          this.edgeHint = true;
-        }
         if (wrong) {
-          const avg = rings.length ? `、面の境目からの位置 平均 ${(rings.reduce((a, b) => a + b, 0) / rings.length).toFixed(2)}` : '';
+          const avg = rings.length ? `、ドンの帯の端からの位置 平均 ${(rings.reduce((a, b) => a + b, 0) / rings.length).toFixed(2)}` : '';
           parts.push(`色違いで叩いた ${wrong}${avg}`);
         }
         if (stolen) parts.push(`同じ色で叩いたが別の音符に使われた ${stolen}`);
@@ -299,12 +296,18 @@ export class PlayMode {
     rows.push(['判定調整', `${this.settings.offset}ms`]);
     rows.push(['バージョン', BUILD_ID.slice(0, 7)]);
     this.lastLog = this.logText(g);
+    // 叩いた位置から、ドンの帯のちょうどいい幅を提案する
+    const cur = this.settings.donWidth ?? 0.6;
+    const sug = this.settings.auto ? null : suggestDonWidth(zoneSamples(g.log, cur), cur);
+    this.suggestedDonWidth = sug ? sug.width : null;
     const hint = this.result.querySelector<HTMLElement>('.edgehint');
     if (hint) {
-      hint.classList.toggle('hidden', !this.edgeHint);
-      hint.querySelector('button')!.textContent = `面（ドン）を広げる（今 ${Math.round((this.settings.faceScale ?? 1.2) * 100)}% → ${Math.round(Math.min(1.6, (this.settings.faceScale ?? 1.2) + 0.1) * 100)}%）`;
+      hint.classList.toggle('hidden', !sug);
+      if (sug) {
+        hint.querySelector('p')!.textContent = `叩いた位置を見ると、ドンの帯（中央）の幅を変えると色の取り違えが ${sug.before} 回 → ${sug.after} 回に減ります。`;
+        hint.querySelector('button')!.textContent = `ドンの幅を ${Math.round(sug.width * 100)}% にする（今 ${Math.round(cur * 100)}%）`;
+      }
     }
-    this.edgeHint = false;
     this.result.querySelector('h2')!.textContent = '結果';
     this.result.querySelector('dl')!.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     this.result.classList.remove('hidden');
@@ -313,8 +316,8 @@ export class PlayMode {
   /** 結果画面で提案する判定調整の値（ms） */
   suggested = 0;
 
-  /** 色違いの見逃しが面の境目の外側に集中していた（面を広げるよう提案する） */
-  edgeHint = false;
+  /** 結果画面で提案するドンの帯の幅（提案がなければ null） */
+  suggestedDonWidth: number | null = null;
 
   /** 直前のプレイの記録（「ログをコピー」で使う） */
   lastLog = '';

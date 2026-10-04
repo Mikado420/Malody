@@ -23,7 +23,7 @@ export const touchStats = { starts: 0, recovered: 0 };
 
 /**
  * キーボードとタッチ（ポインタ）入力。
- * タッチは太鼓の面の楕円の中か外かで ドン/カッ を判定する。
+ * タッチは画面の横の位置で ドン（中央の帯）/ カッ（左右の端）を判定する。
  *
  * iPhone の Safari では、片方の指がまだ画面に触れている間に別の指で叩くと、
  * その指の touchstart が届かないことがある（2 本指のジェスチャーとして扱われる・他のイベントにまとめられる）。
@@ -32,7 +32,7 @@ export const touchStats = { starts: 0, recovered: 0 };
 export function bindInput(
   root: HTMLElement,
   canvas: HTMLCanvasElement,
-  getDrum: () => { x: number; y: number; rx: number; ry: number },
+  getDrum: () => { x: number; half: number },
   onHit: HitHandler,
 ): () => void {
   const onKey = (e: KeyboardEvent) => {
@@ -48,11 +48,10 @@ export function bindInput(
   const hitAt = (clientX: number, clientY: number, at: number) => {
     const { x: px, y: py } = localPoint({ clientX, clientY }, canvas);
     const d = getDrum();
-    // 画面のどこを叩いても反応する（太鼓の面の楕円の中＝ドン、それ以外はすべてカッ）
-    const nx = (px - d.x) / d.rx;
-    const ny = (py - d.y) / d.ry;
+    // 画面のどこを叩いても反応する。横の位置だけで決める: 中央の帯＝ドン、左右の端＝カッ
+    // ring = 中心からの距離をドンの帯の半分の幅で割ったもの（1 がドンとカッの境目）
     const side = px < d.x ? 'L' : 'R';
-    const ring = Math.sqrt(nx * nx + ny * ny);
+    const ring = Math.abs(px - d.x) / Math.max(1, d.half);
     onHit(ring <= 1 ? 'don' : 'ka', side, at, { x: px, y: py, ring });
   };
 

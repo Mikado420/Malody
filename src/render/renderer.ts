@@ -44,11 +44,10 @@ export interface Layout {
   laneY: number;
   laneH: number;
   judgeX: number;
+  /** 画面の横の中心（画面 px） */
   drumX: number;
-  drumY: number;
-  /** 面（ドン）の楕円の半径（画面 px） */
-  drumRx: number;
-  drumRy: number;
+  /** 中心からこの距離までがドン、それより外がカッ（画面 px） */
+  drumHalf: number;
 }
 
 const ease = (x: number) => 1 - (1 - x) * (1 - x);
@@ -57,8 +56,8 @@ export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   layout!: Layout;
   speed = 1;
-  /** タッチ用の太鼓の面（ドン）の大きさの倍率 */
-  faceScale = 1.2;
+  /** タッチ用: 中央のドンの帯の幅（画面の幅に対する割合） */
+  donWidth = 0.6;
   /** タッチ操作用の太鼓を画面下に描くか */
   touch = matchMedia('(pointer: coarse)').matches;
 
@@ -68,7 +67,7 @@ export class Renderer {
   private oy = 0;
   private vis = { x0: 0, y0: 0, x1: REF_W, y1: REF_H };
   /** 画面下の太鼓（画面 px） */
-  private pad = { x: 0, y: 0, faceRx: 1, faceRy: 1, rimRx: 1, rimRy: 1 };
+  private pad = { x: 0, top: 0, half: 1, w: 1, h: 1 };
 
   private bursts: Burst[] = [];
   private flyers: Flyer[] = [];
@@ -111,25 +110,9 @@ export class Renderer {
     const s = this.s;
     this.vis = { x0: 0, y0: 0, x1: REF_W, y1: REF_H };
 
-    // タッチ用の太鼓（画面 px）。斜めから見た太鼓のような横長の楕円で、16:9 の外の黒帯まで含めた
-    // 画面の横幅いっぱいに置く。横持ちで両手の親指が自然に置かれる左右の下側も面（ドン）に入る。
-    {
-      const laneBottom = this.sy(TEXT_BOTTOM);
-      const cy = h + (h - laneBottom) * 0.12;
-      const rimRy = cy - laneBottom - 8 * (h / 400);
-      // 面（ドン）の大きさ。1.0 で以前の大きさ、既定 1.2 で画面の左下・右下の角まで面に入る
-      const k = this.faceScale;
-      const faceRx = w * 0.44 * k;
-      const faceRy = Math.min(rimRy * 0.82 * k, rimRy * 0.96);
-      this.pad = {
-        x: w / 2,
-        y: cy,
-        faceRx,
-        faceRy,
-        rimRx: Math.max(w * 0.5, faceRx * 1.06),
-        rimRy,
-      };
-    }
+    // タッチ用の叩き分け（画面 px）: 画面の横の位置だけで決める。中央の帯＝ドン、左右の端＝カッ。
+    // 帯の幅は donWidth（画面の幅に対する割合）。上下の位置は関係ない（レーンの上を叩いても同じ）
+    this.pad = { x: w / 2, top: this.sy(TEXT_BOTTOM), half: (w * this.donWidth) / 2, w, h };
 
     this.layout = {
       w, h,
@@ -137,9 +120,7 @@ export class Renderer {
       laneH: (TEXT_BOTTOM - LANE_TOP) * s,
       judgeX: this.sx(JX),
       drumX: this.pad.x,
-      drumY: this.pad.y,
-      drumRx: this.pad.faceRx,
-      drumRy: this.pad.faceRy,
+      drumHalf: this.pad.half,
     };
     this.burstSprites = {};
     this.buildBackground();
@@ -852,53 +833,66 @@ export class Renderer {
   /** 太鼓の形（半透明）。画面 px の座標系で描く */
   private drawPadShape(ctx: CanvasRenderingContext2D) {
     const P = this.pad;
-    const ell = (rx: number, ry: number) => {
-      ctx.beginPath();
-      ctx.ellipse(P.x, P.y, rx, ry, 0, 0, Math.PI * 2);
-    };
+    const left = P.x - P.half;
+    const right = P.x + P.half;
+    const hgt = P.h - P.top;
     ctx.save();
-    ctx.globalAlpha = 0.5;
-    ell(P.rimRx, P.rimRy); // 縁（カッ）
-    ctx.fillStyle = '#8a2f1a';
-    ctx.fill();
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = '#1f0c06';
-    ctx.stroke();
-    ell(P.faceRx, P.faceRy); // 面（ドン）
+    ctx.globalAlpha = 0.45;
+    // 左右の端（カッ）
+    ctx.fillStyle = '#2f6f8a';
+    ctx.fillRect(0, P.top, left, hgt);
+    ctx.fillRect(right, P.top, P.w - right, hgt);
+    // 中央（ドン）: 太鼓の面のように上下を丸めた帯
     ctx.fillStyle = '#f4e6c8';
+    ctx.beginPath();
+    const r = Math.min(P.half, hgt) * 0.25;
+    ctx.moveTo(left, P.h);
+    ctx.lineTo(left, P.top + r);
+    ctx.quadraticCurveTo(left, P.top, left + r, P.top);
+    ctx.lineTo(right - r, P.top);
+    ctx.quadraticCurveTo(right, P.top, right, P.top + r);
+    ctx.lineTo(right, P.h);
+    ctx.closePath();
     ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(P.x - 2, P.y - P.faceRy, 4, P.faceRy * 2);
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = '#1f0c06';
+    ctx.fillRect(left - 1.5, P.top, 3, hgt);
+    ctx.fillRect(right - 1.5, P.top, 3, hgt);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(P.x - 1, P.top, 2, hgt);
     ctx.restore();
+    const fs = Math.round(30 * this.s);
+    ctx.font = `800 ${fs}px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    const ty = P.top + hgt * 0.5;
+    ctx.fillText('カッ', left / 2, ty);
+    ctx.fillText('カッ', (right + P.w) / 2, ty);
+    ctx.fillText('ドン', P.x, ty);
   }
 
   /** 画面下の太鼓（タッチ用）。後ろの背景が見えるように半透明 */
   private drawPad(wall: number) {
     const ctx = this.ctx;
     const P = this.pad;
-    // 太鼓そのものは動かないので背景と一緒に前もって描いてある（drawPadShape）。ここでは光と波紋だけ
+    // 叩き分けの帯は動かないので背景と一緒に前もって描いてある（drawPadShape）。ここでは光と波紋だけ
     if (!this.bg) this.drawPadShape(ctx);
+    const hgt = P.h - P.top;
 
-    // 叩いた側の面・縁が光る
+    // 叩いた側が光る（ドン＝中央の左半分／右半分、カッ＝左端／右端）
     for (const f of this.flashes) {
       const a = 1 - (wall - f.t) / 150;
       if (a <= 0) continue;
-      const start = f.side === 'L' ? Math.PI / 2 : -Math.PI / 2;
-      ctx.save();
-      ctx.beginPath();
       if (f.kind === 'don') {
-        ctx.moveTo(P.x, P.y);
-        ctx.ellipse(P.x, P.y, P.faceRx, P.faceRy, 0, start, start + Math.PI);
         ctx.fillStyle = `rgba(255,80,40,${0.45 * a})`;
-        ctx.fill();
+        if (f.side === 'L') ctx.fillRect(P.x - P.half, P.top, P.half, hgt);
+        else ctx.fillRect(P.x, P.top, P.half, hgt);
       } else {
-        ctx.ellipse(P.x, P.y, P.rimRx, P.rimRy, 0, start, start + Math.PI);
-        ctx.ellipse(P.x, P.y, P.faceRx, P.faceRy, 0, start + Math.PI, start, true);
         ctx.fillStyle = `rgba(70,200,240,${0.6 * a})`;
-        ctx.fill();
+        if (f.side === 'L') ctx.fillRect(0, P.top, P.x - P.half, hgt);
+        else ctx.fillRect(P.x + P.half, P.top, P.w - P.x - P.half, hgt);
       }
-      ctx.restore();
     }
 
     // 指が触れた場所の波紋（ドン＝赤、カッ＝青）。どちらと判定されたかが分かるように
@@ -911,12 +905,6 @@ export class Renderer {
       ctx.strokeStyle = t.kind === 'don' ? `rgba(255,70,40,${1 - p})` : `rgba(60,190,240,${1 - p})`;
       ctx.stroke();
     }
-
-    ctx.font = `700 ${Math.round(26 * this.s)}px ${FONT}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.fillText('面＝ドン　それ以外（画面のどこでも）＝カッ', P.x, P.y - P.faceRy + 40 * this.s);
   }
 
   /** 叩いたときのずれの表示（設定でオンのとき） */
