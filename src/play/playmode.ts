@@ -16,6 +16,8 @@ export interface PlaySettings {
   donWidth?: number;
   /** 叩くたびにずれ（ms）を表示する */
   showTiming?: boolean;
+  /** 画面上部を指置きにする（叩いても反応しない） */
+  restZone?: boolean;
   /** 指のタッチをポインターイベントで受け取る（iPhone の取りこぼし対策の切り替え） */
   pointerInput?: boolean;
 }
@@ -43,7 +45,7 @@ export class PlayMode {
       canvas,
       () => {
         const L = this.renderer.layout;
-        return { x: L.drumX, half: L.drumHalf };
+        return { x: L.drumX, half: L.drumHalf, restBottom: L.restBottom };
       },
       (kind, side, at, pt) => {
         if (!this.active || !this.game) return;
@@ -114,6 +116,7 @@ export class PlayMode {
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
     this.renderer.donWidth = this.settings.donWidth ?? 0.6;
+    this.renderer.restZone = !!this.settings.restZone;
     resetTouchStats();
     this.raw = [];
     this.game = game;
@@ -293,7 +296,7 @@ export class PlayMode {
     if (S.starts + S.recovered + S.pointers > 0) {
       rows.push([
         'タッチ',
-        `${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・瞬間移動 ${S.jumps}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
+        `${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・瞬間移動 ${S.jumps}・指置き ${S.rests}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
       ]);
     }
     const P = this.perf;
@@ -340,7 +343,7 @@ export class PlayMode {
     const S = touchStats;
     const lines = [
       `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${this.settings.pointerInput ? 'pointer' : 'touch'} ua ${navigator.userAgent}`,
-      `touchstart ${S.starts} pointerdown ${S.pointers} recovered ${S.recovered} jumps ${S.jumps} cancel ${S.cancels}/${S.pointerCancels} maxFingers ${S.maxFingers}`,
+      `touchstart ${S.starts} pointerdown ${S.pointers} recovered ${S.recovered} jumps ${S.jumps} rests ${S.rests} cancel ${S.cancels}/${S.pointerCancels} maxFingers ${S.maxFingers}`,
     ];
     const items: { t: number; s: string }[] = this.raw.map((r) => ({ t: r.t, s: `    ${r.s}` }));
     for (const x of g.log) {

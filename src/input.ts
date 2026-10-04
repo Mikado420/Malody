@@ -32,6 +32,8 @@ export const touchStats = {
   maxFingers: 0,
   /** 指が瞬間移動した（別の指の打撃とみなした）回数 */
   jumps: 0,
+  /** 指置きの場所に触れた回数 */
+  rests: 0,
 };
 
 export function resetTouchStats() {
@@ -49,7 +51,7 @@ export function resetTouchStats() {
 export function bindInput(
   root: HTMLElement,
   canvas: HTMLCanvasElement,
-  getDrum: () => { x: number; half: number },
+  getDrum: () => { x: number; half: number; restBottom?: number },
   onHit: HitHandler,
   /** true のときは指のタッチをポインターイベントで受け取る（タッチイベントは止めるだけ） */
   usePointer: () => boolean = () => false,
@@ -75,6 +77,11 @@ export function bindInput(
   const hitAt = (clientX: number, clientY: number, at: number) => {
     const { x: px, y: py } = localPoint({ clientX, clientY }, canvas);
     const d = getDrum();
+    // 指置きの場所は叩いても反応しない（指を 1 本置いておくと iPhone の取りこぼしが起きにくい）
+    if (d.restBottom && py < d.restBottom) {
+      touchStats.rests++;
+      return;
+    }
     // 画面のどこを叩いても反応する。横の位置だけで決める: 中央の帯＝ドン、左右の端＝カッ
     // ring = 中心からの距離をドンの帯の半分の幅で割ったもの（1 がドンとカッの境目）
     const side = px < d.x ? 'L' : 'R';

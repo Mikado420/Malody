@@ -35,6 +35,7 @@ const settings = {
   auto: false,
   showTiming: false,
   pointerInput: false,
+  restZone: false,
   /** タッチ用の太鼓の面（ドン）の大きさ */
   donWidth: 0.6,
 };
@@ -399,6 +400,8 @@ function renderSheet() {
       <p class="note">クリック音に合わせてドンを 24 回叩くと、端末の音の遅れを測って判定調整を提案します。音がずれて「正確に叩いても判定されない・不可になる」ときに使ってください。</p>
       <label class="field"><span>ドンの幅（中央の帯・左右はカッ）</span><input type="range" min="0.3" max="0.9" step="0.01" data-set="donWidth" value="${settings.donWidth}"><output>${Math.round(settings.donWidth * 100)}%</output></label>
       <p class="note">スマホで叩くときの、中央のドンの帯の幅です（左右の残りがカッ）。ドンのつもりがカッになるときは大きく、カッのつもりがドンになるときは小さくしてください。</p>
+      <label class="field"><span>画面上部を指置きにする</span><input type="checkbox" data-set="restZone" ${settings.restZone ? 'checked' : ''}></label>
+      <p class="note">iPhone では、両手交互で速く叩いて「指が 1 本も触れていない瞬間」に次の指が触れると、そのタッチが届かないことがあります。オンにするとレーンより上が「指置き」になり（触れても反応しません）、そこに指を 1 本ずっと置いたまま叩くと起きにくくなります。</p>
       <label class="field"><span>タッチをポインター方式で受け取る</span><input type="checkbox" data-set="pointerInput" ${settings.pointerInput ? 'checked' : ''}></label>
       <p class="note">両手で交互に叩くと反応しないことがあるときに切り替えて試してください（iPhone の受け取り方が変わります）。</p>
       <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>

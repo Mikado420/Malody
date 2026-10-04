@@ -48,6 +48,8 @@ export interface Layout {
   drumX: number;
   /** 中心からこの距離までがドン、それより外がカッ（画面 px） */
   drumHalf: number;
+  /** これより上は指を置いておく場所（叩いても反応しない）。0 ならなし（画面 px） */
+  restBottom: number;
 }
 
 const ease = (x: number) => 1 - (1 - x) * (1 - x);
@@ -58,6 +60,8 @@ export class Renderer {
   speed = 1;
   /** タッチ用: 中央のドンの帯の幅（画面の幅に対する割合） */
   donWidth = 0.6;
+  /** 画面上部（レーンより上）を「指置き」にする（iPhone の取りこぼし対策） */
+  restZone = false;
   /** タッチ操作用の太鼓を画面下に描くか */
   touch = matchMedia('(pointer: coarse)').matches;
 
@@ -121,6 +125,7 @@ export class Renderer {
       judgeX: this.sx(JX),
       drumX: this.pad.x,
       drumHalf: this.pad.half,
+      restBottom: this.restZone ? this.sy(LANE_TOP) : 0,
     };
     this.burstSprites = {};
     this.buildBackground();
@@ -872,12 +877,36 @@ export class Renderer {
     ctx.fillText('ドン', P.x, ty);
   }
 
+  /** 指置きの場所（レーンより上）。ほかの絵の上に重ねる */
+  private drawRest() {
+    const P = this.pad;
+    if (this.restZone) {
+      this.ctx.save();
+      this.ctx.font = `800 ${Math.round(26 * this.s)}px ${FONT}`;
+      this.ctx.textAlign = 'center';
+      this.ctx.textBaseline = 'middle';
+      const rb = this.sy(LANE_TOP);
+      this.ctx.save();
+      this.ctx.fillStyle = 'rgba(40,200,120,0.18)';
+      this.ctx.fillRect(0, 0, P.w, rb);
+      this.ctx.strokeStyle = 'rgba(80,230,150,0.7)';
+      this.ctx.setLineDash([8 * this.s, 6 * this.s]);
+      this.ctx.lineWidth = Math.max(1, 3 * this.s);
+      this.ctx.strokeRect(0, 0, P.w, rb);
+      this.ctx.restore();
+      this.ctx.fillStyle = 'rgba(255,255,255,0.8)';
+      this.ctx.fillText('指置き（ここに 1 本ずっと触れておく・反応しません）', P.x, rb * 0.55);
+      this.ctx.restore();
+    }
+  }
+
   /** 画面下の太鼓（タッチ用）。後ろの背景が見えるように半透明 */
   private drawPad(wall: number) {
     const ctx = this.ctx;
     const P = this.pad;
     // 叩き分けの帯は動かないので背景と一緒に前もって描いてある（drawPadShape）。ここでは光と波紋だけ
     if (!this.bg) this.drawPadShape(ctx);
+    this.drawRest();
     const hgt = P.h - P.top;
 
     // 叩いた側が光る（ドン＝中央の左半分／右半分、カッ＝左端／右端）
