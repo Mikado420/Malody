@@ -146,6 +146,8 @@ export class PlayMode {
     this.game = game;
 
     this.root.classList.remove('hidden');
+    // プレイ中は後ろのエディタを描かない・重ねて表示しない（プレイ画面に全部の力を使う）
+    document.body.classList.add('playing');
     this.result.classList.add('hidden');
     this.renderer.resize();
     this.renderer.speed = this.settings.speed;
@@ -420,6 +422,7 @@ export class PlayMode {
   close() {
     this.finish();
     this.root.classList.add('hidden');
+    document.body.classList.remove('playing');
     this.result.classList.add('hidden');
     this.onExit();
   }

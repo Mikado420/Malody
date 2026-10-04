@@ -1,6 +1,6 @@
 import type { Course, Note } from '../chart/types';
 import { CLEAR_LINE, type Game, type HitKind, type Judge, type JudgeEvent, type NoteState } from '../engine/game';
-import { BIG_SCALE, drawCachedText, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
+import { BIG_SCALE, clearTextCache, drawCachedText, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
 
 /**
  * テストプレイ画面。太鼓の達人のプレイ画面（2000×1125 のスクリーンショット）から
@@ -65,10 +65,13 @@ export interface Layout {
   restBottom: number;
 }
 
+/** ゲージが満タンのときの虹色（毎フレーム色の文字列を作らないよう前もって作っておく） */
+const RAINBOW = Array.from({ length: 360 }, (_, h) => `hsl(${h},90%,58%)`);
+
 const ease = (x: number) => 1 - (1 - x) * (1 - x);
 
 export class Renderer {
-  private readonly ctx: CanvasRenderingContext2D;
+  private ctx: CanvasRenderingContext2D;
   layout!: Layout;
   speed = 1;
   /** タッチ用: 中央のドンの帯の幅（画面の幅に対する割合） */
@@ -114,7 +117,19 @@ export class Renderer {
   private bg: HTMLCanvasElement | null = null;
 
   constructor(private readonly canvas: HTMLCanvasElement) {
+    // 動かない背景は、プレイ画面の canvas の後ろに置いた別の canvas に一度だけ描く。
+    // 毎フレーム画面全体の背景を描き直さずに済むので、1 フレームの塗りが大きく減る（見た目は同じ）
+    const bg = document.createElement('canvas');
+    bg.className = 'game-bg';
+    bg.setAttribute('aria-hidden', 'true');
+    canvas.parentElement?.insertBefore(bg, canvas);
+    this.bg = bg;
     this.ctx = canvas.getContext('2d')!;
+    // Web フォントが後から読み込まれたら、前もって描いておいた文字の絵を作り直す
+    document.fonts?.addEventListener?.('loadingdone', () => {
+      this.sprites.clear();
+      clearTextCache();
+    });
     this.makePatterns();
     this.resize();
     new ResizeObserver(() => this.resize()).observe(canvas);
@@ -151,7 +166,20 @@ export class Renderer {
       restBottom: this.restZone ? this.sy(LANE_TOP) : 0,
     };
     this.burstSprites = {};
+    this.sprites.clear();
     this.buildBackground();
+  }
+
+  /** レーンの動かない部分（黒い枠・濃い灰色の本体・音符文字の帯） */
+  private paintLaneBase(c: CanvasRenderingContext2D, right: number) {
+    c.fillStyle = '#000';
+    c.fillRect(LANE_X - 6, LANE_TOP - 8, right - LANE_X + 6, TEXT_BOTTOM - LANE_TOP + 12);
+    c.fillStyle = '#272727';
+    c.fillRect(LANE_X, LANE_TOP, right - LANE_X, LANE_BOTTOM - LANE_TOP);
+    c.fillStyle = '#838383';
+    c.fillRect(LANE_X, LANE_BOTTOM, right - LANE_X, TEXT_BOTTOM - LANE_BOTTOM);
+    c.fillStyle = '#000';
+    c.fillRect(LANE_X, LANE_BOTTOM, right - LANE_X, 4);
   }
 
   /** 動かない背景を一度だけ描いておく（毎フレームはこれをコピーするだけ） */
@@ -159,7 +187,7 @@ export class Renderer {
     const bg = this.bg ?? document.createElement('canvas');
     bg.width = this.canvas.width;
     bg.height = this.canvas.height;
-    const c = bg.getContext('2d')!;
+    const c = bg.getContext('2d', { alpha: false })!;
     c.fillStyle = '#000';
     c.fillRect(0, 0, bg.width, bg.height);
     c.setTransform(this.dpr * this.s, 0, 0, this.dpr * this.s, this.dpr * this.ox, this.dpr * this.oy);
@@ -243,6 +271,7 @@ export class Renderer {
     c.restore();
     c.fillStyle = '#120c0a';
     c.fillRect(V.x0, V.y1 - 70, V.x1 - V.x0, 4);
+    this.paintLaneBase(c, V.x1);
     c.restore(); // 16:9 の枠の切り抜きを外す（太鼓は黒帯の上まで描く）
     // タッチ用の太鼓（画面 px の座標系）
     if (this.touch) {
@@ -250,6 +279,45 @@ export class Renderer {
       this.drawPadShape(c);
     }
     this.bg = bg;
+  }
+
+  /**
+   * 毎フレーム同じ絵になる部分（左のパネル・曲名・ゲージの枠）は、一度だけ別の canvas に描いておき、
+   * 毎フレームはそれを貼るだけにする。端末のピクセルの位置まで同じになるように描くので、見た目は変わらない
+   */
+  private gogoGrad: CanvasGradient | null = null;
+  private gogoGradRight = 0;
+  private sprites = new Map<string, { c: HTMLCanvasElement; dx: number; dy: number }>();
+
+  private drawSprite(key: string, x: number, y: number, w: number, h: number, paint: () => void, alpha = 1) {
+    const sc = this.dpr * this.s;
+    const k = `${key}|${this.canvas.width}x${this.canvas.height}`;
+    let sp = this.sprites.get(k);
+    if (!sp) {
+      if (this.sprites.size > 24) this.sprites.clear();
+      const dx = Math.floor(this.dpr * (this.s * x + this.ox));
+      const dy = Math.floor(this.dpr * (this.s * y + this.oy));
+      const c = document.createElement('canvas');
+      c.width = Math.ceil(w * sc) + 2;
+      c.height = Math.ceil(h * sc) + 2;
+      const g = c.getContext('2d')!;
+      g.setTransform(sc, 0, 0, sc, this.dpr * this.ox - dx, this.dpr * this.oy - dy);
+      const prev = this.ctx;
+      this.ctx = g;
+      try {
+        paint();
+      } finally {
+        this.ctx = prev;
+      }
+      sp = { c, dx, dy };
+      this.sprites.set(k, sp);
+    }
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    if (alpha !== 1) ctx.globalAlpha *= alpha;
+    ctx.drawImage(sp.c, sp.dx, sp.dy);
+    ctx.restore();
   }
 
   private sx(x: number) { return x * this.s + this.ox; }
@@ -366,13 +434,9 @@ export class Renderer {
     if (gogo && !this.wasGogo) this.startFireworks(wall);
     this.wasGogo = gogo;
 
+    // 背景は後ろの canvas に描いてあるので、手前は消すだけ
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    if (this.bg && this.bg.width === this.canvas.width && this.bg.height === this.canvas.height) {
-      ctx.drawImage(this.bg, 0, 0);
-    } else {
-      ctx.fillStyle = '#000';
-      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-    }
+    ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.setTransform(this.dpr * this.s, 0, 0, this.dpr * this.s, this.dpr * this.ox, this.dpr * this.oy);
     ctx.save();
     ctx.beginPath();
@@ -412,7 +476,9 @@ export class Renderer {
     }
     if (gogo) {
       ctx.fillStyle = `rgba(255,190,60,${0.16 + 0.08 * Math.sin(wall / 120)})`;
-      ctx.fillRect(V.x0, V.y0, V.x1 - V.x0, LANE_TOP - V.y0);
+      // レーンの黒い枠（背景の canvas に描いてある）には重ねない
+      ctx.fillRect(V.x0, V.y0, V.x1 - V.x0, LANE_TOP - 8 - V.y0);
+      ctx.fillRect(V.x0, LANE_TOP - 8, LANE_X - 6 - V.x0, 8);
     }
   }
 
@@ -437,24 +503,23 @@ export class Renderer {
     const ctx = this.ctx;
     const right = V.x1;
 
-    // 枠（黒い線）
-    ctx.fillStyle = '#000';
-    ctx.fillRect(LANE_X - 6, LANE_TOP - 8, right - LANE_X + 6, TEXT_BOTTOM - LANE_TOP + 12);
-
-    // レーン本体（平らな濃い灰色。ゴーゴータイムは赤紫）
+    // 枠・レーン本体（平らな濃い灰色）・音符文字の帯は背景の canvas に描いてある（paintLaneBase）。
+    // ゴーゴータイムだけ、レーンを赤紫に塗り直す
     if (gogo) {
-      // 参考動画: 左（判定枠側）は暗い赤茶、右へ行くほど赤紫
-      const g = ctx.createLinearGradient(LANE_X, 0, right, 0);
-      g.addColorStop(0, '#48222a');
-      g.addColorStop(0.3, '#5a2126');
-      g.addColorStop(0.55, '#6d2b3a');
-      g.addColorStop(0.8, '#7b3654');
-      g.addColorStop(1, '#6a3550');
-      ctx.fillStyle = g;
-    } else {
-      ctx.fillStyle = '#272727';
+      // 参考動画: 左（判定枠側）は暗い赤茶、右へ行くほど赤紫（グラデーションは一度だけ作って使い回す）
+      if (!this.gogoGrad || this.gogoGradRight !== right) {
+        const g = ctx.createLinearGradient(LANE_X, 0, right, 0);
+        g.addColorStop(0, '#48222a');
+        g.addColorStop(0.3, '#5a2126');
+        g.addColorStop(0.55, '#6d2b3a');
+        g.addColorStop(0.8, '#7b3654');
+        g.addColorStop(1, '#6a3550');
+        this.gogoGrad = g;
+        this.gogoGradRight = right;
+      }
+      ctx.fillStyle = this.gogoGrad;
+      ctx.fillRect(LANE_X, LANE_TOP, right - LANE_X, LANE_BOTTOM - LANE_TOP);
     }
-    ctx.fillRect(LANE_X, LANE_TOP, right - LANE_X, LANE_BOTTOM - LANE_TOP);
 
     // 叩いたときにレーン全体が色づく（ドン＝赤茶、カッ＝青）
     for (const f of this.flashes) {
@@ -490,11 +555,6 @@ export class Renderer {
       ctx.fillRect(x - 1.5, LANE_TOP, 3, LANE_BOTTOM - LANE_TOP);
     }
 
-    // 音符文字の帯（灰色・上に黒い線）
-    ctx.fillStyle = '#838383';
-    ctx.fillRect(LANE_X, LANE_BOTTOM, right - LANE_X, TEXT_BOTTOM - LANE_BOTTOM);
-    ctx.fillStyle = '#000';
-    ctx.fillRect(LANE_X, LANE_BOTTOM, right - LANE_X, 4);
 
     // ノーツ
     const labels = this.labelsFor(game);
@@ -639,19 +699,24 @@ export class Renderer {
     if (ms < 0 || ms > 480) return;
     const a = 0.85 * (ms < 100 ? 1 : ms < 240 ? 1 - ((ms - 100) / 140) * 0.6 : 0.4 * (1 - (ms - 240) / 240));
     const r = NR - 4;
-    const g = ctx.createRadialGradient(JX, JY, 4, JX, JY, r);
-    if (b.judge === 'good') {
-      g.addColorStop(0, `rgba(255,246,150,${a})`);
-      g.addColorStop(0.75, `rgba(250,214,40,${a})`);
-      g.addColorStop(1, `rgba(214,160,10,${a})`);
-    } else {
-      g.addColorStop(0, `rgba(255,255,255,${a})`);
-      g.addColorStop(1, `rgba(200,215,230,${a})`);
-    }
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(JX, JY, r, 0, Math.PI * 2);
-    ctx.fill();
+    // 光の円は一度だけ描いておき、濃さ（a）を変えて貼る
+    this.drawSprite(`glow:${b.judge}`, JX - r - 2, JY - r - 2, r * 2 + 4, r * 2 + 4, () => {
+      const c = this.ctx;
+      const g = c.createRadialGradient(JX, JY, 4, JX, JY, r);
+      if (b.judge === 'good') {
+        g.addColorStop(0, 'rgb(255,246,150)');
+        g.addColorStop(0.75, 'rgb(250,214,40)');
+        g.addColorStop(1, 'rgb(214,160,10)');
+      } else {
+        g.addColorStop(0, 'rgb(255,255,255)');
+        g.addColorStop(1, 'rgb(200,215,230)');
+      }
+      c.fillStyle = g;
+      c.beginPath();
+      c.arc(JX, JY, r, 0, Math.PI * 2);
+      c.fill();
+    }, a);
+    void ctx;
   }
 
   private drawBursts(wall: number) {
@@ -669,54 +734,59 @@ export class Renderer {
   }
 
   private drawPanel(score: number, combo: number, info: { course: string; level: number }, wall: number) {
-    const ctx = this.ctx;
     const x0 = Math.min(0, this.vis.x0);
-    // 赤いパネル
-    const g = ctx.createLinearGradient(0, LANE_TOP - 6, 0, TEXT_BOTTOM);
-    g.addColorStop(0, '#e9452f');
-    g.addColorStop(1, '#c9301f');
-    ctx.fillStyle = g;
-    ctx.fillRect(x0, LANE_TOP - 6, LANE_X - x0, TEXT_BOTTOM - LANE_TOP + 12);
-    ctx.fillStyle = 'rgba(255,255,255,0.07)';
-    for (let x = 30; x < LANE_X; x += 70) {
-      for (let y = LANE_TOP + 30; y < TEXT_BOTTOM; y += 70) {
-        ctx.beginPath();
-        ctx.arc(x + ((y / 70) % 2) * 35, y, 18, 0, Math.PI * 2);
-        ctx.fill();
+    // 動かない部分（パネル・スコア欄の帯・難易度・名札）
+    this.drawSprite(`panel:${info.course}:${info.level}`, x0, LANE_TOP - 6, LANE_X - x0, TEXT_BOTTOM - LANE_TOP + 12, () => {
+      const ctx = this.ctx;
+      const x0 = Math.min(0, this.vis.x0);
+      // 赤いパネル
+      const g = ctx.createLinearGradient(0, LANE_TOP - 6, 0, TEXT_BOTTOM);
+      g.addColorStop(0, '#e9452f');
+      g.addColorStop(1, '#c9301f');
+      ctx.fillStyle = g;
+      ctx.fillRect(x0, LANE_TOP - 6, LANE_X - x0, TEXT_BOTTOM - LANE_TOP + 12);
+      ctx.fillStyle = 'rgba(255,255,255,0.07)';
+      for (let x = 30; x < LANE_X; x += 70) {
+        for (let y = LANE_TOP + 30; y < TEXT_BOTTOM; y += 70) {
+          ctx.beginPath();
+          ctx.arc(x + ((y / 70) % 2) * 35, y, 18, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
-    }
-    // スコア欄（左上の暗い帯）
-    ctx.fillStyle = 'rgba(40,0,0,0.55)';
-    ctx.fillRect(x0, LANE_TOP - 6, 316 - x0, 62);
+      // スコア欄（左上の暗い帯）
+      ctx.fillStyle = 'rgba(40,0,0,0.55)';
+      ctx.fillRect(x0, LANE_TOP - 6, 316 - x0, 62);
+
+      // 難易度（丸いバッジ＋下に名前）
+      const [label, col] = COURSE_LABEL[info.course] ?? [info.course, '#7b3fd1'];
+      const bx = 99;
+      const by = 394;
+      ctx.beginPath();
+      ctx.arc(bx, by, 40, 0, Math.PI * 2);
+      ctx.fillStyle = '#3a3a46';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(bx, by, 34, 0, Math.PI * 2);
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#fff';
+      ctx.stroke();
+      ctx.textAlign = 'center';
+      ctx.font = `900 30px ${FONT}`;
+      outlinedText(ctx, `★${info.level}`, bx, by + 2, '#ffe25a', '#2a1640', 6);
+      ctx.font = `900 ${label.length > 3 ? 20 : 26}px ${FONT}`;
+      outlinedText(ctx, label, bx, by + 50, '#fff', '#2a1640', 6);
+
+      // 名札（1P・称号・名前）
+      this.drawNameplate();
+    });
+    const ctx = this.ctx;
     ctx.font = `900 50px ${FONT}`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     outlinedText(ctx, String(score), 282, LANE_TOP + 28, '#fff', '#111', 9);
     this.drawScoreAdd(wall);
-
-    // 難易度（丸いバッジ＋下に名前）
-    const [label, col] = COURSE_LABEL[info.course] ?? [info.course, '#7b3fd1'];
-    const bx = 99;
-    const by = 394;
-    ctx.beginPath();
-    ctx.arc(bx, by, 40, 0, Math.PI * 2);
-    ctx.fillStyle = '#3a3a46';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(bx, by, 34, 0, Math.PI * 2);
-    ctx.fillStyle = col;
-    ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#fff';
-    ctx.stroke();
-    ctx.textAlign = 'center';
-    ctx.font = `900 30px ${FONT}`;
-    outlinedText(ctx, `★${info.level}`, bx, by + 2, '#ffe25a', '#2a1640', 6);
-    ctx.font = `900 ${label.length > 3 ? 20 : 26}px ${FONT}`;
-    outlinedText(ctx, label, bx, by + 50, '#fff', '#2a1640', 6);
-
-    // 名札（1P・称号・名前）
-    this.drawNameplate();
 
     // コンボ太鼓
     this.drawComboDrum(combo, wall);
@@ -782,6 +852,11 @@ export class Renderer {
 
   /** 右上の曲名（ジャンルの色の丸＋曲名、下にジャンル名の帯） */
   private drawTitle(info: { title: string; genre?: string }) {
+    const x = this.vis.x1 - 1400;
+    this.drawSprite(`title:${info.title}:${info.genre ?? ''}`, x, 0, 1400, 170, () => this.paintTitle(info));
+  }
+
+  private paintTitle(info: { title: string; genre?: string }) {
     const ctx = this.ctx;
     const right = this.vis.x1 - 120;
     const genre = info.genre?.trim();
@@ -804,24 +879,28 @@ export class Renderer {
   private drawComboDrum(combo: number, wall: number) {
     const ctx = this.ctx;
     const { x, y, r } = DRUM;
-    // 胴
-    ctx.fillStyle = '#5a1d10';
-    ctx.beginPath();
-    ctx.ellipse(x, y + 26, r, r * 0.9, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#a3381f';
-    ctx.beginPath();
-    ctx.ellipse(x, y + 18, r * 0.98, r * 0.88, 0, 0, Math.PI * 2);
-    ctx.fill();
-    // 面
-    ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
-    ctx.fillStyle = '#3a1810';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(x, y, r * 0.93, 0, Math.PI * 2);
-    ctx.fillStyle = '#f3e3c6';
-    ctx.fill();
+    // 胴と面（動かないので一度だけ描いて貼る）
+    this.drawSprite('drum', x - r - 2, y - r - 2, r * 2 + 4, r * 2 + 34, () => {
+      const c = this.ctx;
+      // 胴
+      c.fillStyle = '#5a1d10';
+      c.beginPath();
+      c.ellipse(x, y + 26, r, r * 0.9, 0, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = '#a3381f';
+      c.beginPath();
+      c.ellipse(x, y + 18, r * 0.98, r * 0.88, 0, 0, Math.PI * 2);
+      c.fill();
+      // 面
+      c.beginPath();
+      c.arc(x, y, r, 0, Math.PI * 2);
+      c.fillStyle = '#3a1810';
+      c.fill();
+      c.beginPath();
+      c.arc(x, y, r * 0.93, 0, Math.PI * 2);
+      c.fillStyle = '#f3e3c6';
+      c.fill();
+    });
 
     // 叩いた場所が光る（面＝ドン、縁＝カッ）
     for (const f of this.flashes) {
@@ -877,20 +956,23 @@ export class Renderer {
 
   private drawGauge(gauge: number, wall: number) {
     const ctx = this.ctx;
+    const clearX = GAUGE.x1 + ((GAUGE.x2 - GAUGE.x1) * CLEAR_LINE) / 100;
     const G = GAUGE;
-    // 枠
-    ctx.fillStyle = '#1a0d09';
-    roundRect(ctx, G.x1 - 8, G.y1 - 7, G.x2 - G.x1 + 16, G.y2 - G.y1 + 14, 10);
-    ctx.fill();
-    // クリア欄
-    const clearX = G.x1 + ((G.x2 - G.x1) * CLEAR_LINE) / 100;
-    ctx.fillStyle = '#4a3a12';
-    roundRect(ctx, clearX - 4, G.y1 - 40, G.x2 - clearX + 12, 38, 8);
-    ctx.fill();
-    ctx.font = `800 26px ${FONT}`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    outlinedText(ctx, 'クリア', clearX + 10, G.y1 - 21, gauge >= CLEAR_LINE ? '#ffe25a' : '#b9a46a', '#1a0d09', 5);
+    // 枠とクリア欄（動かないので貼るだけ）
+    const clearOn = gauge >= CLEAR_LINE;
+    this.drawSprite(`gauge:${clearOn}`, G.x1 - 12, G.y1 - 44, G.x2 - G.x1 + 34, G.y2 - G.y1 + 56, () => {
+      const c = this.ctx;
+      c.fillStyle = '#1a0d09';
+      roundRect(c, G.x1 - 8, G.y1 - 7, G.x2 - G.x1 + 16, G.y2 - G.y1 + 14, 10);
+      c.fill();
+      c.fillStyle = '#4a3a12';
+      roundRect(c, clearX - 4, G.y1 - 40, G.x2 - clearX + 12, 38, 8);
+      c.fill();
+      c.font = `800 26px ${FONT}`;
+      c.textAlign = 'left';
+      c.textBaseline = 'middle';
+      outlinedText(c, 'クリア', clearX + 10, G.y1 - 21, clearOn ? '#ffe25a' : '#b9a46a', '#1a0d09', 5);
+    });
 
     // 目盛り
     const segW = (G.x2 - G.x1) / G.segs;
@@ -901,7 +983,7 @@ export class Renderer {
       const clear = i >= (G.segs * CLEAR_LINE) / 100;
       let col: string;
       if (i < filled) {
-        if (full) col = `hsl(${(i * 9 + wall / 4) % 360},90%,58%)`;
+        if (full) col = RAINBOW[Math.floor((i * 9 + wall / 4) % 360)];
         else col = clear ? '#ffd21f' : '#ff3d1c';
       } else col = clear ? '#5a4a1a' : '#5a2418';
       ctx.fillStyle = col;
@@ -1123,7 +1205,14 @@ export class Renderer {
     ctx.closePath();
     ctx.fillStyle = 'rgba(238,110,48,0.9)';
     ctx.fill();
-    // 外の光
+    // 外の光と玉（動かないので一度だけ描いて貼る）
+    this.drawSprite('fireball', JX - 120, JY - 120, 240, 240, () => this.paintFireball());
+    ctx.restore();
+  }
+
+  private paintFireball() {
+    const ctx = this.ctx;
+    ctx.save();
     const glow = ctx.createRadialGradient(JX, JY, 80, JX, JY, 118);
     glow.addColorStop(0, 'rgba(240,116,54,0.9)');
     glow.addColorStop(1, 'rgba(240,116,54,0)');
@@ -1175,7 +1264,8 @@ export class Renderer {
     const hgt = bottom - top;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(this.vis.x0, top, this.vis.x1 - this.vis.x0, hgt);
+    // レーンの黒い枠（下端は TEXT_BOTTOM + 4）には重ねない
+    ctx.rect(this.vis.x0, top + 4, this.vis.x1 - this.vis.x0, hgt - 4);
     ctx.clip();
     ctx.globalCompositeOperation = 'lighter';
     this.fireworks = this.fireworks.filter((f) => wall - f.t < EMIT + LIFE);

@@ -264,7 +264,9 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .play { touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .play * { touch-action: none; }
 .play .exit { touch-action: manipulation; }
-.play canvas { width: 100%; height: 100%; display: block; touch-action: none; -webkit-touch-callout: none; }
+.play canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; -webkit-touch-callout: none; }
+/* 背景用の canvas（手前の canvas の後ろ） */
+.play canvas.game-bg { pointer-events: none; }
 .play .exit {
   /* 親指が当たりやすい下側を避けて右上に置く */
   position: absolute;
@@ -336,3 +338,6 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weig
 .calib button { background: #3a2f1c; color: var(--accent); font-weight: 700; padding: 10px; white-space: normal; }
 
 button.small { padding: 8px; font-size: 13px; background: #2a2930; color: var(--sub); }
+
+/* プレイ画面を出している間は、後ろに隠れているエディタを表示しない（重ねて描く手間を省く） */
+body.playing #app { visibility: hidden; }

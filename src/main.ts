@@ -181,7 +181,8 @@ function tickPlayback() {
 
 function loop() {
   if (playing && !play.isActive) tickPlayback();
-  view.frame();
+  // プレイ画面を出している間は、隠れているエディタを描き直さない
+  if (!document.body.classList.contains('playing')) view.frame();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);

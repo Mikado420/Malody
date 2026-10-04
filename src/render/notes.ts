@@ -194,6 +194,11 @@ export function outlinedText(
 
 const textCache = new Map<string, HTMLCanvasElement>();
 
+/** 文字の絵を捨てる（Web フォントが読み込まれたとき） */
+export function clearTextCache() {
+  textCache.clear();
+}
+
 /**
  * 縁取り文字を絵として前もって作っておき、毎フレームは貼るだけにする（音符の下の「ドン」「カッ」など、
  * 1 フレームに何十個も描く文字向け）。font はピクセル指定（例 '800 31px ...'）。
