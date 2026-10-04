@@ -6,9 +6,10 @@
  * そこでテストプレイ中だけ、Web 版の上に透明な層を重ね、アプリ（React Native）の仕組みで指を受け取って
  * Web 版の window.__nativeHit(x, y, 時刻, 方式, 通し番号) に渡す。エディタを使うときは層を外す。
  *
- * 受け取り方は Web 版の「情報 → アプリでのタッチの受け取り方」で切り替える
- *   rn: React Native の onTouchStart
- *   gh: react-native-gesture-handler（Gesture.Manual の onTouchesDown）
+ * 指は react-native-gesture-handler（Gesture.Manual の onTouchesDown）で受け取る
+ * （React Native の onTouchStart では Safari と同じように取りこぼした）。
+ * 叩いた時刻はこちらで受け取った瞬間に Date.now() で測って渡す。Web 版まで届くのに時間がかかっても
+ * 判定が遅れない（Web 版は「届くまでの遅れがいちばん少なかったとき」を基準に時刻を直す）。
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
@@ -23,7 +24,6 @@ export default function App() {
   const web = useRef(null);
   const seq = useRef(0);
   const [playing, setPlaying] = useState(false);
-  const [mode, setMode] = useState('rn');
   const { width, height } = useWindowDimensions();
 
   useEffect(() => {
@@ -37,7 +37,6 @@ export default function App() {
         setPlaying(!!m.active);
         if (m.active) seq.current = 0;
       }
-      if (m.type === 'mode' && (m.mode === 'rn' || m.mode === 'gh')) setMode(m.mode);
     } catch {
       // 関係ないメッセージ
     }
@@ -57,27 +56,15 @@ export default function App() {
     [width, height],
   );
 
-  // React Native の onTouchStart（新しく触れた指だけが changedTouches に入る）
-  const onTouchStart = useCallback(
-    (e) => {
-      const ne = e.nativeEvent;
-      const list = ne.changedTouches && ne.changedTouches.length ? ne.changedTouches : [ne];
-      send(
-        list.map((t) => ({ x: t.pageX, y: t.pageY, ts: t.timestamp ?? ne.timestamp })),
-        'rn',
-      );
-    },
-    [send],
-  );
-
   // react-native-gesture-handler
   const gesture = useMemo(
     () =>
       Gesture.Manual()
         .runOnJS(true)
         .onTouchesDown((e) => {
+          const now = Date.now();
           send(
-            (e.changedTouches || []).map((t) => ({ x: t.absoluteX, y: t.absoluteY })),
+            (e.changedTouches || []).map((t) => ({ x: t.absoluteX, y: t.absoluteY, ts: now })),
             'gh',
           );
         }),
@@ -103,8 +90,7 @@ export default function App() {
         allowsBackForwardNavigationGestures={false}
         setSupportMultipleWindows={false}
       />
-      {playing && mode === 'rn' && <View style={StyleSheet.absoluteFill} onTouchStart={onTouchStart} />}
-      {playing && mode === 'gh' && (
+      {playing && (
         <GestureDetector gesture={gesture}>
           <View style={StyleSheet.absoluteFill} collapsable={false} />
         </GestureDetector>
