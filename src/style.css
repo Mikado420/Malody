@@ -334,3 +334,5 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weig
 .calib { display: flex; flex-direction: column; gap: 8px; }
 .calib .note { color: var(--sub); font-size: 12px; line-height: 1.6; margin: 0; }
 .calib button { background: #3a2f1c; color: var(--accent); font-weight: 700; padding: 10px; white-space: normal; }
+
+button.small { padding: 8px; font-size: 13px; background: #2a2930; color: var(--sub); }

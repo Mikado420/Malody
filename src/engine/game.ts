@@ -22,6 +22,11 @@ const MISS_GRACE = 0.08;
 /** 判定されなかった打撃のうち、近くの同じ色のノーツとのずれを記録する範囲（秒） */
 const NEAR_RANGE = 0.6;
 
+/** 打撃と見逃しの記録（結果画面の診断・ログ用） */
+export type LogEntry =
+  | { e: 'tap'; t: number; kind: HitKind; res: HitResult['type']; judge?: Judge; note?: number; ring?: number }
+  | { e: 'miss'; t: number; type: string };
+
 /** hit() の結果（画面のずれ表示や結果画面の集計に使う） */
 export type HitResult =
   | { type: 'judged'; judge: Judge; delta: number }
@@ -75,6 +80,8 @@ export class Game {
   readonly deltas: number[] = [];
   /** 判定幅の外だった打撃の、近くの同じ色のノーツとのずれ（秒）。端末の音の遅れが大きいときの調整に使う */
   readonly outside: number[] = [];
+  /** 打撃と見逃しの記録 */
+  readonly log: LogEntry[] = [];
   /** 打撃の集計（結果画面の診断用） */
   readonly taps = { total: 0, judged: 0, roll: 0, big: 0, none: 0, wrongColor: 0 };
   onJudge: (e: JudgeEvent) => void = () => {};
@@ -104,6 +111,7 @@ export class Game {
       if (s.done) { this.cursor++; continue; }
       if (now - s.note.time > WINDOW.bad + MISS_GRACE) {
         s.missed = true;
+        this.log.push({ e: 'miss', t: s.note.time, type: s.note.type });
         this.apply(s, 'bad', now - s.note.time);
         this.cursor++;
       } else break;
@@ -119,9 +127,15 @@ export class Game {
   private bigWait: { kind: HitKind; at: number } | null = null;
 
   /** 叩いたときに呼ぶ */
-  hit(kind: HitKind, now: number): HitResult {
+  /** ring = タッチした場所が太鼓の面の中心からどれくらい離れていたか（1 が面と縁の境目）。キーボードのときはなし */
+  hit(kind: HitKind, now: number, ring?: number): HitResult {
     this.taps.total++;
     const r = this.hitInner(kind, now);
+    this.log.push({
+      e: 'tap', t: now, kind, res: r.type, ring,
+      judge: r.type === 'judged' ? r.judge : undefined,
+      note: r.type === 'judged' ? now - r.delta : undefined,
+    });
     this.taps[r.type === 'judged' ? 'judged' : r.type]++;
     if (r.type === 'none') {
       if (r.wrongColor) this.taps.wrongColor++;
@@ -142,6 +156,11 @@ export class Game {
       if (ad <= WINDOW.bad + EPS && (!best || ad < best.ad - 1e-9)) best = { st, ad };
     }
     return best;
+  }
+
+  /** 判定前の別の色の普通ノーツのうち、now にいちばん近いもの */
+  private nearestOther(kind: HitKind, now: number): { st: NoteState; ad: number } | null {
+    return this.nearestSame(kind === 'don' ? 'ka' : 'don', now);
   }
 
   private hitInner(kind: HitKind, now: number): HitResult {
@@ -187,6 +206,14 @@ export class Game {
     // 3) 判定幅の中で、叩いた色と同じ色のノーツのうち、叩いた時刻にいちばん近いものを判定する
     //    - 色違いのノーツは対象にしない（色違いで叩いても不可にはせず、ノーツは残る。TNDE/TJAPlayer3 と同じ）
     //    - いちばん古いノーツにすると、1つ見逃しただけで後のノーツが全部「遅い」扱いになってしまう
+    // 叩いた時刻のすぐ近く（良の幅 25ms 以内）に別の色の音符があり、同じ色の音符はそれより 30ms 以上離れているときは、
+    // 面と縁の境目を叩いて色を取り違えた打撃とみなし、離れた同じ色の音符を横取りして判定しない
+    // （横取りすると、その音符を本当に叩いたときに「近くに音符なし」になり、狙った音符も見逃しになる）
+    const other = this.nearestOther(kind, now);
+    if (other && other.ad <= WINDOW.good + EPS && (!near || near.ad > other.ad + 0.03)) {
+      return { type: 'none', nearest: near ? now - near.st.note.time : null, wrongColor: true };
+    }
+
     const best = near?.st;
     if (!best) {
       // 判定幅の中に同じ色のノーツがない: 音が鳴るだけ。原因を調べられるように近くのノーツを記録する

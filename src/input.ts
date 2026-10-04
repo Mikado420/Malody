@@ -2,7 +2,7 @@ import type { HitKind } from './engine/game';
 import { localPoint } from './orient';
 
 /** at = 叩いた瞬間（performance.now() 基準の ms）、pt = タッチした場所（キーボードのときはなし） */
-export type HitHandler = (kind: HitKind, side: 'L' | 'R', at: number, pt?: { x: number; y: number }) => void;
+export type HitHandler = (kind: HitKind, side: 'L' | 'R', at: number, pt?: { x: number; y: number; ring: number }) => void;
 
 /** イベントの timeStamp を performance.now() 基準の時刻として使う（古いブラウザの別基準の値は捨てる） */
 function eventTime(ts: number): number {
@@ -52,7 +52,8 @@ export function bindInput(
     const nx = (px - d.x) / d.rx;
     const ny = (py - d.y) / d.ry;
     const side = px < d.x ? 'L' : 'R';
-    onHit(nx * nx + ny * ny <= 1 ? 'don' : 'ka', side, at, { x: px, y: py });
+    const ring = Math.sqrt(nx * nx + ny * ny);
+    onHit(ring <= 1 ? 'don' : 'ka', side, at, { x: px, y: py, ring });
   };
 
   /** いま画面に触れている（叩いたとして処理済みの）指 */

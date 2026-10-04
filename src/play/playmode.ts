@@ -46,7 +46,7 @@ export class PlayMode {
         this.renderer.pushHit(kind, side);
         if (pt) this.renderer.pushTouch(kind, pt.x, pt.y);
         // 叩いた瞬間の時刻で判定（処理が遅れてもずれない）
-        const r = this.game.hit(kind, this.time(at));
+        const r = this.game.hit(kind, this.time(at), pt?.ring);
         if (this.settings.showTiming) {
           const ms = (d: number) => `${d > 0 ? '+' : ''}${Math.round(d * 1000)}ms`;
           if (r.type === 'judged') this.renderer.pushTiming(ms(r.delta), r.delta > 0 ? '#ffb070' : '#8fd0ff');
@@ -243,6 +243,36 @@ export class PlayMode {
         }
       }
     }
+    // 見逃しの内訳（その音符の前後 114ms に何が起きていたか）
+    if (!this.settings.auto) {
+      const taps = g.log.filter((x) => x.e === 'tap') as Extract<typeof g.log[number], { e: 'tap' }>[];
+      const misses = g.log.filter((x) => x.e === 'miss') as Extract<typeof g.log[number], { e: 'miss' }>[];
+      if (misses.length) {
+        let wrong = 0;
+        let stolen = 0;
+        let none = 0;
+        const rings: number[] = [];
+        for (const m of misses) {
+          const isDonNote = m.type === 'don' || m.type === 'bigDon';
+          const near = taps.filter((t) => Math.abs(t.t - m.t) <= 0.114);
+          const other = near.find((t) => (t.kind === 'don') !== isDonNote);
+          const same = near.find((t) => (t.kind === 'don') === isDonNote);
+          if (other) {
+            wrong++;
+            if (other.ring !== undefined) rings.push(other.ring);
+          } else if (same) stolen++;
+          else none++;
+        }
+        const parts = [];
+        if (wrong) {
+          const avg = rings.length ? `、面の境目からの位置 平均 ${(rings.reduce((a, b) => a + b, 0) / rings.length).toFixed(2)}` : '';
+          parts.push(`色違いで叩いた ${wrong}${avg}`);
+        }
+        if (stolen) parts.push(`同じ色で叩いたが別の音符に使われた ${stolen}`);
+        if (none) parts.push(`近くで叩いていない ${none}`);
+        rows.push(['見逃し', `${misses.length}：${parts.join('・')}`]);
+      }
+    }
     // 不具合を調べるための情報
     const c = this.audio.clockInfo();
     rows.push([
@@ -261,6 +291,7 @@ export class PlayMode {
     }
     rows.push(['判定調整', `${this.settings.offset}ms`]);
     rows.push(['バージョン', BUILD_ID.slice(0, 7)]);
+    this.lastLog = this.logText(g);
     this.result.querySelector('h2')!.textContent = '結果';
     this.result.querySelector('dl')!.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     this.result.classList.remove('hidden');
@@ -268,6 +299,22 @@ export class PlayMode {
 
   /** 結果画面で提案する判定調整の値（ms） */
   suggested = 0;
+
+  /** 直前のプレイの記録（「ログをコピー」で使う） */
+  lastLog = '';
+
+  private logText(g: Game): string {
+    const f = (t: number) => t.toFixed(3);
+    const lines = [`version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms ua ${navigator.userAgent}`];
+    for (const x of g.log) {
+      if (x.e === 'miss') lines.push(`${f(x.t)} MISS ${x.type}`);
+      else {
+        const j = x.res === 'judged' ? ` ${x.judge} note=${f(x.note!)} (${Math.round((x.t - x.note!) * 1000)}ms)` : ` ${x.res}`;
+        lines.push(`${f(x.t)} tap ${x.kind}${j}${x.ring !== undefined ? ` ring=${x.ring.toFixed(2)}` : ''}`);
+      }
+    }
+    return lines.join('\n');
+  }
 
   private showCalibration(g: Game) {
     const all = [...g.deltas, ...g.outside].filter((d) => Math.abs(d) < 0.3).sort((a, b) => a - b);

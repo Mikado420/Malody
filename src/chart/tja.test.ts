@@ -246,6 +246,25 @@ describe('Game 判定', () => {
     expect([g.stats.good, g.stats.bad]).toEqual([2, 0]);
   });
 
+  it('色を取り違えた打撃が、離れた別の音符を横取りしない', () => {
+    // 16 分（75ms 間隔）で ドン(1.000) カッ(1.075) ドン(1.150)
+    const g = new Game(mk([['don', 1], ['ka', 1.075], ['don', 1.15]]));
+    // ドンのつもりが縁に当たって「カッ」になった（1.000 ちょうど）。以前は 75ms 先のカッを早い可で判定していた
+    expect(g.hit('ka', 1.0)).toMatchObject({ type: 'none', wrongColor: true });
+    // その後のカッ・ドンはちょうどで叩けば良
+    expect(g.hit('ka', 1.075)).toMatchObject({ type: 'judged', judge: 'good' });
+    expect(g.hit('don', 1.15)).toMatchObject({ type: 'judged', judge: 'good' });
+    g.update(1.5);
+    expect([g.stats.good, g.stats.ok, g.stats.bad]).toEqual([2, 0, 1]); // 取り違えたドン 1 つだけ見逃し
+  });
+
+  it('ドンとカッが近くても、正しい色で叩けば取り違え扱いにならない', () => {
+    // 32 分（37ms 間隔）のドン・カッ
+    const g = new Game(mk([['don', 1], ['ka', 1.037]]));
+    expect(g.hit('don', 1.005)).toMatchObject({ type: 'judged', judge: 'good' });
+    expect(g.hit('ka', 1.03)).toMatchObject({ type: 'judged', judge: 'good' });
+  });
+
   it('見逃しは不可', () => {
     const g = new Game(notes);
     g.update(1.5);

@@ -682,6 +682,21 @@ async function startTest() {
 }
 
 $('btnTest').addEventListener('click', () => void startTest());
+$('copyLog').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(play.lastLog);
+    toast('記録をコピーしました。チャットに貼り付けてください');
+  } catch {
+    // コピーできない環境では、選択できる形で表示する
+    const ta = document.createElement('textarea');
+    ta.value = play.lastLog;
+    ta.style.cssText = 'position:fixed;inset:10%;z-index:40;font-size:12px';
+    document.getElementById('root')!.appendChild(ta);
+    ta.select();
+    ta.addEventListener('blur', () => ta.remove());
+    toast('全部選択してコピーしてください');
+  }
+});
 $('applyCalib').addEventListener('click', () => {
   settings.offset = Math.max(-300, Math.min(300, play.suggested));
   saveSettings();
