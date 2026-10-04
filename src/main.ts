@@ -35,7 +35,8 @@ const settings = {
   auto: false,
   showTiming: false,
   pointerInput: false,
-  restZone: false,
+  // iPhone / iPad の Safari は両手交互の速い連打でタッチを落とすので、既定で指置きを使う
+  restZone: /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
   /** タッチ用の太鼓の面（ドン）の大きさ */
   donWidth: 0.6,
 };
