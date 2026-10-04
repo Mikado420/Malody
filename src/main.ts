@@ -34,6 +34,7 @@ const settings = {
   metronome: false,
   auto: false,
   showTiming: false,
+  pointerInput: false,
   /** タッチ用の太鼓の面（ドン）の大きさ */
   donWidth: 0.6,
 };
@@ -397,7 +398,9 @@ function renderSheet() {
       <button data-act="calibrate" class="primary">タイミングを測って判定調整を合わせる</button>
       <p class="note">クリック音に合わせてドンを 24 回叩くと、端末の音の遅れを測って判定調整を提案します。音がずれて「正確に叩いても判定されない・不可になる」ときに使ってください。</p>
       <label class="field"><span>ドンの幅（中央の帯・左右はカッ）</span><input type="range" min="0.3" max="0.9" step="0.01" data-set="donWidth" value="${settings.donWidth}"><output>${Math.round(settings.donWidth * 100)}%</output></label>
-      <p class="note">スマホで叩くときの、太鼓の面（ドン）の範囲です。ドンのつもりがカッになるときは大きく、カッのつもりがドンになるときは小さくしてください。</p>
+      <p class="note">スマホで叩くときの、中央のドンの帯の幅です（左右の残りがカッ）。ドンのつもりがカッになるときは大きく、カッのつもりがドンになるときは小さくしてください。</p>
+      <label class="field"><span>タッチをポインター方式で受け取る</span><input type="checkbox" data-set="pointerInput" ${settings.pointerInput ? 'checked' : ''}></label>
+      <p class="note">両手で交互に叩くと反応しないことがあるときに切り替えて試してください（iPhone の受け取り方が変わります）。</p>
       <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>
       <p class="note">オンにすると、叩くたびに判定枠の下にずれ（ms）が出ます。判定されなかったときは理由（判定なし＋近くの音符とのずれ／色違い／連打／大音符の2打目／近くに音符なし）が出ます。</p>
       <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>

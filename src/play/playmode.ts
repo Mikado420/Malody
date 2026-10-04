@@ -1,7 +1,7 @@
 import type { AudioEngine } from '../audio/audio';
 import type { Course } from '../chart/types';
 import { Game } from '../engine/game';
-import { bindInput, touchStats } from '../input';
+import { bindInput, resetTouchStats, touchStats } from '../input';
 import { Renderer } from '../render/renderer';
 import { BUILD_ID } from '../update';
 import { suggestDonWidth, zoneSamples } from './zone';
@@ -16,6 +16,8 @@ export interface PlaySettings {
   donWidth?: number;
   /** 叩くたびにずれ（ms）を表示する */
   showTiming?: boolean;
+  /** 指のタッチをポインターイベントで受け取る（iPhone の取りこぼし対策の切り替え） */
+  pointerInput?: boolean;
 }
 
 /**
@@ -62,6 +64,7 @@ export class PlayMode {
           }
         }
       },
+      () => !!this.settings.pointerInput,
     );
     window.addEventListener('keydown', (e) => {
       if (this.active && e.code === 'Escape') this.finish();
@@ -108,8 +111,7 @@ export class PlayMode {
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
     this.renderer.donWidth = this.settings.donWidth ?? 0.6;
-    touchStats.starts = 0;
-    touchStats.recovered = 0;
+    resetTouchStats();
     this.game = game;
 
     this.root.classList.remove('hidden');
@@ -283,8 +285,12 @@ export class PlayMode {
       '音の遅れ（推定）',
       `${c.latencyMs}ms（${c.mode === 'outputTimestamp' ? '再生位置から' : '端末の申告値'}、申告 ${c.outputLatencyMs}/${c.baseLatencyMs}ms）`,
     ]);
-    if (touchStats.starts + touchStats.recovered > 0) {
-      rows.push(['タッチ', `${touchStats.starts}（取りこぼしを補った ${touchStats.recovered}）`]);
+    const S = touchStats;
+    if (S.starts + S.recovered + S.pointers > 0) {
+      rows.push([
+        'タッチ',
+        `${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
+      ]);
     }
     const P = this.perf;
     if (P.frames) {

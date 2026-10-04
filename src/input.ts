@@ -19,7 +19,22 @@ export const DEFAULT_KEYS: Record<string, { kind: HitKind; side: 'L' | 'R' }> = 
 };
 
 /** タッチ入力の集計（結果画面の診断用） */
-export const touchStats = { starts: 0, recovered: 0 };
+export const touchStats = {
+  starts: 0,
+  recovered: 0,
+  /** iPhone がタッチを途中で取り消した回数（ジェスチャーとして横取りされた） */
+  cancels: 0,
+  /** ポインターイベント（指）で届いた数 */
+  pointers: 0,
+  /** ポインターイベントの取り消し */
+  pointerCancels: 0,
+  /** 同時に触れていた指の最大数 */
+  maxFingers: 0,
+};
+
+export function resetTouchStats() {
+  for (const k of Object.keys(touchStats) as (keyof typeof touchStats)[]) touchStats[k] = 0;
+}
 
 /**
  * キーボードとタッチ（ポインタ）入力。
@@ -34,6 +49,8 @@ export function bindInput(
   canvas: HTMLCanvasElement,
   getDrum: () => { x: number; half: number },
   onHit: HitHandler,
+  /** true のときは指のタッチをポインターイベントで受け取る（タッチイベントは止めるだけ） */
+  usePointer: () => boolean = () => false,
 ): () => void {
   const onKey = (e: KeyboardEvent) => {
     if (e.repeat) return;
@@ -62,6 +79,12 @@ export function bindInput(
     // 終了ボタンなどのボタンはふつうに押せるようにする
     if (e.target instanceof Element && e.target.closest('button')) return;
     e.preventDefault();
+    if (e.type === 'touchcancel') touchStats.cancels++;
+    touchStats.maxFingers = Math.max(touchStats.maxFingers, e.touches.length);
+    if (usePointer()) {
+      seen = new Set(Array.from(e.touches).map((t) => t.identifier));
+      return;
+    }
     const at = eventTime(e.timeStamp);
     const fresh: Touch[] = [];
     if (e.type === 'touchstart') {
@@ -87,8 +110,11 @@ export function bindInput(
   };
 
   const onPointer = (e: PointerEvent) => {
-    if (e.pointerType === 'touch') return; // タッチは touch イベント側で処理
     if (e.target instanceof Element && e.target.closest('button')) return;
+    if (e.pointerType === 'touch') {
+      touchStats.pointers++;
+      if (!usePointer()) return; // タッチは touch イベント側で処理
+    }
     e.preventDefault();
     hitAt(e.clientX, e.clientY, eventTime(e.timeStamp));
   };
@@ -102,10 +128,15 @@ export function bindInput(
   // iPhone の Safari: 2 本指のピンチ・回転ジェスチャーを止める（指を素早く交互に置いたときに横取りされないように）
   for (const type of ['gesturestart', 'gesturechange', 'gestureend']) root.addEventListener(type, block, opts);
   window.addEventListener('keydown', onKey);
-  root.addEventListener('pointerdown', onPointer);
+  root.addEventListener('pointerdown', onPointer, opts);
+  const onPointerCancel = (e: PointerEvent) => {
+    if (e.pointerType === 'touch') touchStats.pointerCancels++;
+  };
+  root.addEventListener('pointercancel', onPointerCancel, opts);
   return () => {
+    root.removeEventListener('pointercancel', onPointerCancel, opts);
     window.removeEventListener('keydown', onKey);
-    root.removeEventListener('pointerdown', onPointer);
+    root.removeEventListener('pointerdown', onPointer, opts);
     for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) {
       root.removeEventListener(type, onTouch, opts);
     }
