@@ -109,21 +109,43 @@ export function drawRoll(ctx: CanvasRenderingContext2D, x1: number, x2: number, 
 export function drawBalloon(
   ctx: CanvasRenderingContext2D, x: number, y: number, r: number, left: number | null, tailX?: number,
 ) {
-  if (tailX !== undefined && tailX > x + r) {
+  // 終わりの位置（エディタ用）。細い線で示す
+  const bulbEnd = x + r * 2.75;
+  if (tailX !== undefined && tailX > bulbEnd) {
     ctx.strokeStyle = COLOR.outline;
-    ctx.lineWidth = Math.max(2, r * 0.18);
+    ctx.lineWidth = Math.max(2, r * 0.12);
     ctx.beginPath();
-    ctx.moveTo(x + r * 0.8, y);
+    ctx.moveTo(bulbEnd, y);
     ctx.lineTo(tailX, y);
     ctx.stroke();
-    ctx.strokeStyle = COLOR.balloon;
-    ctx.lineWidth = Math.max(1, r * 0.08);
-    ctx.stroke();
     ctx.beginPath();
-    ctx.arc(tailX, y, r * 0.22, 0, Math.PI * 2);
+    ctx.arc(tailX, y, r * 0.18, 0, Math.PI * 2);
     ctx.fillStyle = COLOR.balloon;
     ctx.fill();
   }
+  // 音符の右につながる風船（細い首 → 丸くふくらんだ玉）
+  const neckX = x + r * 0.7;
+  const cx = x + r * 1.9;
+  const rx = r * 0.85;
+  const ry = r * 0.62;
+  const shape = () => {
+    ctx.beginPath();
+    ctx.moveTo(neckX, y - r * 0.14);
+    ctx.quadraticCurveTo(cx - rx * 0.9, y - r * 0.14, cx - rx * 0.6, y - ry * 0.8);
+    ctx.ellipse(cx, y, rx, ry, 0, Math.PI + 0.75, Math.PI - 0.75);
+    ctx.quadraticCurveTo(cx - rx * 0.9, y + r * 0.14, neckX, y + r * 0.14);
+    ctx.closePath();
+  };
+  shape();
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = Math.max(2, r * 0.16);
+  ctx.strokeStyle = COLOR.outline;
+  ctx.stroke();
+  const g = ctx.createRadialGradient(cx - rx * 0.3, y - ry * 0.35, r * 0.05, cx, y, rx);
+  g.addColorStop(0, '#ff9a4a');
+  g.addColorStop(1, '#e8431a');
+  ctx.fillStyle = g;
+  ctx.fill();
   drawNoteHead(ctx, x, y, r, 'balloon');
   if (left !== null) {
     ctx.font = `900 ${Math.round(r * 0.9)}px system-ui, sans-serif`;

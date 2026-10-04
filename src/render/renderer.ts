@@ -94,10 +94,17 @@ export class Renderer {
   private lastCombo = 0;
   private banner: { combo: number; t: number } | null = null;
   private flowerPop = 0;
+  /** ゴーゴータイムの始まりに下の背景で上がる花火 */
+  private fireworks: { x: number; y: number; t: number; hue: number; n: number }[] = [];
+  private wasGogo = false;
+  /** 風船が割れたときの虹 */
+  private rainbow: number | null = null;
+  /** 大音符の光の粒（飛んでいく音符の後ろに残るきらきら） */
+  private sparkles: { x: number; y: number; vx: number; vy: number; t: number }[] = [];
   /** 加算された点数の表示（スコアの上に出る） */
   private scoreFx: { add: number; t: number } | null = null;
   private lastScore = 0;
-  private rollFx: { count: number; t: number; balloon: boolean } | null = null;
+  private rollFx: { count: number; t: number; balloon: boolean; hits: number } | null = null;
   private labels = new WeakMap<Game, Map<Note, string>>();
   private topPattern: CanvasPattern | null = null;
   private topTile: HTMLCanvasElement | null = null;
@@ -302,7 +309,14 @@ export class Renderer {
   }
 
   pushRoll(s: NoteState) {
-    this.rollFx = { count: s.count, t: performance.now(), balloon: s.note.type === 'balloon' };
+    const balloon = s.note.type === 'balloon';
+    const hits = s.note.hits ?? 5;
+    this.rollFx = { count: s.count, t: performance.now(), balloon, hits };
+    if (balloon && s.count >= hits) {
+      // 割れた: 虹を出す
+      this.rainbow = performance.now();
+      this.rollFx = null;
+    }
     if (s.note.type !== 'balloon') this.flyers.push({ t: performance.now(), note: { ...s.note, type: s.note.type === 'bigRoll' ? 'bigDon' : 'don' } });
   }
 
@@ -321,6 +335,10 @@ export class Renderer {
     this.lastCombo = 0;
     this.lastScore = 0;
     this.scoreFx = null;
+    this.fireworks = [];
+    this.wasGogo = false;
+    this.rainbow = null;
+    this.sparkles = [];
   }
 
   // ---------- 描画 ----------
@@ -344,6 +362,8 @@ export class Renderer {
     this.lastScore = st.score;
 
     const gogo = course.gogo.some(([a, b]) => now >= a && now < b);
+    if (gogo && !this.wasGogo) this.startFireworks(wall);
+    this.wasGogo = gogo;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (this.bg && this.bg.width === this.canvas.width && this.bg.height === this.canvas.height) {
@@ -362,6 +382,7 @@ export class Renderer {
     this.drawTop(V, gogo, wall);
     this.drawTitle(info);
     this.drawBottom(V, wall);
+    this.drawFireworks(wall);
     this.drawLane(V, game, bars, now, gogo, wall);
     this.drawBursts(wall);
     this.drawPanel(st.score, st.combo, info, wall);
@@ -370,6 +391,8 @@ export class Renderer {
     this.drawJudgeText(wall);
     this.drawTiming(wall);
     this.drawFlyers(wall);
+    this.drawSparkles(wall);
+    this.drawRainbow(wall);
     this.drawBanner(wall);
     ctx.restore();
     if (this.touch) {
@@ -419,9 +442,13 @@ export class Renderer {
 
     // レーン本体（平らな濃い灰色。ゴーゴータイムは赤紫）
     if (gogo) {
-      const g = ctx.createLinearGradient(0, LANE_TOP, 0, LANE_BOTTOM);
-      g.addColorStop(0, '#6e1f3a');
-      g.addColorStop(1, '#4a1428');
+      // 参考動画: 左（判定枠側）は暗い赤茶、右へ行くほど赤紫
+      const g = ctx.createLinearGradient(LANE_X, 0, right, 0);
+      g.addColorStop(0, '#48222a');
+      g.addColorStop(0.3, '#5a2126');
+      g.addColorStop(0.55, '#6d2b3a');
+      g.addColorStop(0.8, '#7b3654');
+      g.addColorStop(1, '#6a3550');
       ctx.fillStyle = g;
     } else {
       ctx.fillStyle = '#272727';
@@ -436,30 +463,22 @@ export class Renderer {
       ctx.fillRect(LANE_X, LANE_TOP, right - LANE_X, LANE_BOTTOM - LANE_TOP);
     }
 
-    // 判定枠
-    if (gogo) {
-      const pulse = 1 + 0.06 * Math.sin(wall / 90);
-      const g = ctx.createRadialGradient(JX, JY, 30, JX, JY, 120 * pulse);
-      g.addColorStop(0, 'rgba(255,200,80,0.55)');
-      g.addColorStop(1, 'rgba(255,90,30,0)');
-      ctx.fillStyle = g;
+    // 判定枠: 音符と同じ大きさの暗い円＋外側の細い輪。ゴーゴータイムは炎の玉になる
+    if (gogo) this.drawFireball(wall);
+    else {
       ctx.beginPath();
-      ctx.arc(JX, JY, 120 * pulse, 0, Math.PI * 2);
+      ctx.arc(JX, JY, NR - 2, 0, Math.PI * 2);
+      ctx.fillStyle = '#1d1d1d';
       ctx.fill();
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#6b6b6b';
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(JX, JY, 73, 0, Math.PI * 2);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = '#5e5e5e';
+      ctx.stroke();
     }
-    // 判定枠: 音符と同じ大きさの暗い円＋外側の細い輪
-    ctx.beginPath();
-    ctx.arc(JX, JY, NR - 2, 0, Math.PI * 2);
-    ctx.fillStyle = '#1d1d1d';
-    ctx.fill();
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#6b6b6b';
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(JX, JY, 73, 0, Math.PI * 2);
-    ctx.lineWidth = 4;
-    ctx.strokeStyle = '#5e5e5e';
-    ctx.stroke();
     this.drawJudgeGlow(wall);
 
     // 小節線
@@ -501,9 +520,20 @@ export class Renderer {
         const active = now >= n.time && now <= (n.endTime ?? n.time);
         if (active) x = JX;
         if (now > (n.endTime ?? n.time)) continue;
-        drawBalloon(ctx, x, JY, r, active ? Math.max(0, (n.hits ?? 5) - s.count) : null, active ? undefined : endX);
+        drawBalloon(ctx, x, JY, r, null);
       } else if (n.type === 'roll' || n.type === 'bigRoll') {
         drawAny(ctx, n.type, x, JY, r, endX);
+        // 音符の下: 「連打━━━━っ!!」
+        const ly = (LANE_BOTTOM + TEXT_BOTTOM) / 2 + 3;
+        const lx1 = Math.max(x + 44, LANE_X + 10);
+        const lx2 = endX - 40;
+        if (lx2 > lx1) {
+          ctx.fillStyle = '#2a2a2a';
+          ctx.fillRect(lx1, ly - 5, lx2 - lx1, 10);
+          ctx.fillStyle = '#fff';
+          ctx.fillRect(lx1, ly - 2, lx2 - lx1, 4);
+        }
+        if (endX > LANE_X) drawCachedText(ctx, 'っ!!', endX, ly, `900 32px ${FONT}`, '#fff', '#2a2a2a', 7);
       } else {
         drawNoteHead(ctx, x, JY, r, n.type);
       }
@@ -527,7 +557,7 @@ export class Renderer {
     for (let i = 0; i < notes.length; i++) {
       const n = notes[i];
       const beat = 60 / n.bpm;
-      if (n.type === 'roll' || n.type === 'bigRoll') { map.set(n, '連打ーっ!!'); prevShort = false; continue; }
+      if (n.type === 'roll' || n.type === 'bigRoll') { map.set(n, '連打'); prevShort = false; continue; }
       if (n.type === 'balloon') { map.set(n, 'ふうせん'); prevShort = false; continue; }
       const next = notes[i + 1];
       const gap = next ? next.time - n.time : Infinity;
@@ -553,12 +583,13 @@ export class Renderer {
    * 判定したときの光（参考動画: 判定枠が黄色く光り、周りに細い光の筋と点の輪が広がる）。
    * 筋と点の輪は前もって一度だけ描いておき、毎フレームは拡大して貼るだけ。良＝金、可＝白
    */
-  private burstSprites: Partial<Record<Judge, HTMLCanvasElement>> = {};
+  private burstSprites: Record<string, HTMLCanvasElement> = {};
 
-  private burstSprite(judge: Judge): HTMLCanvasElement {
-    const cached = this.burstSprites[judge];
+  private burstSprite(judge: Judge, big = false): HTMLCanvasElement {
+    const key = `${judge}${big ? ':big' : ''}`;
+    const cached = this.burstSprites[key];
     if (cached) return cached;
-    const R = 130; // 基準座標での半径
+    const R = big ? 230 : 130; // 基準座標での半径
     const px = Math.max(1, this.dpr * this.s * 1.6);
     const c = document.createElement('canvas');
     c.width = c.height = Math.ceil(R * 2 * px);
@@ -569,14 +600,15 @@ export class Renderer {
     const ray2 = good ? '#ff9a1a' : '#cfe6ff';
     // 光の筋（長短を交互に）
     g.lineCap = 'round';
-    const n = 40;
+    // 大音符は筋が長く、レーンの外まで伸びる
+    const n = big ? 48 : 40;
     for (let i = 0; i < n; i++) {
       const ang = (Math.PI * 2 * i) / n;
       const long = i % 2 === 0;
       const r1 = 54;
-      const r2 = long ? 108 : 92;
+      const r2 = big ? (long ? 215 : 150) : long ? 108 : 92;
       g.strokeStyle = long ? ray1 : ray2;
-      g.lineWidth = long ? 5 : 4;
+      g.lineWidth = big ? (long ? 6 : 5) : long ? 5 : 4;
       g.beginPath();
       g.moveTo(R + Math.cos(ang) * r1, R + Math.sin(ang) * r1);
       g.lineTo(R + Math.cos(ang) * r2, R + Math.sin(ang) * r2);
@@ -586,11 +618,12 @@ export class Renderer {
     g.fillStyle = good ? '#ff8a12' : '#e8f2ff';
     for (let i = 0; i < 32; i++) {
       const ang = (Math.PI * 2 * (i + 0.5)) / 32;
+      const rr = big ? 162 : 118;
       g.beginPath();
-      g.arc(R + Math.cos(ang) * 118, R + Math.sin(ang) * 118, 5, 0, Math.PI * 2);
+      g.arc(R + Math.cos(ang) * rr, R + Math.sin(ang) * rr, big ? 6 : 5, 0, Math.PI * 2);
       g.fill();
     }
-    this.burstSprites[judge] = c;
+    this.burstSprites[key] = c;
     return c;
   }
 
@@ -623,10 +656,10 @@ export class Renderer {
     for (const b of this.bursts) {
       const ms = wall - b.t;
       if (ms < 0 || ms > 260) continue;
-      const k = (b.big ? 1.3 : 1) * (0.9 + 0.2 * ease(Math.min(1, ms / 90)));
-      const half = 130 * k;
+      const k = 0.9 + 0.2 * ease(Math.min(1, ms / 90));
+      const half = (b.big ? 230 : 130) * k;
       ctx.globalAlpha = ms < 140 ? 1 : 1 - (ms - 140) / 120;
-      ctx.drawImage(this.burstSprite(b.judge), JX - half, JY - half, half * 2, half * 2);
+      ctx.drawImage(this.burstSprite(b.judge, b.big), JX - half, JY - half, half * 2, half * 2);
     }
     ctx.globalAlpha = 1;
     this.bursts = this.bursts.filter((b) => wall - b.t < 500);
@@ -753,22 +786,7 @@ export class Renderer {
     ctx.font = `900 56px ${FONT}`;
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
-    const w = Math.min(900, ctx.measureText(info.title).width);
     outlinedText(ctx, info.title, right, 68, '#fff', '#111', 11);
-    // ジャンルの色の丸
-    const cx = right - w - 56;
-    ctx.beginPath();
-    ctx.arc(cx, 58, 46, 0, Math.PI * 2);
-    ctx.fillStyle = '#1a1617';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(cx, 58, 41, 0, Math.PI * 2);
-    ctx.fillStyle = '#f8eee2';
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(cx, 58, 33, 0, Math.PI * 2);
-    ctx.fillStyle = col;
-    ctx.fill();
     if (genre) {
       ctx.font = `900 26px ${FONT}`;
       const gw = Math.max(240, ctx.measureText(genre).width + 60);
@@ -909,29 +927,317 @@ export class Renderer {
     drawNoteHead(ctx, FLOWER.x, FLOWER.y, fr * 0.52, 'don');
   }
 
+  /**
+   * 連打中の打数（参考動画: 判定枠の上に金色の扇が開き、白い大きな数字と「連打!!」）。
+   * 風船のときは、ふくらんでいく風船と残りの打数の吹き出し
+   */
   private drawRollBubble(wall: number) {
     const r = this.rollFx;
-    if (!r || r.balloon) return;
+    if (!r) return;
     const age = wall - r.t;
-    if (age > 600) return;
+    if (r.balloon) {
+      if (age > 400) return;
+      this.drawInflating(r.count, r.hits, age);
+      return;
+    }
+    if (age > 900) return;
     const ctx = this.ctx;
-    const a = age < 450 ? 1 : 1 - (age - 450) / 150;
-    ctx.globalAlpha = a;
-    ctx.fillStyle = '#fff4d6';
-    roundRect(ctx, JX - 10, LANE_TOP - 120, 210, 74, 18);
+    const cx = JX;
+    const cy = 208;
+    const pop = age < 70 ? 1.12 - 0.12 * (age / 70) : 1;
+    ctx.save();
+    ctx.globalAlpha = age < 700 ? 1 : 1 - (age - 700) / 200;
+    ctx.translate(cx, cy - 60);
+    ctx.scale(pop, pop);
+    ctx.translate(0, 60);
+    const R = 158;
+    const a1 = (-155 * Math.PI) / 180;
+    const a2 = (-25 * Math.PI) / 180;
+    // 扇の紙
+    ctx.beginPath();
+    ctx.arc(0, 0, R, a1, a2);
+    ctx.arc(0, 0, 34, a2, a1, true);
+    ctx.closePath();
+    const g = ctx.createRadialGradient(0, 0, 30, 0, 0, R);
+    g.addColorStop(0, '#fff6c0');
+    g.addColorStop(0.55, '#f9d23a');
+    g.addColorStop(1, '#e0a00c');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = '#3a2400';
+    ctx.stroke();
+    // 骨
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(150,95,0,0.55)';
+    for (let i = 1; i < 10; i++) {
+      const a = a1 + ((a2 - a1) * i) / 10;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 40, Math.sin(a) * 40);
+      ctx.lineTo(Math.cos(a) * (R - 4), Math.sin(a) * (R - 4));
+      ctx.stroke();
+    }
+    // 縁の白い線
+    ctx.beginPath();
+    ctx.arc(0, 0, R - 9, a1 + 0.03, a2 - 0.03);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.stroke();
+    // 要（かなめ）
+    ctx.beginPath();
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
+    ctx.fillStyle = '#c0392b';
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#3a2400';
+    ctx.stroke();
+    // 数字と「連打!!」
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const digits = String(r.count);
+    ctx.font = `900 ${digits.length >= 3 ? 64 : 76}px ${FONT}`;
+    outlinedText(ctx, digits, 0, -92, '#fff', '#1a1a1a', 12);
+    ctx.font = `900 26px ${FONT}`;
+    outlinedText(ctx, '連打!!', 0, -40, '#fff', '#1a1a1a', 6);
+    ctx.restore();
+  }
+
+  /** 風船: 叩くほどふくらむ風船と、残りの打数の吹き出し */
+  private drawInflating(count: number, hits: number, age: number) {
+    const ctx = this.ctx;
+    const p = Math.min(1, count / Math.max(1, hits));
+    const bx = JX + 40;
+    const by = 190;
+    const rr = 46 + 60 * p + (age < 60 ? 6 * (1 - age / 60) : 0);
+    ctx.save();
+    // ひも
+    ctx.strokeStyle = '#3a1a08';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(bx, by + rr * 1.05);
+    ctx.quadraticCurveTo(bx - 20, by + rr + 50, JX, LANE_TOP - 4);
+    ctx.stroke();
+    // 風船
+    const g = ctx.createRadialGradient(bx - rr * 0.35, by - rr * 0.4, rr * 0.1, bx, by, rr * 1.1);
+    g.addColorStop(0, '#ffd37a');
+    g.addColorStop(0.45, '#f48a1e');
+    g.addColorStop(1, '#d4520f');
+    ctx.beginPath();
+    ctx.ellipse(bx, by, rr * 0.92, rr, 0, 0, Math.PI * 2);
+    ctx.fillStyle = g;
     ctx.fill();
     ctx.lineWidth = 5;
-    ctx.strokeStyle = '#e46a12';
+    ctx.strokeStyle = '#3a1a08';
     ctx.stroke();
-    ctx.font = `900 50px ${FONT}`;
-    ctx.textAlign = 'right';
+    // 結び目
+    ctx.beginPath();
+    ctx.moveTo(bx - 10, by + rr + 12);
+    ctx.lineTo(bx + 10, by + rr + 12);
+    ctx.lineTo(bx, by + rr - 2);
+    ctx.closePath();
+    ctx.fillStyle = '#d4520f';
+    ctx.fill();
+    ctx.stroke();
+    // つや
+    ctx.beginPath();
+    ctx.ellipse(bx - rr * 0.35, by - rr * 0.45, rr * 0.18, rr * 0.28, -0.5, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.fill();
+    // 吹き出し（残りの打数）
+    const sx = bx - rr - 110;
+    const sy = 110;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy, 70, 52, 0, 0, Math.PI * 2);
+    ctx.moveTo(sx + 40, sy + 38);
+    ctx.lineTo(sx + 78, sy + 70);
+    ctx.lineTo(sx + 58, sy + 28);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.stroke();
+    ctx.font = `900 54px ${FONT}`;
+    ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    outlinedText(ctx, String(r.count), JX + 125, LANE_TOP - 82, '#ff8a1c', '#3a1500', 7);
-    ctx.font = `900 28px ${FONT}`;
-    ctx.textAlign = 'left';
-    outlinedText(ctx, '打', JX + 132, LANE_TOP - 78, '#fff', '#3a1500', 5);
-    ctx.globalAlpha = 1;
+    outlinedText(ctx, String(Math.max(0, hits - count)), sx, sy + 2, '#fff', '#1a1a1a', 9);
+    ctx.restore();
   }
+
+  /** 風船が割れたときの虹（判定枠から右上へ弧を描いて伸び、消える） */
+  private drawRainbow(wall: number) {
+    if (this.rainbow === null) return;
+    const age = wall - this.rainbow;
+    if (age > 1200) {
+      this.rainbow = null;
+      return;
+    }
+    const ctx = this.ctx;
+    const cx = JX + 650;
+    const cy = JY + 250;
+    const R = 700;
+    const start = (200 * Math.PI) / 180;
+    const full = (300 * Math.PI) / 180;
+    const end = start + (full - start) * ease(Math.min(1, age / 280));
+    const cols = ['#ff3b30', '#ff9500', '#ffd60a', '#34c759', '#32ade6', '#4b5bdc', '#af52de'];
+    ctx.save();
+    ctx.globalAlpha = age < 800 ? 0.95 : 0.95 * (1 - (age - 800) / 400);
+    ctx.lineCap = 'round';
+    cols.forEach((c, i) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, R - i * 14, start, end);
+      ctx.lineWidth = 15;
+      ctx.strokeStyle = c;
+      ctx.stroke();
+    });
+    // 先端のきらきら
+    const tx = cx + Math.cos(end) * (R - 42);
+    const ty = cy + Math.sin(end) * (R - 42);
+    ctx.fillStyle = '#fff';
+    for (let i = 0; i < 6; i++) {
+      const a = wall / 90 + i;
+      star(ctx, tx + Math.cos(a) * 40, ty + Math.sin(a * 1.3) * 40, 9);
+    }
+    ctx.restore();
+  }
+
+  /** 大音符が飛んでいった跡のきらきら */
+  private drawSparkles(wall: number) {
+    if (!this.sparkles.length) return;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = '#fffbe0';
+    this.sparkles = this.sparkles.filter((p) => wall - p.t < 520);
+    for (const p of this.sparkles) {
+      const age = wall - p.t;
+      ctx.globalAlpha = 1 - age / 520;
+      star(ctx, p.x + p.vx * age, p.y + p.vy * age, 9 * (1 - age / 700));
+    }
+    ctx.restore();
+  }
+
+  /** ゴーゴータイムの判定枠（参考動画: オレンジの炎の玉。右上へ炎がゆらめく） */
+  private drawFireball(wall: number) {
+    const ctx = this.ctx;
+    ctx.save();
+    // 炎の尾（3 枚を少しずつずらしてゆらす）
+    for (let k = 0; k < 3; k++) {
+      const f = Math.sin(wall / 70 + k * 2.1) * 10;
+      const f2 = Math.cos(wall / 95 + k * 1.3) * 12;
+      const len = 1 - k * 0.22;
+      ctx.beginPath();
+      ctx.moveTo(JX + 20, JY - 92);
+      ctx.bezierCurveTo(JX + 110, JY - 120 + f, JX + 150 * len, JY - 70 + f2, JX + 200 * len, JY - 125 + f);
+      ctx.bezierCurveTo(JX + 170 * len, JY - 40 + f2, JX + 120, JY - 10, JX + 92, JY + 10);
+      ctx.closePath();
+      ctx.fillStyle = k === 0 ? 'rgba(232,96,40,0.85)' : k === 1 ? 'rgba(245,140,60,0.8)' : 'rgba(255,200,110,0.75)';
+      ctx.fill();
+    }
+    // 外の光
+    const glow = ctx.createRadialGradient(JX, JY, 80, JX, JY, 118);
+    glow.addColorStop(0, 'rgba(240,116,54,0.9)');
+    glow.addColorStop(1, 'rgba(240,116,54,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(JX, JY, 118, 0, Math.PI * 2);
+    ctx.fill();
+    // 玉
+    ctx.beginPath();
+    ctx.arc(JX, JY, 95, 0, Math.PI * 2);
+    ctx.fillStyle = '#f07436';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(JX, JY, 81, 0, Math.PI * 2);
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ffcf8a';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(JX, JY, 55, 0, Math.PI * 2);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = '#ffe2a0';
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(JX, JY, 47, 0, Math.PI * 2);
+    ctx.fillStyle = '#f3a35f';
+    ctx.fill();
+    ctx.restore();
+  }
+
+  /** ゴーゴータイムが始まったら、下の背景に花火を何発か上げる */
+  private startFireworks(wall: number) {
+    const V = this.vis;
+    const hues = [0, 35, 52, 195, 290, 130, 330];
+    for (let i = 0; i < 7; i++) {
+      this.fireworks.push({
+        x: V.x0 + 150 + Math.random() * (V.x1 - V.x0 - 300),
+        y: TEXT_BOTTOM + 130 + Math.random() * 230,
+        t: wall + i * 230 + Math.random() * 120,
+        hue: hues[i % hues.length],
+        n: 36 + Math.floor(Math.random() * 14),
+      });
+    }
+  }
+
+  private drawFireworks(wall: number) {
+    if (!this.fireworks.length) return;
+    const ctx = this.ctx;
+    const RISE = 320;
+    const LIFE = 1300;
+    const bottom = REF_H - 70;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(this.vis.x0, TEXT_BOTTOM, this.vis.x1 - this.vis.x0, bottom - TEXT_BOTTOM);
+    ctx.clip();
+    ctx.globalCompositeOperation = 'lighter';
+    this.fireworks = this.fireworks.filter((f) => wall - f.t < RISE + LIFE);
+    for (const f of this.fireworks) {
+      const age = wall - f.t;
+      if (age < 0) continue;
+      if (age < RISE) {
+        // 打ち上げ
+        const p = ease(age / RISE);
+        const y = bottom - (bottom - f.y) * p;
+        ctx.fillStyle = `hsl(${f.hue},100%,80%)`;
+        ctx.beginPath();
+        ctx.arc(f.x, y, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = `hsla(${f.hue},100%,70%,0.4)`;
+        ctx.fillRect(f.x - 2, y, 4, 60);
+        continue;
+      }
+      const p = (age - RISE) / LIFE;
+      const rad = 210 * ease(Math.min(1, p * 1.6));
+      const drop = 70 * p * p;
+      ctx.globalAlpha = 1 - p;
+      for (let i = 0; i < f.n; i++) {
+        const a = (Math.PI * 2 * i) / f.n;
+        const px = f.x + Math.cos(a) * rad;
+        const py = f.y + Math.sin(a) * rad + drop;
+        const tx = f.x + Math.cos(a) * rad * 0.7;
+        const ty = f.y + Math.sin(a) * rad * 0.7 + drop * 0.7;
+        ctx.strokeStyle = `hsla(${f.hue},100%,65%,0.6)`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.moveTo(tx, ty);
+        ctx.lineTo(px, py);
+        ctx.stroke();
+        ctx.fillStyle = i % 3 ? `hsl(${f.hue},100%,75%)` : '#fff8e0';
+        ctx.beginPath();
+        ctx.arc(px, py, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      // 中心の光
+      if (p < 0.25) {
+        const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 90);
+        g.addColorStop(0, `hsla(${f.hue},100%,90%,${0.8 * (1 - p * 4)})`);
+        g.addColorStop(1, `hsla(${f.hue},100%,60%,0)`);
+        ctx.fillStyle = g;
+        ctx.fillRect(f.x - 90, f.y - 90, 180, 180);
+      }
+    }
+    ctx.restore();
+  }
+
 
   private drawJudgeText(wall: number) {
     const j = this.judgeFx;
@@ -978,6 +1284,13 @@ export class Renderer {
       const x = u * u * u * P0[0] + 3 * u * u * t * P1[0] + 3 * u * t * t * P2[0] + t * t * t * P3[0];
       const y = u * u * u * P0[1] + 3 * u * u * t * P1[1] + 3 * u * t * t * P2[1] + t * t * t * P3[1];
       const r = (isBig(f.note.type) ? NR * BIG_SCALE : NR) * (1 - 0.25 * t);
+      if (isBig(f.note.type) && this.sparkles.length < 160) {
+        for (let k = 0; k < 2; k++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 0.03 + Math.random() * 0.08;
+          this.sparkles.push({ x: x + Math.cos(a) * r * 0.6, y: y + Math.sin(a) * r * 0.6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t: wall });
+        }
+      }
       drawNoteHead(ctx, x, y, r, f.note.type === 'balloon' ? 'balloon' : f.note.type);
     }
     this.flyers = keep;
@@ -1153,6 +1466,18 @@ export class Renderer {
 }
 
 interface Rect { x0: number; y0: number; x1: number; y1: number }
+
+/** 4 本の角のきらきら */
+function star(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  if (r <= 0) return;
+  ctx.beginPath();
+  ctx.moveTo(x, y - r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.quadraticCurveTo(x, y, x, y + r);
+  ctx.quadraticCurveTo(x, y, x - r, y);
+  ctx.quadraticCurveTo(x, y, x, y - r);
+  ctx.fill();
+}
 
 function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath();
