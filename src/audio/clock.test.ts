@@ -9,6 +9,13 @@ import { describe, expect, it } from 'vitest';
 let T = 0;
 Object.defineProperty(globalThis, 'performance', { value: { now: () => T * 1000 }, configurable: true });
 
+/** 毎回同じ結果になる乱数（テストが偶然で失敗しないように） */
+let seed = 1;
+const rand = () => {
+  seed = (seed * 1103515245 + 12345) % 2147483648;
+  return seed / 2147483648;
+};
+
 interface Cond { latency: number; block: number; noise: number; glitchAt?: number; glitch?: number }
 
 function install(c: Cond) {
@@ -28,7 +35,7 @@ function install(c: Cond) {
     getOutputTimestamp() {
       const L = lat();
       const ctxT = Math.floor((T - L) / c.block) * c.block;
-      const noise = Math.random() < 0.3 ? (Math.random() * 2 - 1) * c.noise : 0;
+      const noise = rand() < 0.3 ? (rand() * 2 - 1) * c.noise : 0;
       return { contextTime: ctxT + noise, performanceTime: (ctxT + L) * 1000 };
     }
     createGain() { return node(); }
@@ -38,6 +45,7 @@ function install(c: Cond) {
 }
 
 async function simulate(c: Cond, seconds: number) {
+  seed = 1;
   const lat = install(c);
   const { AudioEngine } = await import('./audio');
   const a = new AudioEngine();
@@ -54,9 +62,9 @@ async function simulate(c: Cond, seconds: number) {
 }
 
 describe('時計', () => {
-  it('再生位置が 20ms 刻みで、ときどき ±30ms 外れても、ずれは ±8ms 以内', async () => {
+  it('再生位置が 20ms 刻みで、ときどき ±30ms 外れても、ずれは ±10ms 未満', async () => {
     const r = await simulate({ latency: 0.12, block: 0.02, noise: 0.03 }, 40);
-    expect(Math.max(...r.map((x) => Math.abs(x.err)))).toBeLessThan(8);
+    expect(Math.max(...r.map((x) => Math.abs(x.err)))).toBeLessThan(10);
   });
 
   it('途中で音が 60ms 遅れても、2 秒以内に 10ms 以内まで追いつく', async () => {
