@@ -17,7 +17,7 @@ import type { Editor } from './editor';
 
 export const REF_H = 924;
 const R = {
-  colLine1: 160,
+  colLine1: 72, // 密度推移の左端（拡大縮小の六角形のすぐ右）
   laneX: 235,
   laneTop: 352,
   laneBottom: 570,
@@ -32,11 +32,10 @@ const R = {
   zoomIn: { x: 24, y: 128, r: 36 },
   timeX: 262,
   waveX: 300,
-  waveTop: 118,
+  waveTop: 40, // 曲名の表示をなくした分、波形を上へ広げる
   waveBottom: 336,
   evTop: 576,
   evBottom: 616,
-  info: { x: 300, y: 70 },
   posLabel: { x: 300, y: 650 },
   beatPx: 400, // 初期の拡大率（1拍あたり）
 };
@@ -353,14 +352,6 @@ export class EditorView {
     ctx.fillStyle = C.bg;
     ctx.fillRect(0, 0, this.w, this.h);
 
-    // 曲名など（波形の上）
-    ctx.font = `600 ${Math.round(26 * s)}px system-ui, sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = C.sub;
-    const info = `${ed.chart.title || '(無題)'}  ·  ${course.name} ★${course.level}  ·  ${course.notes.length}ノーツ${ed.audio ? '' : '  ·  音源なし'}`;
-    ctx.fillText(info, L.waveX, R.info.y * s, Math.max(40, this.w - L.waveX - 10));
-
     // 波形
     ctx.fillStyle = '#0c0c0e';
     ctx.fillRect(L.waveX, L.waveY, this.w - L.waveX, L.waveH);
@@ -510,12 +501,28 @@ export class EditorView {
     }
     ctx.restore();
 
-    // 現在位置（小節・拍）
-    ctx.font = `600 ${Math.round(26 * s)}px system-ui, sans-serif`;
+    // 下: 現在の小節・拍、BPM、拍子
+    const at = Math.max(0, ed.snap(this.pos));
+    const m = ed.measureOf(at);
+    const bpm = Number(ed.timing.bpmAt(at).toFixed(3));
+    ctx.font = `700 ${Math.round(30 * s)}px system-ui, sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = C.sub;
-    ctx.fillText(ed.label(Math.max(0, ed.snap(this.pos))), R.posLabel.x * s, R.posLabel.y * s);
+    const items: [string, string][] = [
+      ['小節', String(m.index + 1)],
+      ['拍', String(Number(((at - m.start) / TPB + 1).toFixed(3)))],
+      ['BPM', String(bpm)],
+      ['拍子', `${m.num}/${m.den}`],
+    ];
+    let tx = R.posLabel.x * s;
+    for (const [k, v] of items) {
+      ctx.fillStyle = C.sub;
+      ctx.fillText(k, tx, R.posLabel.y * s);
+      tx += ctx.measureText(k).width + 10 * s;
+      ctx.fillStyle = C.text;
+      ctx.fillText(v, tx, R.posLabel.y * s);
+      tx += ctx.measureText(v).width + 44 * s;
+    }
 
     this.drawColumn(L);
   }
