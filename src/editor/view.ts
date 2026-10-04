@@ -18,6 +18,7 @@ import type { Editor } from './editor';
 export const REF_H = 924;
 const R = {
   colLine1: 72, // 密度推移の左端（拡大縮小の六角形のすぐ右）
+  densW: 75, // 密度推移の幅（Malody と同じ）
   laneX: 235,
   laneTop: 352,
   laneBottom: 570,
@@ -28,8 +29,8 @@ const R = {
   judgeX: 410, // 判定枠（再生位置）
   judgeR: 72,
   judgeR2: 49,
-  zoomOut: { x: 24, y: 50, r: 36 },
-  zoomIn: { x: 24, y: 128, r: 36 },
+  zoomOut: { x: 24, y: 66, r: 36 },
+  zoomIn: { x: 24, y: 144, r: 36 },
   timeX: 262,
   waveX: 300,
   waveTop: 40, // 曲名の表示をなくした分、波形を上へ広げる
@@ -508,20 +509,18 @@ export class EditorView {
     ctx.font = `700 ${Math.round(30 * s)}px system-ui, sans-serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'middle';
-    const items: [string, string][] = [
-      ['小節', String(m.index + 1)],
-      ['拍', String(Number(((at - m.start) / TPB + 1).toFixed(3)))],
-      ['BPM', String(bpm)],
-      ['拍子', `${m.num}/${m.den}`],
+    // 数値の桁が変わっても位置がずれないよう、項目ごとに位置を固定する
+    const items: [string, string, number][] = [
+      ['小節', String(m.index + 1), 0],
+      ['BPM', String(bpm), 220],
+      ['拍子', `${m.num}/${m.den}`, 520],
     ];
-    let tx = R.posLabel.x * s;
-    for (const [k, v] of items) {
+    for (const [k, v, dx] of items) {
+      const x = (R.posLabel.x + dx) * s;
       ctx.fillStyle = C.sub;
-      ctx.fillText(k, tx, R.posLabel.y * s);
-      tx += ctx.measureText(k).width + 10 * s;
+      ctx.fillText(k, x, R.posLabel.y * s);
       ctx.fillStyle = C.text;
-      ctx.fillText(v, tx, R.posLabel.y * s);
-      tx += ctx.measureText(v).width + 44 * s;
+      ctx.fillText(v, x + (k === 'BPM' ? 92 : 72) * s, R.posLabel.y * s);
     }
 
     this.drawColumn(L);
@@ -568,8 +567,8 @@ export class EditorView {
     const ctx = this.ctx;
     const s = L.s;
     const g = this.graph;
-    const x1 = L.colW - Math.max(1, 2 * s);
-    const maxW = L.colW - L.colLine1 - 8 * s;
+    const x1 = L.colLine1 + R.densW * s;
+    const maxW = (R.densW - 6) * s;
     const len = this.songLength();
     const step = Math.max(3, 7 * s);
     const n = Math.max(8, Math.floor((g.bottom - g.top) / step));
@@ -594,7 +593,7 @@ export class EditorView {
     const now = timing.tickToTime(Math.max(0, this.pos));
     const y = g.bottom - (Math.min(1, now / len)) * (g.bottom - g.top);
     ctx.fillStyle = '#ffb02e';
-    ctx.fillRect(L.colLine1, y - Math.max(1, 1.5 * s), L.colW - L.colLine1, Math.max(2, 3 * s));
+    ctx.fillRect(L.colLine1, y - Math.max(1, 1.5 * s), R.densW * s, Math.max(2, 3 * s));
   }
 
   /** 左の列（Malody と同じ配置） */
