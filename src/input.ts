@@ -7,8 +7,13 @@ export type HitHandler = (kind: HitKind, side: 'L' | 'R', at: number, pt?: { x: 
 /** イベントの timeStamp を performance.now() 基準の時刻として使う（古いブラウザの別基準の値は捨てる） */
 function eventTime(ts: number): number {
   const now = performance.now();
-  return ts > 0 && ts <= now + 5 && now - ts < 1000 ? ts : now;
+  // 指を置いたまま叩くと、iPhone が古い時刻（置いた指の時刻など）を付けてくることがあるので、
+  // 今より 60ms 以上前の時刻は信用せず、受け取った時刻を使う
+  return ts > 0 && ts <= now + 5 && now - ts < 60 ? ts : now;
 }
+
+/** 記録用: イベントの時刻が受け取った時刻よりどれだけ前か（ms） */
+const lag = (ts: number) => Math.round(performance.now() - ts);
 
 /** キー割り当て（KeyboardEvent.code） */
 export const DEFAULT_KEYS: Record<string, { kind: HitKind; side: 'L' | 'R' }> = {
@@ -118,7 +123,7 @@ export function bindInput(
     if (e.type === 'touchcancel') touchStats.cancels++;
     const raw = (list: Touch[]) =>
       onRaw(
-        `${e.type.replace('touch', 't-')} [${list.map((t) => `${t.identifier % 1000}@${pos(t.clientX, t.clientY)}`).join(' ')}] down=${e.touches.length}`,
+        `${e.type.replace('touch', 't-')} [${list.map((t) => `${t.identifier % 1000}@${pos(t.clientX, t.clientY)}`).join(' ')}] down=${e.touches.length} lag=${lag(e.timeStamp)}`,
         eventTime(e.timeStamp),
       );
     // touchmove は数が多いので、新しい打撃とみなしたときだけ記録する
@@ -168,7 +173,7 @@ export function bindInput(
     if (e.target instanceof Element && e.target.closest('button')) return;
     if (e.pointerType === 'touch') {
       touchStats.pointers++;
-      onRaw(`p-down ${e.pointerId % 1000}@${pos(e.clientX, e.clientY)}`, eventTime(e.timeStamp));
+      onRaw(`p-down ${e.pointerId % 1000}@${pos(e.clientX, e.clientY)} lag=${lag(e.timeStamp)}`, eventTime(e.timeStamp));
       if (!usePointer()) return; // タッチは touch イベント側で処理
     }
     e.preventDefault();
