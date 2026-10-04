@@ -30,6 +30,8 @@ export const touchStats = {
   pointerCancels: 0,
   /** 同時に触れていた指の最大数 */
   maxFingers: 0,
+  /** 指が瞬間移動した（別の指の打撃とみなした）回数 */
+  jumps: 0,
 };
 
 export function resetTouchStats() {
@@ -51,7 +53,15 @@ export function bindInput(
   onHit: HitHandler,
   /** true のときは指のタッチをポインターイベントで受け取る（タッチイベントは止めるだけ） */
   usePointer: () => boolean = () => false,
+  /** 届いたタッチ・ポインターイベントをそのまま記録する（不具合調査用） */
+  onRaw: (line: string, at: number) => void = () => {},
 ): () => void {
+  const pos = (x: number, y: number) => {
+    const p = localPoint({ clientX: x, clientY: y }, canvas);
+    const r = canvas.getBoundingClientRect();
+    const w = Math.max(r.width, r.height) || 1;
+    return `${(p.x / w).toFixed(2)},${(p.y / w).toFixed(2)}`;
+  };
   const onKey = (e: KeyboardEvent) => {
     if (e.repeat) return;
     const t = e.target;
@@ -74,12 +84,38 @@ export function bindInput(
 
   /** いま画面に触れている（叩いたとして処理済みの）指 */
   let seen = new Set<number>();
+  /** 指ごとの最後の位置（画面の長辺に対する割合） */
+  const lastPos = new Map<number, { x: number; y: number }>();
+  /**
+   * 両手で交互に叩くと、片方の指が離れるのとほぼ同時にもう片方の指が触れたとき、
+   * iPhone が「同じ指が瞬間移動した」と判断して、新しい指の touchstart を出さずに
+   * touchmove だけを送ってくることがある。指が一度に大きく動いたら新しい打撃とみなす。
+   */
+  const JUMP = 0.08;
+  const unit = () => {
+    const r = canvas.getBoundingClientRect();
+    return Math.max(r.width, r.height) || 1;
+  };
+  const jumped = (id: number, x: number, y: number) => {
+    const u = unit();
+    const prev = lastPos.get(id);
+    lastPos.set(id, { x: x / u, y: y / u });
+    if (!prev) return false;
+    return Math.hypot(x / u - prev.x, y / u - prev.y) > JUMP;
+  };
 
   const onTouch = (e: TouchEvent) => {
     // 終了ボタンなどのボタンはふつうに押せるようにする
     if (e.target instanceof Element && e.target.closest('button')) return;
     e.preventDefault();
     if (e.type === 'touchcancel') touchStats.cancels++;
+    const raw = (list: Touch[]) =>
+      onRaw(
+        `${e.type.replace('touch', 't-')} [${list.map((t) => `${t.identifier % 1000}@${pos(t.clientX, t.clientY)}`).join(' ')}] down=${e.touches.length}`,
+        eventTime(e.timeStamp),
+      );
+    // touchmove は数が多いので、新しい打撃とみなしたときだけ記録する
+    if (e.type !== 'touchmove') raw(Array.from(e.changedTouches));
     touchStats.maxFingers = Math.max(touchStats.maxFingers, e.touches.length);
     if (usePointer()) {
       seen = new Set(Array.from(e.touches).map((t) => t.identifier));
@@ -88,20 +124,32 @@ export function bindInput(
     const at = eventTime(e.timeStamp);
     const fresh: Touch[] = [];
     if (e.type === 'touchstart') {
-      for (const t of Array.from(e.changedTouches)) fresh.push(t);
+      for (const t of Array.from(e.changedTouches)) {
+        fresh.push(t);
+        lastPos.delete(t.identifier);
+        jumped(t.identifier, t.clientX, t.clientY);
+      }
       touchStats.starts += fresh.length;
     } else if (e.type === 'touchmove') {
       // touchstart が届かなかった指が、ほかの指の touchmove に混ざって現れることがある
-      for (const t of Array.from(e.touches)) if (!seen.has(t.identifier)) fresh.push(t);
-      touchStats.recovered += fresh.length;
+      for (const t of Array.from(e.touches)) {
+        const jump = jumped(t.identifier, t.clientX, t.clientY);
+        if (!seen.has(t.identifier) || jump) {
+          fresh.push(t);
+          if (jump) touchStats.jumps++;
+          else touchStats.recovered++;
+        }
+      }
     } else {
       // touchstart も touchmove も届かずに離れた指
       for (const t of Array.from(e.changedTouches)) if (!seen.has(t.identifier)) fresh.push(t);
       touchStats.recovered += fresh.length;
     }
+    if (e.type === 'touchmove' && fresh.length) raw(fresh);
     for (const t of fresh) hitAt(t.clientX, t.clientY, at);
     // いま触れている指の一覧に合わせる（離れた指・取りこぼした touchend の指を忘れる）
     seen = new Set(Array.from(e.touches).map((t) => t.identifier));
+    for (const id of Array.from(lastPos.keys())) if (!seen.has(id)) lastPos.delete(id);
   };
 
   const block = (e: Event) => {
@@ -113,6 +161,7 @@ export function bindInput(
     if (e.target instanceof Element && e.target.closest('button')) return;
     if (e.pointerType === 'touch') {
       touchStats.pointers++;
+      onRaw(`p-down ${e.pointerId % 1000}@${pos(e.clientX, e.clientY)}`, eventTime(e.timeStamp));
       if (!usePointer()) return; // タッチは touch イベント側で処理
     }
     e.preventDefault();
@@ -130,11 +179,35 @@ export function bindInput(
   window.addEventListener('keydown', onKey);
   root.addEventListener('pointerdown', onPointer, opts);
   const onPointerCancel = (e: PointerEvent) => {
-    if (e.pointerType === 'touch') touchStats.pointerCancels++;
+    if (e.pointerType !== 'touch') return;
+    if (e.type === 'pointercancel') touchStats.pointerCancels++;
+    onRaw(`${e.type.replace('pointer', 'p-')} ${e.pointerId % 1000}`, eventTime(e.timeStamp));
   };
   root.addEventListener('pointercancel', onPointerCancel, opts);
+  root.addEventListener('pointerup', onPointerCancel, opts);
+  const pjump = new Map<number, { x: number; y: number }>();
+  const onPointerDownPos = (e: PointerEvent) => {
+    if (e.pointerType === 'touch') pjump.set(e.pointerId, { x: e.clientX / unit(), y: e.clientY / unit() });
+  };
+  const onPointerMove = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch' || !usePointer()) return;
+    const u = unit();
+    const prev = pjump.get(e.pointerId);
+    const cur = { x: e.clientX / u, y: e.clientY / u };
+    pjump.set(e.pointerId, cur);
+    if (prev && Math.hypot(cur.x - prev.x, cur.y - prev.y) > JUMP) {
+      touchStats.jumps++;
+      onRaw(`p-jump ${e.pointerId % 1000}@${pos(e.clientX, e.clientY)}`, eventTime(e.timeStamp));
+      hitAt(e.clientX, e.clientY, eventTime(e.timeStamp));
+    }
+  };
+  root.addEventListener('pointerdown', onPointerDownPos, opts);
+  root.addEventListener('pointermove', onPointerMove, opts);
   return () => {
     root.removeEventListener('pointercancel', onPointerCancel, opts);
+    root.removeEventListener('pointerup', onPointerCancel, opts);
+    root.removeEventListener('pointerdown', onPointerDownPos, opts);
+    root.removeEventListener('pointermove', onPointerMove, opts);
     window.removeEventListener('keydown', onKey);
     root.removeEventListener('pointerdown', onPointer, opts);
     for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) {

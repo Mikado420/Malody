@@ -65,6 +65,9 @@ export class PlayMode {
         }
       },
       () => !!this.settings.pointerInput,
+      (line, at) => {
+        if (this.active && this.raw.length < 5000) this.raw.push({ t: this.time(at), s: line });
+      },
     );
     window.addEventListener('keydown', (e) => {
       if (this.active && e.code === 'Escape') this.finish();
@@ -112,6 +115,7 @@ export class PlayMode {
     this.renderer.reset();
     this.renderer.donWidth = this.settings.donWidth ?? 0.6;
     resetTouchStats();
+    this.raw = [];
     this.game = game;
 
     this.root.classList.remove('hidden');
@@ -289,7 +293,7 @@ export class PlayMode {
     if (S.starts + S.recovered + S.pointers > 0) {
       rows.push([
         'タッチ',
-        `${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
+        `${this.settings.pointerInput ? 'ポインター方式' : 'タッチ方式'}／touchstart ${S.starts}・pointerdown ${S.pointers}・補った ${S.recovered}・瞬間移動 ${S.jumps}・取り消し ${S.cancels}/${S.pointerCancels}・同時に触れた指 最大 ${S.maxFingers}本`,
       ]);
     }
     const P = this.perf;
@@ -328,16 +332,27 @@ export class PlayMode {
   /** 直前のプレイの記録（「ログをコピー」で使う） */
   lastLog = '';
 
+  /** 届いたタッチイベントそのものの記録（曲の時刻つき） */
+  private raw: { t: number; s: string }[] = [];
+
   private logText(g: Game): string {
     const f = (t: number) => t.toFixed(3);
-    const lines = [`version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms ua ${navigator.userAgent}`];
+    const S = touchStats;
+    const lines = [
+      `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${this.settings.pointerInput ? 'pointer' : 'touch'} ua ${navigator.userAgent}`,
+      `touchstart ${S.starts} pointerdown ${S.pointers} recovered ${S.recovered} jumps ${S.jumps} cancel ${S.cancels}/${S.pointerCancels} maxFingers ${S.maxFingers}`,
+    ];
+    const items: { t: number; s: string }[] = this.raw.map((r) => ({ t: r.t, s: `    ${r.s}` }));
     for (const x of g.log) {
-      if (x.e === 'miss') lines.push(`${f(x.t)} MISS ${x.type}`);
+      if (x.e === 'miss') items.push({ t: x.t, s: `MISS ${x.type}` });
       else {
         const j = x.res === 'judged' ? ` ${x.judge} note=${f(x.note!)} (${Math.round((x.t - x.note!) * 1000)}ms)` : ` ${x.res}`;
-        lines.push(`${f(x.t)} tap ${x.kind}${j}${x.ring !== undefined ? ` ring=${x.ring.toFixed(2)}` : ''}`);
+        items.push({ t: x.t, s: `tap ${x.kind}${j}${x.ring !== undefined ? ` ring=${x.ring.toFixed(2)}` : ''}` });
       }
     }
+    // 見逃しは判定した時刻ではなく音符の時刻に置く。同じ時刻なら元の順番のまま
+    items.sort((a, b) => a.t - b.t);
+    for (const it of items) lines.push(`${f(it.t)} ${it.s}`);
     return lines.join('\n');
   }
 
