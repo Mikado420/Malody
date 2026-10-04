@@ -49,9 +49,12 @@ export class PlayMode {
         if (this.settings.showTiming) {
           const ms = (d: number) => `${d > 0 ? '+' : ''}${Math.round(d * 1000)}ms`;
           if (r.type === 'judged') this.renderer.pushTiming(ms(r.delta), r.delta > 0 ? '#ffb070' : '#8fd0ff');
+          else if (r.type === 'big') this.renderer.pushTiming('大音符の2打目', '#ffe25a');
+          else if (r.type === 'roll') this.renderer.pushTiming('連打', '#ffe25a');
           else if (r.type === 'none') {
             if (r.wrongColor && r.nearest === null) this.renderer.pushTiming('色違い', '#c0c0c0');
             else if (r.nearest !== null) this.renderer.pushTiming(`判定なし ${ms(r.nearest)}`, '#ff6b6b');
+            else this.renderer.pushTiming('近くに音符なし', '#c0c0c0');
           }
         }
       },

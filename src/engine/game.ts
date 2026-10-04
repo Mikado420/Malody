@@ -130,18 +130,39 @@ export class Game {
     return r;
   }
 
+  /** 判定前の同じ色の普通ノーツのうち、now にいちばん近いものと、そのずれの大きさ */
+  private nearestSame(kind: HitKind, now: number): { st: NoteState; ad: number } | null {
+    let best: { st: NoteState; ad: number } | null = null;
+    for (let i = this.cursor; i < this.hitIdx.length; i++) {
+      const st = this.states[this.hitIdx[i]];
+      const d = now - st.note.time;
+      if (d < -WINDOW.bad - EPS) break;
+      if (st.done || (kind === 'don') !== isDon(st.note.type)) continue;
+      const ad = Math.abs(d);
+      if (ad <= WINDOW.bad + EPS && (!best || ad < best.ad - 1e-9)) best = { st, ad };
+    }
+    return best;
+  }
+
   private hitInner(kind: HitKind, now: number): HitResult {
+    const near = this.nearestSame(kind, now);
+
     // 1) 大音符の両手打ち: 大音符を叩いてから 50ms 以内の同じ色の 2 打目は、次のノーツの判定に使わない
     //    （使うと次のノーツが「早い不可」になる。TNDE の BigNotesWaitTime=50ms と同じ考え方）
+    //    ただし、次の音符のほうが時間的に近い打撃は、片手で叩いた後の次の音符への打撃とみなして判定する
     const bw = this.bigWait;
     if (bw && kind === bw.kind && now >= bw.at - EPS && now - bw.at <= BIG_WAIT + EPS) {
       this.bigWait = null;
-      this.stats.score += 500;
-      return { type: 'big' };
+      if (!near || now - bw.at < near.ad) {
+        this.stats.score += 500;
+        return { type: 'big' };
+      }
     }
 
     // 2) 連打・風船の最中なら、そちらに入れる（次のノーツを早く叩いたことにしない）
-    for (const ls of this.states) {
+    //    ただし、すぐ後の同じ色の音符が「可」の幅（75ms）以内なら、連打ではなく音符を判定する
+    const noteFirst = near !== null && near.ad <= WINDOW.ok + EPS;
+    for (const ls of noteFirst ? [] : this.states) {
       const n = ls.note;
       if (ls.done || isHitNote(n.type)) continue;
       if (now < n.time) break; // states は時刻順
@@ -166,20 +187,7 @@ export class Game {
     // 3) 判定幅の中で、叩いた色と同じ色のノーツのうち、叩いた時刻にいちばん近いものを判定する
     //    - 色違いのノーツは対象にしない（色違いで叩いても不可にはせず、ノーツは残る。TNDE/TJAPlayer3 と同じ）
     //    - いちばん古いノーツにすると、1つ見逃しただけで後のノーツが全部「遅い」扱いになってしまう
-    let best: NoteState | undefined;
-    let bestAd = Infinity;
-    for (let i = this.cursor; i < this.hitIdx.length; i++) {
-      const st = this.states[this.hitIdx[i]];
-      const d = now - st.note.time;
-      if (d < -WINDOW.bad - EPS) break; // ここから先はもっと未来
-      if (st.done) continue;
-      if ((kind === 'don') !== isDon(st.note.type)) continue;
-      const ad = Math.abs(d);
-      if (ad <= WINDOW.bad + EPS && ad < bestAd - 1e-9) {
-        best = st;
-        bestAd = ad;
-      }
-    }
+    const best = near?.st;
     if (!best) {
       // 判定幅の中に同じ色のノーツがない: 音が鳴るだけ。原因を調べられるように近くのノーツを記録する
       let nearest: number | null = null;

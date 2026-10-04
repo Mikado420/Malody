@@ -210,10 +210,10 @@ describe('Game 判定', () => {
     expect([g.stats.good, g.stats.bad]).toEqual([2, 0]);
   });
 
-  it('連打の最中に叩いた分は、すぐ後のノーツの判定に使われない', () => {
-    const g = new Game(mk([['roll', 1, 1.5], ['don', 1.55]]));
+  it('連打の最中に叩いた分は、可の幅（75ms）より離れた後のノーツの判定に使われない', () => {
+    const g = new Game(mk([['roll', 1, 1.5], ['don', 1.6]]));
     for (const t of [1.0, 1.1, 1.2, 1.3, 1.45, 1.5]) g.hit('don', t);
-    g.hit('don', 1.55);
+    g.hit('don', 1.6);
     expect([g.stats.rolls, g.stats.good, g.stats.bad]).toEqual([6, 1, 0]);
   });
 
@@ -230,6 +230,20 @@ describe('Game 判定', () => {
     expect(g.hit('ka', 1.5)).toMatchObject({ type: 'none' });
     expect(g.outside.map((d) => Math.round(d * 1000))).toEqual([-200, 500]);
     expect(g.taps).toMatchObject({ total: 2, none: 2 });
+  });
+
+  it('連打の終わり際でも、すぐ後の音符に近ければ音符を判定する（連打に吸われない）', () => {
+    const g = new Game(mk([['roll', 0.5, 1.0], ['don', 1.05]]));
+    expect(g.hit('don', 1.0)).toMatchObject({ type: 'judged', judge: 'ok' }); // 50ms 早い
+    expect(g.hit('don', 0.7)).toMatchObject({ type: 'roll' }); // 連打の途中はこれまでどおり連打
+  });
+
+  it('大音符を片手で叩いた直後の、次の音符への打撃は大音符の 2 打目にしない', () => {
+    // 大ドン(1.00) の 40ms 後にドン(1.04)。大ドンを片手で叩き、次のドンをちょうどで叩く
+    const g = new Game(mk([['bigDon', 1], ['don', 1.04]]));
+    g.hit('don', 1.0);
+    expect(g.hit('don', 1.04)).toMatchObject({ type: 'judged', judge: 'good' });
+    expect([g.stats.good, g.stats.bad]).toEqual([2, 0]);
   });
 
   it('見逃しは不可', () => {

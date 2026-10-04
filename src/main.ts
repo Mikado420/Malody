@@ -395,7 +395,7 @@ function renderSheet() {
       <button data-act="calibrate" class="primary">タイミングを測って判定調整を合わせる</button>
       <p class="note">クリック音に合わせてドンを 24 回叩くと、端末の音の遅れを測って判定調整を提案します。音がずれて「正確に叩いても判定されない・不可になる」ときに使ってください。</p>
       <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>
-      <p class="note">オンにすると、叩くたびに判定枠の下にずれ（ms）が出ます。判定されなかったときは「判定なし」と、近くの音符とのずれが出ます。</p>
+      <p class="note">オンにすると、叩くたびに判定枠の下にずれ（ms）が出ます。判定されなかったときは理由（判定なし＋近くの音符とのずれ／色違い／連打／大音符の2打目／近くに音符なし）が出ます。</p>
       <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
   } else if (sheet === 'events') {

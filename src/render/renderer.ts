@@ -135,6 +135,7 @@ export class Renderer {
       drumRx: this.pad.faceRx,
       drumRy: this.pad.faceRy,
     };
+    this.burstSprites = {};
     this.buildBackground();
   }
 
@@ -242,7 +243,8 @@ export class Renderer {
 
   pushJudge(e: JudgeEvent) {
     const now = performance.now();
-    this.judgeFx = { judge: e.judge, t: now };
+    // 叩かずに通り過ぎた音符（見逃し）は、判定は不可でも判定枠の上に「不可」を出さない
+    if (!e.missed) this.judgeFx = { judge: e.judge, t: now };
     if (e.judge !== 'bad') {
       this.bursts.push({ t: now, judge: e.judge, big: isBig(e.note.type) });
       this.flyers.push({ t: now, note: e.note });
@@ -503,37 +505,54 @@ export class Renderer {
     return map;
   }
 
+  /** 光の粒の絵（良＝金、可＝白）。前もって一度だけ描いておき、毎フレームは拡大して貼るだけ */
+  private burstSprites: Partial<Record<Judge, HTMLCanvasElement>> = {};
+
+  private burstSprite(judge: Judge): HTMLCanvasElement {
+    const cached = this.burstSprites[judge];
+    if (cached) return cached;
+    const R = 100; // 基準座標での半径
+    const px = Math.max(1, this.dpr * this.s * 2.4); // 最大まで広がったときも粗くならない解像度
+    const c = document.createElement('canvas');
+    c.width = c.height = Math.ceil(R * 2 * px);
+    const g = c.getContext('2d')!;
+    g.scale(px, px);
+    const col = judge === 'good' ? '255,226,70' : '255,255,255';
+    const glow = g.createRadialGradient(R, R, 6, R, R, 70);
+    glow.addColorStop(0, `rgba(${col},0.85)`);
+    glow.addColorStop(0.6, `rgba(${col},0.35)`);
+    glow.addColorStop(1, `rgba(${col},0)`);
+    g.fillStyle = glow;
+    g.beginPath();
+    g.arc(R, R, 70, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = `rgb(${col})`;
+    for (let ring = 0; ring < 2; ring++) {
+      const count = 22 + ring * 6;
+      const rad = 58 + ring * 22;
+      const dot = 8 - ring * 2;
+      for (let i = 0; i < count; i++) {
+        const ang = (Math.PI * 2 * (i + ring * 0.5)) / count;
+        g.beginPath();
+        g.arc(R + Math.cos(ang) * rad, R + Math.sin(ang) * rad, dot, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    this.burstSprites[judge] = c;
+    return c;
+  }
+
   private drawBursts(wall: number) {
     const ctx = this.ctx;
     for (const b of this.bursts) {
       const p = (wall - b.t) / 260;
       if (p < 0 || p > 1) continue;
-      const k = b.big ? 1.35 : 1;
-      const a = 1 - p;
-      const col = b.judge === 'good' ? '255,226,70' : '255,255,255';
-      // 光
-      const g = ctx.createRadialGradient(JX, JY, 10, JX, JY, (70 + 50 * ease(p)) * k);
-      g.addColorStop(0, `rgba(${col},${0.85 * a})`);
-      g.addColorStop(0.6, `rgba(${col},${0.35 * a})`);
-      g.addColorStop(1, `rgba(${col},0)`);
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(JX, JY, (70 + 50 * ease(p)) * k, 0, Math.PI * 2);
-      ctx.fill();
-      // 粒の輪（2重）
-      ctx.fillStyle = `rgba(${col},${a})`;
-      for (let ring = 0; ring < 2; ring++) {
-        const count = 22 + ring * 6;
-        const rad = (58 + ring * 22 + 70 * ease(p)) * k;
-        const dot = (8 - ring * 2) * (1 - p * 0.6) * k;
-        for (let i = 0; i < count; i++) {
-          const ang = (Math.PI * 2 * (i + ring * 0.5)) / count;
-          ctx.beginPath();
-          ctx.arc(JX + Math.cos(ang) * rad, JY + Math.sin(ang) * rad, dot, 0, Math.PI * 2);
-          ctx.fill();
-        }
-      }
+      const k = (b.big ? 1.35 : 1) * (1 + 1.1 * ease(p));
+      const half = 100 * k;
+      ctx.globalAlpha = 1 - p;
+      ctx.drawImage(this.burstSprite(b.judge), JX - half, JY - half, half * 2, half * 2);
     }
+    ctx.globalAlpha = 1;
     this.bursts = this.bursts.filter((b) => wall - b.t < 300);
   }
 

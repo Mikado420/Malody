@@ -39,8 +39,33 @@ function colorsOf(t: NoteType): [string, string] {
   }
 }
 
+/**
+ * 音符の絵は、種類と大きさごとに一度だけ描いて（スプライト）、毎フレームはそれを貼るだけにする。
+ * 1 フレームに数十個の音符それぞれでグラデーションを作ると、スマホでは描画が重くなり、
+ * タッチの処理や打音が遅れる原因になる。
+ */
+const spriteCache = new Map<string, HTMLCanvasElement>();
+
 /** r = 黒縁を含めた外径の半径 */
 export function drawNoteHead(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, type: NoteType) {
+  const m = ctx.getTransform();
+  const scale = Math.hypot(m.a, m.b) || 1;
+  const pr = Math.max(1, Math.round(r * scale)); // 端末ピクセルでの半径
+  const key = `${type}:${pr}`;
+  let sp = spriteCache.get(key);
+  if (!sp) {
+    if (spriteCache.size > 400) spriteCache.clear();
+    sp = document.createElement('canvas');
+    sp.width = sp.height = pr * 2 + 4;
+    const c = sp.getContext('2d')!;
+    drawNoteHeadRaw(c, pr + 2, pr + 2, pr, type);
+    spriteCache.set(key, sp);
+  }
+  const half = (pr + 2) / scale;
+  ctx.drawImage(sp, x - half, y - half, half * 2, half * 2);
+}
+
+function drawNoteHeadRaw(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, type: NoteType) {
   const [body, light] = colorsOf(type);
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
