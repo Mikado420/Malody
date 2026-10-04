@@ -61,5 +61,5 @@ export const loadChart = () => get<SavedChart>('chart');
 export const loadAudio = () => get<AudioFile>('audio');
 
 /** 自分で読み込んだ打音（ドン / カッ） */
-export const saveHitSound = (kind: 'don' | 'ka', v: AudioFile | null) => put(`hit-${kind}`, v);
-export const loadHitSound = (kind: 'don' | 'ka') => get<AudioFile>(`hit-${kind}`);
+export const saveHitSound = (kind: 'don' | 'ka' | 'balloon', v: AudioFile | null) => put(`hit-${kind}`, v);
+export const loadHitSound = (kind: 'don' | 'ka' | 'balloon') => get<AudioFile>(`hit-${kind}`);

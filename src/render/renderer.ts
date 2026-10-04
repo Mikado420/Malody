@@ -22,7 +22,8 @@ const NR = 54; // 通常ノーツの半径（黒縁を含む）
 const MEASURE_PX = 1470; // ハイスピード 1.0 で 1 小節が流れる距離
 const GAUGE = { x1: 768, x2: 1812, y1: 258, y2: 291, segs: 50 };
 const FLOWER = { x: 1912, y: 258, r: 96 };
-const DRUM = { x: 417, y: 418, r: 76 }; // 左パネルのコンボ太鼓
+const DRUM = { x: 417, y: 418, r: 76 };
+const BALLOON_X = 690; // ふくらむ風船の吹き口（参考動画では判定枠の少し右） // 左パネルのコンボ太鼓
 const FONT = "'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'Arial Rounded MT Bold', system-ui, sans-serif";
 
 const JUDGE_TEXT: Record<Judge, string> = { good: '良', ok: '可', bad: '不可' };
@@ -97,7 +98,7 @@ export class Renderer {
   /** ゴーゴータイムの始まりに下の背景で上がる花火 */
   private fireworks: { x: number; y: number; t: number; hue: number; n: number }[] = [];
   private wasGogo = false;
-  /** 風船が割れたときの虹 */
+  /** 風船が割れた瞬間（白い輪） */
   private rainbow: number | null = null;
   /** 大音符の光の粒（飛んでいく音符の後ろに残るきらきら） */
   private sparkles: { x: number; y: number; vx: number; vy: number; t: number }[] = [];
@@ -518,6 +519,8 @@ export class Renderer {
       if (n.type === 'balloon') {
         if (s.done && s.count >= (n.hits ?? 5)) continue; // 割れた
         const active = now >= n.time && now <= (n.endTime ?? n.time);
+        // 叩いている間は、レーンの音符の代わりにふくらむ風船を出す
+        if (active && this.rollFx?.balloon) continue;
         if (active) x = JX;
         if (now > (n.endTime ?? n.time)) continue;
         drawBalloon(ctx, x, JY, r, null);
@@ -1003,103 +1006,94 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** 風船: 叩くほどふくらむ風船と、残りの打数の吹き出し */
+  /**
+   * 風船（参考動画: 判定枠の位置から右へ風船がふくらむ。小さいうちはオレンジ、大きくなるほど黄色→白っぽく。
+   * 上に残りの打数の吹き出し）
+   */
   private drawInflating(count: number, hits: number, age: number) {
     const ctx = this.ctx;
     const p = Math.min(1, count / Math.max(1, hits));
-    const bx = JX + 40;
-    const by = 190;
-    const rr = 46 + 60 * p + (age < 60 ? 6 * (1 - age / 60) : 0);
+    const bump = age < 50 ? 5 * (1 - age / 50) : 0;
+    const r = 48 + 118 * p + bump;
+    const knot = BALLOON_X;
+    const cx = knot + r * 0.98;
+    const cy = JY;
+    // 色: オレンジ → 黄色 → 淡い黄色
+    const mix = (a: number[], b: number[], t: number) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+    const c1 = p < 0.5 ? mix([240, 128, 40], [248, 214, 64], p / 0.5) : mix([248, 214, 64], [252, 244, 176], (p - 0.5) / 0.5);
+    const c2 = mix(c1, [255, 255, 255], 0.55);
     ctx.save();
-    // ひも
-    ctx.strokeStyle = '#3a1a08';
+    // 吹き口
+    ctx.beginPath();
+    ctx.moveTo(knot - 18, cy - 12);
+    ctx.lineTo(knot + 6, cy - 6);
+    ctx.lineTo(knot + 6, cy + 6);
+    ctx.lineTo(knot - 18, cy + 12);
+    ctx.closePath();
+    ctx.fillStyle = `rgb(${mix(c1, [180, 70, 10], 0.4).join(',')})`;
+    ctx.fill();
     ctx.lineWidth = 4;
-    ctx.beginPath();
-    ctx.moveTo(bx, by + rr * 1.05);
-    ctx.quadraticCurveTo(bx - 20, by + rr + 50, JX, LANE_TOP - 4);
+    ctx.strokeStyle = '#2a1608';
     ctx.stroke();
-    // 風船
-    const g = ctx.createRadialGradient(bx - rr * 0.35, by - rr * 0.4, rr * 0.1, bx, by, rr * 1.1);
-    g.addColorStop(0, '#ffd37a');
-    g.addColorStop(0.45, '#f48a1e');
-    g.addColorStop(1, '#d4520f');
+    // 玉
+    const g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.08, cx, cy, r);
+    g.addColorStop(0, `rgb(${c2.join(',')})`);
+    g.addColorStop(0.6, `rgb(${c1.join(',')})`);
+    g.addColorStop(1, `rgb(${mix(c1, [200, 120, 20], 0.35).join(',')})`);
     ctx.beginPath();
-    ctx.ellipse(bx, by, rr * 0.92, rr, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, r, r * 0.97, 0, 0, Math.PI * 2);
     ctx.fillStyle = g;
     ctx.fill();
     ctx.lineWidth = 5;
-    ctx.strokeStyle = '#3a1a08';
-    ctx.stroke();
-    // 結び目
-    ctx.beginPath();
-    ctx.moveTo(bx - 10, by + rr + 12);
-    ctx.lineTo(bx + 10, by + rr + 12);
-    ctx.lineTo(bx, by + rr - 2);
-    ctx.closePath();
-    ctx.fillStyle = '#d4520f';
-    ctx.fill();
+    ctx.strokeStyle = '#2a1608';
     ctx.stroke();
     // つや
     ctx.beginPath();
-    ctx.ellipse(bx - rr * 0.35, by - rr * 0.45, rr * 0.18, rr * 0.28, -0.5, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.ellipse(cx + r * 0.38, cy - r * 0.48, r * 0.14, r * 0.22, 0.6, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
     ctx.fill();
     // 吹き出し（残りの打数）
-    const sx = bx - rr - 110;
-    const sy = 110;
+    const sx = BALLOON_X + 120;
+    const sy = 150;
     ctx.beginPath();
-    ctx.ellipse(sx, sy, 70, 52, 0, 0, Math.PI * 2);
-    ctx.moveTo(sx + 40, sy + 38);
-    ctx.lineTo(sx + 78, sy + 70);
-    ctx.lineTo(sx + 58, sy + 28);
+    ctx.ellipse(sx, sy, 84, 66, 0, 0, Math.PI * 2);
+    ctx.moveTo(sx - 52, sy + 44);
+    ctx.lineTo(sx - 92, sy + 96);
+    ctx.lineTo(sx - 18, sy + 62);
     ctx.fillStyle = '#fff';
     ctx.fill();
-    ctx.lineWidth = 4;
+    ctx.lineWidth = 5;
     ctx.strokeStyle = '#1a1a1a';
     ctx.stroke();
-    ctx.font = `900 54px ${FONT}`;
+    ctx.font = `900 64px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    outlinedText(ctx, String(Math.max(0, hits - count)), sx, sy + 2, '#fff', '#1a1a1a', 9);
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillText(String(Math.max(0, hits - count)), sx, sy + 4);
     ctx.restore();
   }
 
-  /** 風船が割れたときの虹（判定枠から右上へ弧を描いて伸び、消える） */
+
+  /** 風船が割れた瞬間（白い輪が広がって消えるだけの控えめな演出） */
   private drawRainbow(wall: number) {
     if (this.rainbow === null) return;
     const age = wall - this.rainbow;
-    if (age > 1200) {
+    if (age > 260) {
       this.rainbow = null;
       return;
     }
     const ctx = this.ctx;
-    const cx = JX + 650;
-    const cy = JY + 250;
-    const R = 700;
-    const start = (200 * Math.PI) / 180;
-    const full = (300 * Math.PI) / 180;
-    const end = start + (full - start) * ease(Math.min(1, age / 280));
-    const cols = ['#ff3b30', '#ff9500', '#ffd60a', '#34c759', '#32ade6', '#4b5bdc', '#af52de'];
+    const p = age / 260;
     ctx.save();
-    ctx.globalAlpha = age < 800 ? 0.95 : 0.95 * (1 - (age - 800) / 400);
-    ctx.lineCap = 'round';
-    cols.forEach((c, i) => {
-      ctx.beginPath();
-      ctx.arc(cx, cy, R - i * 14, start, end);
-      ctx.lineWidth = 15;
-      ctx.strokeStyle = c;
-      ctx.stroke();
-    });
-    // 先端のきらきら
-    const tx = cx + Math.cos(end) * (R - 42);
-    const ty = cy + Math.sin(end) * (R - 42);
-    ctx.fillStyle = '#fff';
-    for (let i = 0; i < 6; i++) {
-      const a = wall / 90 + i;
-      star(ctx, tx + Math.cos(a) * 40, ty + Math.sin(a * 1.3) * 40, 9);
-    }
+    ctx.globalAlpha = 1 - p;
+    ctx.beginPath();
+    ctx.arc(BALLOON_X + 160, JY, 120 + 90 * ease(p), 0, Math.PI * 2);
+    ctx.lineWidth = 10 * (1 - p) + 2;
+    ctx.strokeStyle = '#fffbe6';
+    ctx.stroke();
     ctx.restore();
   }
+
 
   /** 大音符が飛んでいった跡のきらきら */
   private drawSparkles(wall: number) {
@@ -1123,9 +1117,9 @@ export class Renderer {
     // 炎の尾（1 枚。先端だけ少しゆらめく）
     const f = Math.sin(wall / 110) * 5;
     ctx.beginPath();
-    ctx.moveTo(JX + 30, JY - 88);
-    ctx.bezierCurveTo(JX + 100, JY - 128, JX + 150, JY - 80, JX + 192, JY - 118 + f);
-    ctx.bezierCurveTo(JX + 168, JY - 52, JX + 128, JY - 18, JX + 90, JY + 12);
+    ctx.moveTo(JX + 34, JY - 86);
+    ctx.bezierCurveTo(JX + 84, JY - 112, JX + 112, JY - 84, JX + 138, JY - 104 + f * 0.6);
+    ctx.bezierCurveTo(JX + 128, JY - 54, JX + 112, JY - 24, JX + 90, JY + 4);
     ctx.closePath();
     ctx.fillStyle = 'rgba(238,110,48,0.9)';
     ctx.fill();

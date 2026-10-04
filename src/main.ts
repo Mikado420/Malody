@@ -1,5 +1,5 @@
 import './style.css';
-import { AudioEngine } from './audio/audio';
+import { AudioEngine, type HitSound } from './audio/audio';
 import { COURSE_NAMES, contentEnd, newChart, toPlayable, TPB, type EEvent } from './chart/model';
 import { parseTJA } from './chart/tja';
 import { writeTJA } from './chart/tjaWrite';
@@ -391,11 +391,11 @@ function renderSheet() {
       <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
       <h3>打音</h3>
-      <p class="note">ドン: ${esc(hitNames.don ?? '内蔵の音')} ／ カッ: ${esc(hitNames.ka ?? '内蔵の音')}<br>
-        ファイル名に「don」が入っているものをドン、「ka」が入っているものをカッにします（例: dong.ogg / ka.ogg）。読み込んだ音はこの端末の中だけに保存されます。</p>
+      <p class="note">ドン: ${esc(hitNames.don ?? '内蔵の音')} ／ カッ: ${esc(hitNames.ka ?? '内蔵の音')} ／ 風船が割れる音: ${esc(hitNames.balloon ?? '内蔵の音')}<br>
+        3 つまとめて選べます。ファイル名に「don」が入っているものをドン、「ka」をカッ、「balloon」を風船が割れる音にします（例: dong.ogg / ka.ogg / Balloon.ogg）。読み込んだ音はこの端末の中だけに保存されます。</p>
       <div class="btns">
         <button data-act="hitLoad">打音ファイルを選ぶ</button>
-        <button data-act="hitReset" ${hitNames.don || hitNames.ka ? '' : 'disabled'}>内蔵の音に戻す</button>
+        <button data-act="hitReset" ${hitNames.don || hitNames.ka || hitNames.balloon ? '' : 'disabled'}>内蔵の音に戻す</button>
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
@@ -611,7 +611,7 @@ async function fileAction(act: string) {
   } else if (act === 'hitLoad') {
     $<HTMLInputElement>('fileHit').click();
   } else if (act === 'hitReset') {
-    for (const k of ['don', 'ka'] as const) {
+    for (const k of ['don', 'ka', 'balloon'] as const) {
       await audio.setCustomHit(k, null);
       hitNames[k] = null;
       void saveHitSound(k, null);
@@ -634,9 +634,9 @@ async function fileAction(act: string) {
 
 // ---------- 打音 ----------
 
-const hitNames: Record<'don' | 'ka', string | null> = { don: null, ka: null };
+const hitNames: Record<HitSound, string | null> = { don: null, ka: null, balloon: null };
 
-async function applyHitSound(kind: 'don' | 'ka', f: AudioFile | null, save: boolean) {
+async function applyHitSound(kind: HitSound, f: AudioFile | null, save: boolean) {
   try {
     await audio.setCustomHit(kind, f ? f.data : null);
     hitNames[kind] = f ? f.name : null;
@@ -654,15 +654,17 @@ $<HTMLInputElement>('fileHit').addEventListener('change', async () => {
   input.value = '';
   if (!files.length) return;
   const pick = (re: RegExp) => files.find((f) => re.test(f.name.replace(/\.[^.]+$/, '')));
+  const balloon = pick(/balloon|fusen|ふうせん|風船/i);
   let don = pick(/don/i);
   let ka = pick(/(^|[^a-z])ka|katsu|kat/i);
   // 名前で分けられないときは 1 つ目をドン、2 つ目をカッ
-  if (!don && !ka) [don, ka] = files;
+  if (!don && !ka) [don, ka] = files.filter((f) => f !== balloon);
   const done: string[] = [];
-  for (const [kind, f] of [['don', don], ['ka', ka]] as const) {
+  const label = { don: 'ドン', ka: 'カッ', balloon: '風船が割れる音' };
+  for (const [kind, f] of [['don', don], ['ka', ka], ['balloon', balloon]] as const) {
     if (!f) continue;
     if (await applyHitSound(kind, { name: f.name, data: await f.arrayBuffer() }, true)) {
-      done.push(kind === 'don' ? 'ドン' : 'カッ');
+      done.push(label[kind]);
     }
   }
   if (done.length) toast(`${done.join('・')}の打音を読み込みました`);
@@ -728,8 +730,8 @@ play.onExit = () => view.invalidate();
  * サイトに置かれた打音（public/sounds/dong.* と ka.*）を探す。
  * リポジトリに打音ファイルを置けば、全員の既定の打音になる（端末で読み込んだ音があればそちらが優先）。
  */
-async function siteHitSound(kind: 'don' | 'ka'): Promise<AudioFile | null> {
-  const names = kind === 'don' ? ['dong', 'don'] : ['ka'];
+async function siteHitSound(kind: HitSound): Promise<AudioFile | null> {
+  const names = kind === 'don' ? ['dong', 'don'] : kind === 'ka' ? ['ka'] : ['balloon', 'Balloon'];
   for (const n of names) {
     for (const ext of ['ogg', 'mp3', 'm4a', 'wav']) {
       try {
@@ -743,7 +745,7 @@ async function siteHitSound(kind: 'don' | 'ka'): Promise<AudioFile | null> {
 }
 
 async function boot() {
-  for (const k of ['don', 'ka'] as const) {
+  for (const k of ['don', 'ka', 'balloon'] as const) {
     const f = (await loadHitSound(k)) ?? (await siteHitSound(k));
     if (f) await applyHitSound(k, f, false);
   }

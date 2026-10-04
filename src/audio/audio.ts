@@ -2,6 +2,9 @@
  * Web Audio まわり。ゲーム内の時刻は「曲の再生位置（秒）」で統一し、
  * AudioContext.currentTime から計算するので映像と音がずれにくい。
  */
+/** 打音の種類（balloon = 風船が割れた音） */
+export type HitSound = 'don' | 'ka' | 'balloon';
+
 export class AudioEngine {
   readonly ctx = new AudioContext({ latencyHint: 'interactive' });
   private music: AudioBuffer | null = null;
@@ -227,24 +230,33 @@ export class AudioEngine {
   // 叩くたびに音を合成すると、速く叩いたときに端末の負荷で音が途切れることがあるので、
   // 打音は最初に一度だけ AudioBuffer にしておき、叩くたびにそれを鳴らすだけにする。
 
-  private hitBuffers: Record<'don' | 'ka', AudioBuffer | null> = { don: null, ka: null };
-  private customHit: Record<'don' | 'ka', AudioBuffer | null> = { don: null, ka: null };
+  private hitBuffers: Record<HitSound, AudioBuffer | null> = { don: null, ka: null, balloon: null };
+  private customHit: Record<HitSound, AudioBuffer | null> = { don: null, ka: null, balloon: null };
   private voices: Record<'don' | 'ka', { src: AudioBufferSourceNode; g: GainNode }[]> = { don: [], ka: [] };
 
   /** 自分で用意した打音（ogg / mp3 / wav など）。null で内蔵の音に戻す */
-  async setCustomHit(kind: 'don' | 'ka', data: ArrayBuffer | null) {
+  async setCustomHit(kind: HitSound, data: ArrayBuffer | null) {
     this.customHit[kind] = data ? await this.ctx.decodeAudioData(data.slice(0)) : null;
   }
 
-  hasCustomHit(kind: 'don' | 'ka') {
+  hasCustomHit(kind: HitSound) {
     return this.customHit[kind] !== null;
   }
 
   /** 内蔵の打音（オリジナルの合成音）を AudioBuffer として作る */
-  private builtinHit(kind: 'don' | 'ka'): AudioBuffer {
+  private builtinHit(kind: HitSound): AudioBuffer {
     const cached = this.hitBuffers[kind];
     if (cached) return cached;
     const sr = this.ctx.sampleRate;
+    if (kind === 'balloon') {
+      // 風船が割れる音（短い雑音）
+      const len = Math.round(sr * 0.18);
+      const buf = this.ctx.createBuffer(1, len, sr);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-i / sr / 0.03) * 0.9;
+      this.hitBuffers.balloon = buf;
+      return buf;
+    }
     const len = Math.round(sr * (kind === 'don' ? 0.22 : 0.1));
     const buf = this.ctx.createBuffer(1, len, sr);
     const d = buf.getChannelData(0);
@@ -264,6 +276,34 @@ export class AudioEngine {
     }
     this.hitBuffers[kind] = buf;
     return buf;
+  }
+
+  private lastScheduled: Partial<Record<HitSound, { g: GainNode; end: number }>> = {};
+
+  /**
+   * 曲の時刻 songTime ちょうどに打音を鳴らす予約（オートで音符の位置に正確に鳴らす）。
+   * 同じ種類の前の音がまだ鳴っていれば、新しい音の瞬間に素早く消す（連打で音が重なりすぎないように）
+   */
+  scheduleHit(kind: HitSound, songTime: number) {
+    const ctx = this.ctx;
+    const when = this.startedAt + (songTime - this.songStart) / this.rate;
+    if (when < ctx.currentTime - 0.005) return;
+    const at = Math.max(when, ctx.currentTime);
+    const prev = this.lastScheduled[kind];
+    if (prev && prev.end > at) prev.g.gain.setTargetAtTime(0, at, 0.006);
+    const src = ctx.createBufferSource();
+    src.buffer = this.customHit[kind] ?? this.builtinHit(kind);
+    const g = ctx.createGain();
+    src.connect(g).connect(this.sfxGain);
+    src.start(at);
+    this.lastScheduled[kind] = { g, end: at + src.buffer.duration };
+    this.scheduled.push(src);
+    src.onended = () => {
+      const i = this.scheduled.indexOf(src);
+      if (i >= 0) this.scheduled.splice(i, 1);
+      src.disconnect();
+      g.disconnect();
+    };
   }
 
   /** 叩いた音。同じ種類の音は同時に 4 つまで（古いものから素早く消す） */

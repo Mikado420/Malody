@@ -5,6 +5,7 @@ import { bindInput, resetTouchStats, touchStats } from '../input';
 import { Renderer } from '../render/renderer';
 import { BUILD_ID } from '../update';
 import { suggestDonWidth, zoneSamples } from './zone';
+import { buildAutoEvents, type AutoEvent } from './auto';
 
 /** Expo Go のアプリ（expo/App.js）の中で動いているか */
 export function isNativeHost() {
@@ -27,6 +28,8 @@ export interface PlaySettings {
   donWidth?: number;
   /** 叩くたびにずれ（ms）を表示する */
   showTiming?: boolean;
+  /** 打音を鳴らす */
+  hitSound?: boolean;
   /** タッチを passive で受け取る（iPhone が指を待たずに次へ進むように） */
   passiveTouch?: boolean;
   /** 画面上部を指置きにする（叩いても反応しない） */
@@ -154,8 +157,9 @@ export class PlayMode {
     const lastTime = Math.max(from, ...notes.map((n) => n.endTime ?? n.time));
     const endAt = Math.max(lastTime + 2, Math.min(this.audio.musicDuration, lastTime + 4));
 
+    this.autoEvents = buildAutoEvents(notes, from);
     this.autoIdx = 0;
-    this.autoRoll = -1;
+    this.soundIdx = 0;
     cancelAnimationFrame(this.raf);
     this.perf = { frames: 0, work: 0, workMax: 0, gapMax: 0, slow: 0, last: 0 };
     const loop = () => {
@@ -169,7 +173,10 @@ export class PlayMode {
       }
       P.last = t0;
       const now = this.time();
-      if (this.settings.auto && !this.calibrating) this.autoPlay(game, now);
+      if (this.settings.auto && !this.calibrating) {
+        this.scheduleSounds(now);
+        this.autoPlay(game, now);
+      }
       game.update(now);
       this.renderer.draw(game, course, now, info);
       const w = performance.now() - t0;
@@ -188,36 +195,32 @@ export class PlayMode {
   /** 描画の重さの記録（結果画面の診断用） */
   perf = { frames: 0, work: 0, workMax: 0, gapMax: 0, slow: 0, last: 0 };
 
+  /** オートで叩く予定（時刻順）。音はこの時刻に予約して鳴らす */
+  private autoEvents: AutoEvent[] = [];
   private autoIdx = 0;
-  private autoRoll = -1;
+  private soundIdx = 0;
   private autoSide: 'L' | 'R' = 'L';
 
-  private autoHit(game: Game, kind: 'don' | 'ka', at: number) {
-    this.autoSide = this.autoSide === 'L' ? 'R' : 'L';
-    this.audio.playHit(kind);
-    this.renderer.pushHit(kind, this.autoSide);
-    game.hit(kind, at);
+  /** これから 0.3 秒以内に鳴る打音を、音符の時刻ちょうどに鳴るよう予約する（叩いた処理の遅れで音がずれない） */
+  private scheduleSounds(now: number) {
+    const ev = this.autoEvents;
+    const on = this.settings.hitSound !== false;
+    while (this.soundIdx < ev.length && ev[this.soundIdx].t <= now + 0.3) {
+      const e = ev[this.soundIdx++];
+      if (!on || e.t < now - 0.05) continue;
+      this.audio.scheduleHit(e.kind, e.t);
+      if (e.pop) this.audio.scheduleHit('balloon', e.t);
+    }
   }
 
+  /** 予定の時刻になった打撃を判定に渡す（音は scheduleSounds で予約済み） */
   private autoPlay(game: Game, now: number) {
-    const st = game.states;
-    while (this.autoIdx < st.length && st[this.autoIdx].note.time <= now) {
-      const s = st[this.autoIdx++];
-      const t = s.note.type;
-      if (s.done) continue;
-      if (t === 'don' || t === 'bigDon') this.autoHit(game, 'don', s.note.time);
-      else if (t === 'ka' || t === 'bigKa') this.autoHit(game, 'ka', s.note.time);
-    }
-    // 連打・風船は 1 秒に 15 回
-    for (const s of st) {
-      const n = s.note;
-      if (n.time > now) break;
-      if (s.done || n.endTime === undefined || now > n.endTime) continue;
-      if (now - this.autoRoll >= 1 / 15) {
-        this.autoRoll = now;
-        this.autoHit(game, 'don', now);
-      }
-      break;
+    const ev = this.autoEvents;
+    while (this.autoIdx < ev.length && ev[this.autoIdx].t <= now) {
+      const e = ev[this.autoIdx++];
+      this.autoSide = this.autoSide === 'L' ? 'R' : 'L';
+      this.renderer.pushHit(e.kind, this.autoSide);
+      game.hit(e.kind, e.t);
     }
   }
 
