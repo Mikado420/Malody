@@ -73,7 +73,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 /* ツール: レーンの下の空き（Malody 基準 y 760〜880）に重ねて表示。--es = 画面の高さ / 924 */
 .tools {
   position: absolute;
-  left: calc(300px * var(--es, 0.45));
+  left: calc(205px * var(--es, 0.45));
   right: calc(20px * var(--es, 0.45));
   bottom: calc(44px * var(--es, 0.45));
   height: max(36px, calc(112px * var(--es, 0.45)));

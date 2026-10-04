@@ -19,7 +19,7 @@ export const REF_H = 924;
 const R = {
   colLine1: 72, // 密度推移の左端（拡大縮小の六角形のすぐ右）
   densW: 75, // 密度推移の幅（Malody と同じ）
-  laneX: 235,
+  laneX: 147, // レーンの左端（密度推移のすぐ右）
   laneTop: 352,
   laneBottom: 570,
   laneCY: 461,
@@ -29,15 +29,15 @@ const R = {
   judgeX: 410, // 判定枠（再生位置）
   judgeR: 72,
   judgeR2: 49,
-  zoomOut: { x: 24, y: 66, r: 36 },
-  zoomIn: { x: 24, y: 144, r: 36 },
-  timeX: 262,
-  waveX: 300,
+  zoomOut: { x: 24, y: 82, r: 36 },
+  zoomIn: { x: 24, y: 160, r: 36 },
+  timeX: 176,
+  waveX: 205,
   waveTop: 40, // 曲名の表示をなくした分、波形を上へ広げる
   waveBottom: 336,
   evTop: 576,
   evBottom: 616,
-  posLabel: { x: 300, y: 650 },
+  posLabel: { x: 205, y: 650 },
   beatPx: 400, // 初期の拡大率（1拍あたり）
 };
 
