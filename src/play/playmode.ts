@@ -1,7 +1,7 @@
 import type { AudioEngine } from '../audio/audio';
 import type { Course } from '../chart/types';
 import { Game } from '../engine/game';
-import { bindInput } from '../input';
+import { bindInput, touchStats } from '../input';
 import { Renderer } from '../render/renderer';
 import { BUILD_ID } from '../update';
 
@@ -34,6 +34,7 @@ export class PlayMode {
   ) {
     this.renderer = new Renderer(canvas);
     bindInput(
+      root,
       canvas,
       () => {
         const L = this.renderer.layout;
@@ -103,6 +104,8 @@ export class PlayMode {
     game.onJudge = (e) => this.renderer.pushJudge(e);
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
+    touchStats.starts = 0;
+    touchStats.recovered = 0;
     this.game = game;
 
     this.root.classList.remove('hidden');
@@ -230,6 +233,9 @@ export class PlayMode {
       '音の遅れ（推定）',
       `${c.latencyMs}ms（${c.mode === 'outputTimestamp' ? '再生位置から' : '端末の申告値'}、申告 ${c.outputLatencyMs}/${c.baseLatencyMs}ms）`,
     ]);
+    if (touchStats.starts + touchStats.recovered > 0) {
+      rows.push(['タッチ', `${touchStats.starts}（取りこぼしを補った ${touchStats.recovered}）`]);
+    }
     rows.push(['判定調整', `${this.settings.offset}ms`]);
     rows.push(['バージョン', BUILD_ID.slice(0, 7)]);
     this.result.querySelector('h2')!.textContent = '結果';

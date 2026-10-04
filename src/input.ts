@@ -18,11 +18,19 @@ export const DEFAULT_KEYS: Record<string, { kind: HitKind; side: 'L' | 'R' }> = 
   KeyK: { kind: 'ka', side: 'R' },
 };
 
+/** タッチ入力の集計（結果画面の診断用） */
+export const touchStats = { starts: 0, recovered: 0 };
+
 /**
  * キーボードとタッチ（ポインタ）入力。
  * タッチは太鼓の面の楕円の中か外かで ドン/カッ を判定する。
+ *
+ * iPhone の Safari では、片方の指がまだ画面に触れている間に別の指で叩くと、
+ * その指の touchstart が届かないことがある（2 本指のジェスチャーとして扱われる・他のイベントにまとめられる）。
+ * そこで、どのタッチイベントでも「まだ見ていない指」が含まれていたら、その指が叩いたものとして扱う。
  */
 export function bindInput(
+  root: HTMLElement,
   canvas: HTMLCanvasElement,
   getDrum: () => { x: number; y: number; rx: number; ry: number },
   onHit: HitHandler,
@@ -47,36 +55,62 @@ export function bindInput(
     onHit(nx * nx + ny * ny <= 1 ? 'don' : 'ka', side, at, { x: px, y: py });
   };
 
-  // タッチは touchstart で直接受ける。
-  // pointer イベントだと端末によってはダブルタップ・長押しの判定で連続タップが間引かれるため。
-  // 1回の touchstart に複数の指が入っていることもあるので changedTouches を全部処理する。
-  const onTouchStart = (e: TouchEvent) => {
+  /** いま画面に触れている（叩いたとして処理済みの）指 */
+  let seen = new Set<number>();
+
+  const onTouch = (e: TouchEvent) => {
+    // 終了ボタンなどのボタンはふつうに押せるようにする
+    if (e.target instanceof Element && e.target.closest('button')) return;
     e.preventDefault();
     const at = eventTime(e.timeStamp);
-    for (const t of Array.from(e.changedTouches)) hitAt(t.clientX, t.clientY, at);
+    const fresh: Touch[] = [];
+    if (e.type === 'touchstart') {
+      for (const t of Array.from(e.changedTouches)) fresh.push(t);
+      touchStats.starts += fresh.length;
+    } else if (e.type === 'touchmove') {
+      // touchstart が届かなかった指が、ほかの指の touchmove に混ざって現れることがある
+      for (const t of Array.from(e.touches)) if (!seen.has(t.identifier)) fresh.push(t);
+      touchStats.recovered += fresh.length;
+    } else {
+      // touchstart も touchmove も届かずに離れた指
+      for (const t of Array.from(e.changedTouches)) if (!seen.has(t.identifier)) fresh.push(t);
+      touchStats.recovered += fresh.length;
+    }
+    for (const t of fresh) hitAt(t.clientX, t.clientY, at);
+    // いま触れている指の一覧に合わせる（離れた指・取りこぼした touchend の指を忘れる）
+    seen = new Set(Array.from(e.touches).map((t) => t.identifier));
   };
-  const block = (e: Event) => e.preventDefault();
+
+  const block = (e: Event) => {
+    if (e.target instanceof Element && e.target.closest('button')) return;
+    e.preventDefault();
+  };
 
   const onPointer = (e: PointerEvent) => {
-    if (e.pointerType === 'touch') return; // タッチは touchstart 側で処理
+    if (e.pointerType === 'touch') return; // タッチは touch イベント側で処理
+    if (e.target instanceof Element && e.target.closest('button')) return;
     e.preventDefault();
     hitAt(e.clientX, e.clientY, eventTime(e.timeStamp));
   };
 
-  canvas.addEventListener('touchstart', onTouchStart, { passive: false });
-  canvas.addEventListener('touchmove', block, { passive: false });
-  canvas.addEventListener('touchend', block, { passive: false });
-  canvas.addEventListener('contextmenu', block);
-  canvas.addEventListener('dblclick', block);
+  const opts = { passive: false, capture: true } as const;
+  for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) {
+    root.addEventListener(type, onTouch, opts);
+  }
+  root.addEventListener('contextmenu', block);
+  root.addEventListener('dblclick', block);
+  // iPhone の Safari: 2 本指のピンチ・回転ジェスチャーを止める（指を素早く交互に置いたときに横取りされないように）
+  for (const type of ['gesturestart', 'gesturechange', 'gestureend']) root.addEventListener(type, block, opts);
   window.addEventListener('keydown', onKey);
-  canvas.addEventListener('pointerdown', onPointer);
+  root.addEventListener('pointerdown', onPointer);
   return () => {
     window.removeEventListener('keydown', onKey);
-    canvas.removeEventListener('pointerdown', onPointer);
-    canvas.removeEventListener('touchstart', onTouchStart);
-    canvas.removeEventListener('touchmove', block);
-    canvas.removeEventListener('touchend', block);
-    canvas.removeEventListener('contextmenu', block);
-    canvas.removeEventListener('dblclick', block);
+    root.removeEventListener('pointerdown', onPointer);
+    for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) {
+      root.removeEventListener(type, onTouch, opts);
+    }
+    root.removeEventListener('contextmenu', block);
+    root.removeEventListener('dblclick', block);
+    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) root.removeEventListener(type, block, opts);
   };
 }
