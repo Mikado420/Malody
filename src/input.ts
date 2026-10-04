@@ -62,7 +62,9 @@ export function bindInput(
   usePointer: () => boolean = () => false,
   /** 届いたタッチ・ポインターイベントをそのまま記録する（不具合調査用） */
   onRaw: (line: string, at: number) => void = () => {},
-): () => void {
+  /** true のときはタッチを passive で受け取る（preventDefault しない） */
+  usePassive: () => boolean = () => false,
+): { refresh: () => void; dispose: () => void } {
   const pos = (x: number, y: number) => {
     const p = localPoint({ clientX: x, clientY: y }, canvas);
     const r = canvas.getBoundingClientRect();
@@ -119,7 +121,7 @@ export function bindInput(
   const onTouch = (e: TouchEvent) => {
     // 終了ボタンなどのボタンはふつうに押せるようにする
     if (e.target instanceof Element && e.target.closest('button')) return;
-    e.preventDefault();
+    if (e.cancelable && !attached) e.preventDefault();
     if (e.type === 'touchcancel') touchStats.cancels++;
     const raw = (list: Touch[]) =>
       onRaw(
@@ -176,27 +178,10 @@ export function bindInput(
       onRaw(`p-down ${e.pointerId % 1000}@${pos(e.clientX, e.clientY)} lag=${lag(e.timeStamp)}`, eventTime(e.timeStamp));
       if (!usePointer()) return; // タッチは touch イベント側で処理
     }
-    e.preventDefault();
+    if (!attached) e.preventDefault();
     hitAt(e.clientX, e.clientY, eventTime(e.timeStamp));
   };
 
-  const opts = { passive: false, capture: true } as const;
-  for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) {
-    root.addEventListener(type, onTouch, opts);
-  }
-  root.addEventListener('contextmenu', block);
-  root.addEventListener('dblclick', block);
-  // iPhone の Safari: 2 本指のピンチ・回転ジェスチャーを止める（指を素早く交互に置いたときに横取りされないように）
-  for (const type of ['gesturestart', 'gesturechange', 'gestureend']) root.addEventListener(type, block, opts);
-  window.addEventListener('keydown', onKey);
-  root.addEventListener('pointerdown', onPointer, opts);
-  const onPointerCancel = (e: PointerEvent) => {
-    if (e.pointerType !== 'touch') return;
-    if (e.type === 'pointercancel') touchStats.pointerCancels++;
-    onRaw(`${e.type.replace('pointer', 'p-')} ${e.pointerId % 1000}`, eventTime(e.timeStamp));
-  };
-  root.addEventListener('pointercancel', onPointerCancel, opts);
-  root.addEventListener('pointerup', onPointerCancel, opts);
   const pjump = new Map<number, { x: number; y: number }>();
   const onPointerDownPos = (e: PointerEvent) => {
     if (e.pointerType === 'touch') pjump.set(e.pointerId, { x: e.clientX / unit(), y: e.clientY / unit() });
@@ -213,20 +198,58 @@ export function bindInput(
       hitAt(e.clientX, e.clientY, eventTime(e.timeStamp));
     }
   };
-  root.addEventListener('pointerdown', onPointerDownPos, opts);
-  root.addEventListener('pointermove', onPointerMove, opts);
-  return () => {
-    root.removeEventListener('pointercancel', onPointerCancel, opts);
-    root.removeEventListener('pointerup', onPointerCancel, opts);
-    root.removeEventListener('pointerdown', onPointerDownPos, opts);
-    root.removeEventListener('pointermove', onPointerMove, opts);
-    window.removeEventListener('keydown', onKey);
-    root.removeEventListener('pointerdown', onPointer, opts);
-    for (const type of ['touchstart', 'touchmove', 'touchend', 'touchcancel'] as const) {
-      root.removeEventListener(type, onTouch, opts);
-    }
-    root.removeEventListener('contextmenu', block);
-    root.removeEventListener('dblclick', block);
-    for (const type of ['gesturestart', 'gesturechange', 'gestureend']) root.removeEventListener(type, block, opts);
+  const onPointerCancel = (e: PointerEvent) => {
+    if (e.pointerType !== 'touch') return;
+    if (e.type === 'pointercancel') touchStats.pointerCancels++;
+    onRaw(`${e.type.replace('pointer', 'p-')} ${e.pointerId % 1000}`, eventTime(e.timeStamp));
+  };
+
+  /**
+   * 登録するイベント。passive のときは preventDefault しない（できない）登録にする。
+   * iPhone の Safari は、preventDefault できる登録があると指の動きを 1 つずつページの処理を待ってから進めるので、
+   * 指が離れた直後の次の指を取りこぼすことがある。passive にすると待たずに進む（拡大などは CSS の touch-action で止める）。
+   */
+  const list: [string, EventListener][] = [
+    ['touchstart', onTouch as EventListener],
+    ['touchmove', onTouch as EventListener],
+    ['touchend', onTouch as EventListener],
+    ['touchcancel', onTouch as EventListener],
+    ['pointerdown', onPointer as EventListener],
+    ['pointerdown', onPointerDownPos as EventListener],
+    ['pointermove', onPointerMove as EventListener],
+    ['pointerup', onPointerCancel as EventListener],
+    ['pointercancel', onPointerCancel as EventListener],
+  ];
+  const gestures = ['gesturestart', 'gesturechange', 'gestureend'];
+  let attached: boolean | null = null;
+  const detach = () => {
+    if (attached === null) return;
+    const o = { capture: true };
+    for (const [t, f] of list) root.removeEventListener(t, f, o);
+    for (const t of gestures) root.removeEventListener(t, block, o);
+    attached = null;
+  };
+  const attach = (passive: boolean) => {
+    if (attached === passive) return;
+    detach();
+    const o = { passive, capture: true };
+    for (const [t, f] of list) root.addEventListener(t, f, o);
+    // iPhone の Safari: 2 本指のピンチ・回転ジェスチャーを止める（passive のときは CSS に任せる）
+    if (!passive) for (const t of gestures) root.addEventListener(t, block, o);
+    attached = passive;
+  };
+  attach(usePassive());
+  root.addEventListener('contextmenu', block);
+  root.addEventListener('dblclick', block);
+  window.addEventListener('keydown', onKey);
+  return {
+    /** 設定が変わったときに登録し直す */
+    refresh: () => attach(usePassive()),
+    dispose: () => {
+      detach();
+      window.removeEventListener('keydown', onKey);
+      root.removeEventListener('contextmenu', block);
+      root.removeEventListener('dblclick', block);
+    },
   };
 }

@@ -37,7 +37,8 @@ const settings = {
   pointerInput: false,
   // iPhone / iPad の Safari は両手交互の速い連打でタッチを落とすので、既定で指置きを使う
   restZone: /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
-  /** タッチ用の太鼓の面（ドン）の大きさ */
+  passiveTouch: false,
+  /** タッチ用の中央のドンの帯の幅 */
   donWidth: 0.6,
 };
 try {
@@ -403,6 +404,8 @@ function renderSheet() {
       <p class="note">スマホで叩くときの、中央のドンの帯の幅です（左右の残りがカッ）。ドンのつもりがカッになるときは大きく、カッのつもりがドンになるときは小さくしてください。</p>
       <label class="field"><span>画面上部を指置きにする</span><input type="checkbox" data-set="restZone" ${settings.restZone ? 'checked' : ''}></label>
       <p class="note">iPhone では、両手交互で速く叩いて「指が 1 本も触れていない瞬間」に次の指が触れると、そのタッチが届かないことがあります。オンにするとレーンより上が「指置き」になり（触れても反応しません）、そこに指を 1 本ずっと置いたまま叩くと起きにくくなります。</p>
+      <label class="field"><span>タッチを待たずに受け取る（試験中）</span><input type="checkbox" data-set="passiveTouch" ${settings.passiveTouch ? 'checked' : ''}></label>
+      <p class="note">指置きなしでも取りこぼさなくなるかを試すための設定です。オンにすると、iPhone が指ごとにページの処理を待たずに次のタッチへ進むようになります。</p>
       <label class="field"><span>タッチをポインター方式で受け取る</span><input type="checkbox" data-set="pointerInput" ${settings.pointerInput ? 'checked' : ''}></label>
       <p class="note">両手で交互に叩くと反応しないことがあるときに切り替えて試してください（iPhone の受け取り方が変わります）。</p>
       <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>

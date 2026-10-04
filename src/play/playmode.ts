@@ -16,6 +16,8 @@ export interface PlaySettings {
   donWidth?: number;
   /** 叩くたびにずれ（ms）を表示する */
   showTiming?: boolean;
+  /** タッチを passive で受け取る（iPhone が指を待たずに次へ進むように） */
+  passiveTouch?: boolean;
   /** 画面上部を指置きにする（叩いても反応しない） */
   restZone?: boolean;
   /** 指のタッチをポインターイベントで受け取る（iPhone の取りこぼし対策の切り替え） */
@@ -27,6 +29,7 @@ export interface PlaySettings {
  */
 export class PlayMode {
   private readonly renderer: Renderer;
+  private readonly input: { refresh: () => void; dispose: () => void };
   private game: Game | null = null;
   private raf = 0;
   private active = false;
@@ -40,7 +43,7 @@ export class PlayMode {
     private readonly settings: PlaySettings,
   ) {
     this.renderer = new Renderer(canvas);
-    bindInput(
+    this.input = bindInput(
       root,
       canvas,
       () => {
@@ -70,6 +73,7 @@ export class PlayMode {
       (line, at) => {
         if (this.active && this.raw.length < 5000) this.raw.push({ t: this.time(at), s: line });
       },
+      () => !!this.settings.passiveTouch,
     );
     window.addEventListener('keydown', (e) => {
       if (this.active && e.code === 'Escape') this.finish();
@@ -117,6 +121,7 @@ export class PlayMode {
     this.renderer.reset();
     this.renderer.donWidth = this.settings.donWidth ?? 0.6;
     this.renderer.restZone = !!this.settings.restZone;
+    this.input.refresh();
     resetTouchStats();
     this.raw = [];
     this.game = game;
@@ -342,7 +347,7 @@ export class PlayMode {
     const f = (t: number) => t.toFixed(3);
     const S = touchStats;
     const lines = [
-      `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${this.settings.pointerInput ? 'pointer' : 'touch'} ua ${navigator.userAgent}`,
+      `version ${BUILD_ID.slice(0, 7)} offset ${this.settings.offset}ms input ${this.settings.pointerInput ? 'pointer' : 'touch'}${this.settings.passiveTouch ? '+passive' : ''}${this.settings.restZone ? '+rest' : ''} ua ${navigator.userAgent}`,
       `touchstart ${S.starts} pointerdown ${S.pointers} recovered ${S.recovered} jumps ${S.jumps} rests ${S.rests} cancel ${S.cancels}/${S.pointerCancels} maxFingers ${S.maxFingers}`,
     ];
     const items: { t: number; s: string }[] = this.raw.map((r) => ({ t: r.t, s: `    ${r.s}` }));
