@@ -459,7 +459,7 @@ export class Renderer {
     for (const f of this.flashes) {
       const a = 1 - (wall - f.t) / 170;
       if (a <= 0) continue;
-      ctx.fillStyle = f.kind === 'don' ? `rgba(170,90,40,${0.32 * a})` : `rgba(40,140,170,${0.32 * a})`;
+      ctx.fillStyle = f.kind === 'don' ? `rgba(170,90,40,${0.2 * a})` : `rgba(40,140,170,${0.2 * a})`;
       ctx.fillRect(LANE_X, LANE_TOP, right - LANE_X, LANE_BOTTOM - LANE_TOP);
     }
 
@@ -606,9 +606,9 @@ export class Renderer {
       const ang = (Math.PI * 2 * i) / n;
       const long = i % 2 === 0;
       const r1 = 54;
-      const r2 = big ? (long ? 215 : 150) : long ? 108 : 92;
+      const r2 = big ? (long ? 150 : 118) : long ? 100 : 86;
       g.strokeStyle = long ? ray1 : ray2;
-      g.lineWidth = big ? (long ? 6 : 5) : long ? 5 : 4;
+      g.lineWidth = long ? 4 : 3;
       g.beginPath();
       g.moveTo(R + Math.cos(ang) * r1, R + Math.sin(ang) * r1);
       g.lineTo(R + Math.cos(ang) * r2, R + Math.sin(ang) * r2);
@@ -618,9 +618,9 @@ export class Renderer {
     g.fillStyle = good ? '#ff8a12' : '#e8f2ff';
     for (let i = 0; i < 32; i++) {
       const ang = (Math.PI * 2 * (i + 0.5)) / 32;
-      const rr = big ? 162 : 118;
+      const rr = big ? 132 : 108;
       g.beginPath();
-      g.arc(R + Math.cos(ang) * rr, R + Math.sin(ang) * rr, big ? 6 : 5, 0, Math.PI * 2);
+      g.arc(R + Math.cos(ang) * rr, R + Math.sin(ang) * rr, 4, 0, Math.PI * 2);
       g.fill();
     }
     this.burstSprites[key] = c;
@@ -634,7 +634,7 @@ export class Renderer {
     if (!b) return;
     const ms = wall - b.t;
     if (ms < 0 || ms > 480) return;
-    const a = ms < 120 ? 1 : ms < 260 ? 1 - ((ms - 120) / 140) * 0.55 : 0.45 * (1 - (ms - 260) / 220);
+    const a = 0.85 * (ms < 100 ? 1 : ms < 240 ? 1 - ((ms - 100) / 140) * 0.6 : 0.4 * (1 - (ms - 240) / 240));
     const r = NR - 4;
     const g = ctx.createRadialGradient(JX, JY, 4, JX, JY, r);
     if (b.judge === 'good') {
@@ -655,10 +655,10 @@ export class Renderer {
     const ctx = this.ctx;
     for (const b of this.bursts) {
       const ms = wall - b.t;
-      if (ms < 0 || ms > 260) continue;
-      const k = 0.9 + 0.2 * ease(Math.min(1, ms / 90));
+      if (ms < 0 || ms > 200) continue;
+      const k = 0.92 + 0.12 * ease(Math.min(1, ms / 80));
       const half = (b.big ? 230 : 130) * k;
-      ctx.globalAlpha = ms < 140 ? 1 : 1 - (ms - 140) / 120;
+      ctx.globalAlpha = 0.8 * (ms < 90 ? 1 : 1 - (ms - 90) / 110);
       ctx.drawImage(this.burstSprite(b.judge, b.big), JX - half, JY - half, half * 2, half * 2);
     }
     ctx.globalAlpha = 1;
@@ -1110,8 +1110,8 @@ export class Renderer {
     this.sparkles = this.sparkles.filter((p) => wall - p.t < 520);
     for (const p of this.sparkles) {
       const age = wall - p.t;
-      ctx.globalAlpha = 1 - age / 520;
-      star(ctx, p.x + p.vx * age, p.y + p.vy * age, 9 * (1 - age / 700));
+      ctx.globalAlpha = 0.8 * (1 - age / 520);
+      star(ctx, p.x + p.vx * age, p.y + p.vy * age, 6 * (1 - age / 700));
     }
     ctx.restore();
   }
@@ -1120,19 +1120,15 @@ export class Renderer {
   private drawFireball(wall: number) {
     const ctx = this.ctx;
     ctx.save();
-    // 炎の尾（3 枚を少しずつずらしてゆらす）
-    for (let k = 0; k < 3; k++) {
-      const f = Math.sin(wall / 70 + k * 2.1) * 10;
-      const f2 = Math.cos(wall / 95 + k * 1.3) * 12;
-      const len = 1 - k * 0.22;
-      ctx.beginPath();
-      ctx.moveTo(JX + 20, JY - 92);
-      ctx.bezierCurveTo(JX + 110, JY - 120 + f, JX + 150 * len, JY - 70 + f2, JX + 200 * len, JY - 125 + f);
-      ctx.bezierCurveTo(JX + 170 * len, JY - 40 + f2, JX + 120, JY - 10, JX + 92, JY + 10);
-      ctx.closePath();
-      ctx.fillStyle = k === 0 ? 'rgba(232,96,40,0.85)' : k === 1 ? 'rgba(245,140,60,0.8)' : 'rgba(255,200,110,0.75)';
-      ctx.fill();
-    }
+    // 炎の尾（1 枚。先端だけ少しゆらめく）
+    const f = Math.sin(wall / 110) * 5;
+    ctx.beginPath();
+    ctx.moveTo(JX + 30, JY - 88);
+    ctx.bezierCurveTo(JX + 100, JY - 128, JX + 150, JY - 80, JX + 192, JY - 118 + f);
+    ctx.bezierCurveTo(JX + 168, JY - 52, JX + 128, JY - 18, JX + 90, JY + 12);
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(238,110,48,0.9)';
+    ctx.fill();
     // 外の光
     const glow = ctx.createRadialGradient(JX, JY, 80, JX, JY, 118);
     glow.addColorStop(0, 'rgba(240,116,54,0.9)');
@@ -1163,80 +1159,79 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** ゴーゴータイムが始まったら、下の背景に花火を何発か上げる */
+  /**
+   * ゴーゴータイムが始まったら、下の背景の床から噴き出す花火（参考動画: 白く光る火花の柱が横に並んで
+   * 一斉に噴き上がり、上で火花が散って消える）
+   */
   private startFireworks(wall: number) {
     const V = this.vis;
-    const hues = [0, 35, 52, 195, 290, 130, 330];
-    for (let i = 0; i < 7; i++) {
-      this.fireworks.push({
-        x: V.x0 + 150 + Math.random() * (V.x1 - V.x0 - 300),
-        y: TEXT_BOTTOM + 130 + Math.random() * 230,
-        t: wall + i * 230 + Math.random() * 120,
-        hue: hues[i % hues.length],
-        n: 36 + Math.floor(Math.random() * 14),
-      });
+    const step = 230;
+    for (let x = V.x0 + step / 2; x < V.x1; x += step) {
+      this.fireworks.push({ x: x + (Math.random() - 0.5) * 40, y: 0, t: wall + Math.random() * 60, hue: 45, n: 150 });
     }
   }
 
   private drawFireworks(wall: number) {
     if (!this.fireworks.length) return;
     const ctx = this.ctx;
-    const RISE = 320;
-    const LIFE = 1300;
+    const EMIT = 650; // 噴き出している時間
+    const LIFE = 700; // 1 粒の寿命
     const bottom = REF_H - 70;
+    const top = TEXT_BOTTOM;
+    const hgt = bottom - top;
     ctx.save();
     ctx.beginPath();
-    ctx.rect(this.vis.x0, TEXT_BOTTOM, this.vis.x1 - this.vis.x0, bottom - TEXT_BOTTOM);
+    ctx.rect(this.vis.x0, top, this.vis.x1 - this.vis.x0, hgt);
     ctx.clip();
     ctx.globalCompositeOperation = 'lighter';
-    this.fireworks = this.fireworks.filter((f) => wall - f.t < RISE + LIFE);
+    this.fireworks = this.fireworks.filter((f) => wall - f.t < EMIT + LIFE);
     for (const f of this.fireworks) {
       const age = wall - f.t;
       if (age < 0) continue;
-      if (age < RISE) {
-        // 打ち上げ
-        const p = ease(age / RISE);
-        const y = bottom - (bottom - f.y) * p;
-        ctx.fillStyle = `hsl(${f.hue},100%,80%)`;
-        ctx.beginPath();
-        ctx.arc(f.x, y, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = `hsla(${f.hue},100%,70%,0.4)`;
-        ctx.fillRect(f.x - 2, y, 4, 60);
-        continue;
-      }
-      const p = (age - RISE) / LIFE;
-      const rad = 210 * ease(Math.min(1, p * 1.6));
-      const drop = 70 * p * p;
-      ctx.globalAlpha = 1 - p;
-      for (let i = 0; i < f.n; i++) {
-        const a = (Math.PI * 2 * i) / f.n;
-        const px = f.x + Math.cos(a) * rad;
-        const py = f.y + Math.sin(a) * rad + drop;
-        const tx = f.x + Math.cos(a) * rad * 0.7;
-        const ty = f.y + Math.sin(a) * rad * 0.7 + drop * 0.7;
-        ctx.strokeStyle = `hsla(${f.hue},100%,65%,0.6)`;
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(tx, ty);
-        ctx.lineTo(px, py);
-        ctx.stroke();
-        ctx.fillStyle = i % 3 ? `hsl(${f.hue},100%,75%)` : '#fff8e0';
-        ctx.beginPath();
-        ctx.arc(px, py, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      // 中心の光
-      if (p < 0.25) {
-        const g = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, 90);
-        g.addColorStop(0, `hsla(${f.hue},100%,90%,${0.8 * (1 - p * 4)})`);
-        g.addColorStop(1, `hsla(${f.hue},100%,60%,0)`);
+      // 火花の柱の光
+      if (age < EMIT + 150) {
+        const a = age < 80 ? age / 80 : age < EMIT ? 1 : 1 - (age - EMIT) / 150;
+        const h = hgt * 0.95 * Math.min(1, age / 140);
+        const g = ctx.createLinearGradient(0, bottom, 0, bottom - h);
+        g.addColorStop(0, `rgba(255,252,240,${a})`);
+        g.addColorStop(0.65, `rgba(255,228,160,${0.75 * a})`);
+        g.addColorStop(1, 'rgba(255,190,90,0)');
         ctx.fillStyle = g;
-        ctx.fillRect(f.x - 90, f.y - 90, 180, 180);
+        ctx.beginPath();
+        ctx.moveTo(f.x - 14, bottom);
+        ctx.lineTo(f.x - 48, bottom - h);
+        ctx.lineTo(f.x + 48, bottom - h);
+        ctx.lineTo(f.x + 14, bottom);
+        ctx.closePath();
+        ctx.fill();
       }
+      // 火花の粒（決まった乱数で、噴き出した時刻ごとに 1 粒）
+      for (let i = 0; i < f.n; i++) {
+        const born = (i / f.n) * EMIT;
+        const pa = (age - born) / 1000;
+        if (pa < 0 || pa * 1000 > LIFE) continue;
+        const r1 = hash(f.x + i * 7.13);
+        const r2 = hash(f.x * 1.7 + i * 3.91);
+        const vy = -(hgt * 1.5 + r1 * hgt * 0.9);
+        const vx = (r2 - 0.5) * 260;
+        const g = hgt * 2.4;
+        const px = f.x + vx * pa;
+        const py = bottom + vy * pa + 0.5 * g * pa * pa;
+        const life = pa * 1000 / LIFE;
+        ctx.globalAlpha = 1 - life;
+        ctx.fillStyle = i % 4 === 0 ? '#ffd27a' : '#fffaf0';
+        if (i % 3 === 0) star(ctx, px, py, 9);
+        else {
+          ctx.beginPath();
+          ctx.arc(px, py, 4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
   }
+
 
 
   private drawJudgeText(wall: number) {
@@ -1284,8 +1279,8 @@ export class Renderer {
       const x = u * u * u * P0[0] + 3 * u * u * t * P1[0] + 3 * u * t * t * P2[0] + t * t * t * P3[0];
       const y = u * u * u * P0[1] + 3 * u * u * t * P1[1] + 3 * u * t * t * P2[1] + t * t * t * P3[1];
       const r = (isBig(f.note.type) ? NR * BIG_SCALE : NR) * (1 - 0.25 * t);
-      if (isBig(f.note.type) && this.sparkles.length < 160) {
-        for (let k = 0; k < 2; k++) {
+      if (isBig(f.note.type) && this.sparkles.length < 50 && Math.random() < 0.6) {
+        for (let k = 0; k < 1; k++) {
           const a = Math.random() * Math.PI * 2;
           const sp = 0.03 + Math.random() * 0.08;
           this.sparkles.push({ x: x + Math.cos(a) * r * 0.6, y: y + Math.sin(a) * r * 0.6, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, t: wall });
@@ -1466,6 +1461,12 @@ export class Renderer {
 }
 
 interface Rect { x0: number; y0: number; x1: number; y1: number }
+
+/** 0〜1 の決まった乱数 */
+function hash(n: number) {
+  const x = Math.sin(n * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
 
 /** 4 本の角のきらきら */
 function star(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
