@@ -258,6 +258,19 @@ describe('Game 判定', () => {
     expect([g.stats.good, g.stats.ok, g.stats.bad]).toEqual([2, 0, 1]); // 取り違えたドン 1 つだけ見逃し
   });
 
+  it('取り違えた打撃のタイミングが 30ms ずれていても横取りしない', () => {
+    const g = new Game(mk([['ka', 0.925], ['don', 1], ['ka', 1.075], ['don', 1.15]]));
+    g.hit('ka', 0.925);
+    expect(g.hit('ka', 1.03)).toMatchObject({ type: 'none', wrongColor: true }); // ドンのつもりが 30ms 遅れてカッに
+    expect(g.hit('ka', 1.075)).toMatchObject({ type: 'judged', judge: 'good' });
+  });
+
+  it('少し早めに叩いたカッは、近くにドンがあっても普通に判定される', () => {
+    const g = new Game(mk([['don', 1], ['ka', 1.075]]));
+    g.hit('don', 1.0);
+    expect(g.hit('ka', 1.05)).toMatchObject({ type: 'judged', judge: 'good' }); // 25ms 早い
+  });
+
   it('ドンとカッが近くても、正しい色で叩けば取り違え扱いにならない', () => {
     // 32 分（37ms 間隔）のドン・カッ
     const g = new Game(mk([['don', 1], ['ka', 1.037]]));

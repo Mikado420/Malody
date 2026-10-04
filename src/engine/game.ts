@@ -206,11 +206,11 @@ export class Game {
     // 3) 判定幅の中で、叩いた色と同じ色のノーツのうち、叩いた時刻にいちばん近いものを判定する
     //    - 色違いのノーツは対象にしない（色違いで叩いても不可にはせず、ノーツは残る。TNDE/TJAPlayer3 と同じ）
     //    - いちばん古いノーツにすると、1つ見逃しただけで後のノーツが全部「遅い」扱いになってしまう
-    // 叩いた時刻のすぐ近く（良の幅 25ms 以内）に別の色の音符があり、同じ色の音符はそれより 30ms 以上離れているときは、
+    // 叩いた時刻の近く（50ms 以内）に判定前の別の色の音符があり、同じ色の音符よりそちらのほうが近いときは、
     // 面と縁の境目を叩いて色を取り違えた打撃とみなし、離れた同じ色の音符を横取りして判定しない
     // （横取りすると、その音符を本当に叩いたときに「近くに音符なし」になり、狙った音符も見逃しになる）
     const other = this.nearestOther(kind, now);
-    if (other && other.ad <= WINDOW.good + EPS && (!near || near.ad > other.ad + 0.03)) {
+    if (other && other.ad <= 0.05 + EPS && (!near || other.ad < near.ad)) {
       return { type: 'none', nearest: near ? now - near.st.note.time : null, wrongColor: true };
     }
 

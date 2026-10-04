@@ -11,6 +11,8 @@ export interface PlaySettings {
   offset: number;
   /** オート（譜面確認用に自動で叩く） */
   auto?: boolean;
+  /** タッチ用の太鼓の面（ドン）の大きさ */
+  faceScale?: number;
   /** 叩くたびにずれ（ms）を表示する */
   showTiming?: boolean;
 }
@@ -104,6 +106,7 @@ export class PlayMode {
     game.onJudge = (e) => this.renderer.pushJudge(e);
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
+    this.renderer.faceScale = this.settings.faceScale ?? 1.2;
     touchStats.starts = 0;
     touchStats.recovered = 0;
     this.game = game;
@@ -264,6 +267,10 @@ export class PlayMode {
           else none++;
         }
         const parts = [];
+        const nearEdge = rings.filter((r) => r > 1 && r < 1.15).length;
+        if (wrong && nearEdge >= Math.max(2, wrong / 3)) {
+          this.edgeHint = true;
+        }
         if (wrong) {
           const avg = rings.length ? `、面の境目からの位置 平均 ${(rings.reduce((a, b) => a + b, 0) / rings.length).toFixed(2)}` : '';
           parts.push(`色違いで叩いた ${wrong}${avg}`);
@@ -292,6 +299,12 @@ export class PlayMode {
     rows.push(['判定調整', `${this.settings.offset}ms`]);
     rows.push(['バージョン', BUILD_ID.slice(0, 7)]);
     this.lastLog = this.logText(g);
+    const hint = this.result.querySelector<HTMLElement>('.edgehint');
+    if (hint) {
+      hint.classList.toggle('hidden', !this.edgeHint);
+      hint.querySelector('button')!.textContent = `面（ドン）を広げる（今 ${Math.round((this.settings.faceScale ?? 1.2) * 100)}% → ${Math.round(Math.min(1.6, (this.settings.faceScale ?? 1.2) + 0.1) * 100)}%）`;
+    }
+    this.edgeHint = false;
     this.result.querySelector('h2')!.textContent = '結果';
     this.result.querySelector('dl')!.innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
     this.result.classList.remove('hidden');
@@ -299,6 +312,9 @@ export class PlayMode {
 
   /** 結果画面で提案する判定調整の値（ms） */
   suggested = 0;
+
+  /** 色違いの見逃しが面の境目の外側に集中していた（面を広げるよう提案する） */
+  edgeHint = false;
 
   /** 直前のプレイの記録（「ログをコピー」で使う） */
   lastLog = '';

@@ -57,6 +57,8 @@ export class Renderer {
   private readonly ctx: CanvasRenderingContext2D;
   layout!: Layout;
   speed = 1;
+  /** タッチ用の太鼓の面（ドン）の大きさの倍率 */
+  faceScale = 1.2;
   /** タッチ操作用の太鼓を画面下に描くか */
   touch = matchMedia('(pointer: coarse)').matches;
 
@@ -115,13 +117,17 @@ export class Renderer {
       const laneBottom = this.sy(TEXT_BOTTOM);
       const cy = h + (h - laneBottom) * 0.12;
       const rimRy = cy - laneBottom - 8 * (h / 400);
+      // 面（ドン）の大きさ。1.0 で以前の大きさ、既定 1.2 で画面の左下・右下の角まで面に入る
+      const k = this.faceScale;
+      const faceRx = w * 0.44 * k;
+      const faceRy = Math.min(rimRy * 0.82 * k, rimRy * 0.96);
       this.pad = {
         x: w / 2,
         y: cy,
-        rimRx: w * 0.5,
+        faceRx,
+        faceRy,
+        rimRx: Math.max(w * 0.5, faceRx * 1.06),
         rimRy,
-        faceRx: w * 0.44,
-        faceRy: rimRy * 0.82,
       };
     }
 
