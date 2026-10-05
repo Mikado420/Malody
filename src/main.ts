@@ -892,7 +892,7 @@ async function fileAction(act: string) {
     settings.zoomSet = false;
     saveSettings();
     view.setZoom(view.defaultZoom);
-    toast('拡大率を初期値（Malody と同じ間隔）に戻しました');
+    toast('拡大率を初期値（プレイ画面と同じ間隔）に戻しました');
   } else if (act === 'delCourse') {
     if (confirm(`${ed.course.name} を削除しますか？`)) ed.removeCourse(ed.courseIndex);
   }
