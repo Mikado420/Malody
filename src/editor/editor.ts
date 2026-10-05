@@ -4,8 +4,9 @@ import {
 } from '../chart/model';
 import type { NoteType } from '../chart/types';
 import type { AudioFile } from '../io/load';
+import { applyGrad, gradMatches, type Grad } from './grad';
 
-export type Tool = NoteType | 'erase' | 'gogo';
+export type Tool = NoteType | 'erase' | 'gogo' | 'grad';
 
 /** 1拍あたりの分割数（Malody の 1/n 表記と同じ） */
 export const DIVISORS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
@@ -14,6 +15,10 @@ export interface TapResult {
   message?: string;
   /** UI 側で打数を聞く風船 */
   editBalloon?: ENote;
+  /** UI 側で設定を聞くグラデ（新しく作る範囲） */
+  newGrad?: { start: number; end: number };
+  /** UI 側で設定を変えるグラデ */
+  editGrad?: Grad;
 }
 
 /**
@@ -92,7 +97,17 @@ export class Editor {
     if (this.undoStack.length > 300) this.undoStack.shift();
     this.redoStack = [];
     fn();
+    this.applyGrads();
     this.emit(true);
+  }
+
+  /** グラデの範囲の #SCROLL を置き直す（範囲の中の音符が増えたり減ったりしても、値が合うように） */
+  private applyGrads() {
+    for (const c of this.chart.courses) {
+      if (!c.grads?.length) continue;
+      sortCourse(c);
+      for (const g of c.grads) applyGrad(c, g);
+    }
   }
 
   /**
@@ -102,6 +117,14 @@ export class Editor {
   replaceChart(chart: EChart, pushUndo = true) {
     const apply = () => {
       const name = this.chart.courses[this.courseIndex]?.name;
+      // グラデは .tja に書かないので、前の譜面から引き継ぐ。#SCROLL がグラデのとおりに残っているものだけ
+      for (const c of chart.courses) {
+        const old = this.chart.courses.find((o) => o.name === c.name);
+        if (!old?.grads?.length) continue;
+        sortCourse(c);
+        const keep = old.grads.filter((g) => gradMatches(c, g, !old.grads!.some((o) => o !== g && o.start === g.end)));
+        if (keep.length) c.grads = keep.map((g) => ({ ...g }));
+      }
       this.chart = chart;
       const i = chart.courses.findIndex((c) => c.name === name);
       this.courseIndex = i >= 0 ? i : Math.max(0, Math.min(this.courseIndex, chart.courses.length - 1));
@@ -188,6 +211,7 @@ export class Editor {
     const covering = this.longCovering(tick);
 
     if (tool === 'gogo') return this.tapGogo(tick);
+    if (tool === 'grad') return this.tapGrad(tick);
 
     // 置いてあるノーツ（連打・風船はその範囲のどこでも）をタップしたら、選んでいる音符に関係なく消す。
     // ただし風船を選んでいて風船の始点をタップしたときは、打数を変える
@@ -282,6 +306,48 @@ export class Editor {
       this.course.events.push({ tick: start, kind: 'gogo', on: true }, { tick: end, kind: 'gogo', on: false });
     });
     return {};
+  }
+
+  /** その位置を含むグラデ */
+  gradAt(tick: number): Grad | undefined {
+    return this.course.grads?.find((g) => tick >= g.start && tick <= g.end);
+  }
+
+  /** グラデ: 始点と終点をタップして範囲を決める（設定は UI 側で聞く）。グラデの中をタップするとその設定を開く */
+  private tapGrad(tick: number): TapResult {
+    if (this.pendingLong === null) {
+      const g = this.gradAt(tick);
+      if (g) return { editGrad: g };
+      this.pendingLong = tick;
+      this.emit();
+      return { message: 'グラデの終点をタップしてください（始点をもう一度タップで取り消し）' };
+    }
+    const p = this.pendingLong;
+    this.pendingLong = null;
+    this.emit();
+    if (tick === p) return { message: '取り消しました' };
+    return { newGrad: { start: Math.min(p, tick), end: Math.max(p, tick) } };
+  }
+
+  /** グラデを追加・変更する（old を渡すと置き換え）。重なる別のグラデは外す（その #SCROLL は新しい値で上書き） */
+  setGrad(g: Grad, old?: Grad) {
+    this.mutate(() => {
+      const c = this.course;
+      const list = (c.grads ?? []).filter((x) => x !== old && (x.end <= g.start || x.start >= g.end));
+      if (old) c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= old.start && e.tick <= old.end));
+      list.push(g);
+      list.sort((a, b) => a.start - b.start);
+      c.grads = list;
+    });
+  }
+
+  /** グラデを消す（置いていた #SCROLL も消す） */
+  removeGrad(g: Grad) {
+    this.mutate(() => {
+      const c = this.course;
+      c.grads = (c.grads ?? []).filter((x) => x !== g);
+      c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= g.start && e.tick <= g.end));
+    });
   }
 
   setBalloonHits(n: ENote, hits: number) {

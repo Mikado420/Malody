@@ -409,6 +409,19 @@ export class EditorView {
       if (x2 > x1) ctx.fillRect(x1, L.laneY, x2 - x1, L.laneH);
     }
 
+    // グラデの範囲（レーンの下の端に紫の帯。右へ行くほど濃く）
+    for (const g of course.grads ?? []) {
+      const x1 = Math.max(L.colW, this.xOf(g.start));
+      const x2 = Math.min(this.w, this.xOf(g.end));
+      if (x2 <= x1) continue;
+      const bh = Math.max(4, 10 * s);
+      const grd = ctx.createLinearGradient(this.xOf(g.start), 0, this.xOf(g.end), 0);
+      grd.addColorStop(0, 'rgba(199,146,234,0.25)');
+      grd.addColorStop(1, 'rgba(199,146,234,0.9)');
+      ctx.fillStyle = grd;
+      ctx.fillRect(x1, L.laneY + L.laneH - bh, x2 - x1, bh);
+    }
+
     ctx.fillStyle = C.laneEdge;
     const edge = Math.max(1, 2 * s);
     ctx.fillRect(L.colW, L.laneY - edge / 2, this.w - L.colW, edge);
@@ -471,6 +484,7 @@ export class EditorView {
     ctx.textAlign = 'left';
     let lastTick = NaN;
     let stack = 0;
+    const grads = course.grads ?? [];
     for (const e of course.events) {
       if (e.tick < leftTick || e.tick > rightTick) continue;
       stack = e.tick === lastTick ? stack + 1 : 0;
@@ -484,7 +498,10 @@ export class EditorView {
       ctx.lineTo(x + 10 * s, L.evTop + 4 * s);
       ctx.closePath();
       ctx.fill();
-      const t = eventText(e);
+      // グラデの中の #SCROLL は三角の印だけ。始点には「グラデ 開始値→終了値」を出す
+      const g = e.kind === 'scroll' ? grads.find((x) => e.tick >= x.start && e.tick < x.end) : undefined;
+      if (g && e.tick !== g.start) { lastTick = NaN; continue; }
+      const t = g ? `グラデ ${g.from}→${g.to} ${g.mode === 'linear' ? '等差' : '等比'}` : eventText(e);
       const tw = ctx.measureText(t).width;
       const ex = x + 6 * s + stack * (tw + 26 * s);
       ctx.fillStyle = 'rgba(194,125,255,0.2)';
@@ -533,11 +550,11 @@ export class EditorView {
     if (ed.pendingLong !== null) {
       const x = this.xOf(ed.pendingLong);
       ctx.setLineDash([8 * s, 8 * s]);
-      ctx.strokeStyle = ed.tool === 'gogo' ? '#ff6e28' : '#fbbf14';
+      ctx.strokeStyle = ed.tool === 'gogo' ? '#ff6e28' : ed.tool === 'grad' ? '#c792ea' : '#fbbf14';
       ctx.lineWidth = Math.max(2, 5 * s);
       ctx.beginPath();
-      if (ed.tool === 'gogo') {
-        // ゴーゴーの始点は縦の点線
+      if (ed.tool === 'gogo' || ed.tool === 'grad') {
+        // ゴーゴー・グラデの始点は縦の点線
         ctx.moveTo(x, L.laneY);
         ctx.lineTo(x, L.laneY + L.laneH);
       } else {
@@ -552,8 +569,8 @@ export class EditorView {
       const t = ed.snap(this.tickOf(this.hoverX));
       const x = this.xOf(t);
       ctx.globalAlpha = 0.4;
-      if (ed.tool === 'gogo') {
-        ctx.fillStyle = '#ff6e28';
+      if (ed.tool === 'gogo' || ed.tool === 'grad') {
+        ctx.fillStyle = ed.tool === 'gogo' ? '#ff6e28' : '#c792ea';
         ctx.fillRect(x - Math.max(1, 2 * s), L.laneY, Math.max(2, 4 * s), L.laneH);
       } else if (ed.tool === 'erase') {
         ctx.strokeStyle = '#fff';

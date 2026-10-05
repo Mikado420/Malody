@@ -7,6 +7,7 @@ import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { buildAutoEvents, type AutoEvent } from './play/auto';
+import { gradScrolls, gradValid, type Grad } from './editor/grad';
 
 import { DIVISORS, Editor, type Tool } from './editor/editor';
 import { EditorView, eventText } from './editor/view';
@@ -217,6 +218,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   roll: ['roll', 'bigRoll'],
   balloon: ['balloon'],
   gogo: ['gogo'],
+  grad: ['grad'],
 };
 const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   don: { label: 'ドン', cls: 'don' },
@@ -228,9 +230,10 @@ const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   balloon: { label: '風船', cls: 'balloon' },
   erase: { label: '消去', cls: 'erase' },
   gogo: { label: 'GOGO', cls: 'gogo' },
+  grad: { label: 'グラデ', cls: 'grad' },
 };
 /** 各ボタンが今どちらの音符になっているか */
-const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', gogo: 'gogo' };
+const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', gogo: 'gogo', grad: 'grad' };
 const groupOf = (t: Tool) => Object.keys(TOOL_GROUPS).find((g) => TOOL_GROUPS[g].includes(t))!;
 
 function setTool(t: Tool) {
@@ -239,7 +242,7 @@ function setTool(t: Tool) {
   groupTool[groupOf(t)] = t;
   // 始点を決めた後に別の種類のツールに替えたら、始点を取り消す（連打・大連打・風船どうしはそのまま終点を選べる）
   const longs: Tool[] = ['roll', 'bigRoll', 'balloon'];
-  const keep = (longs.includes(t) && longs.includes(prevTool)) || (t === 'gogo' && prevTool === 'gogo');
+  const keep = (longs.includes(t) && longs.includes(prevTool)) || (t === 'gogo' && prevTool === 'gogo') || (t === 'grad' && prevTool === 'grad');
   if (ed.pendingLong !== null && !keep) ed.pendingLong = null;
   document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
     const g = b.dataset.group!;
@@ -305,7 +308,20 @@ view.onTap = (tick) => {
     const v = prompt('風船の打数', String(r.editBalloon.hits ?? 5));
     if (v !== null) ed.setBalloonHits(r.editBalloon, Number(v));
   }
+  if (r.newGrad || r.editGrad) $('toast').classList.remove('show');
+  if (r.newGrad) {
+    const from = ed.timing.scrollAt(r.newGrad.start);
+    gradEdit = { grad: { ...r.newGrad, from, to: from * 2, mode: 'linear', digits: 3 } };
+    openSheet('grad');
+  }
+  if (r.editGrad) {
+    gradEdit = { grad: { ...r.editGrad }, old: r.editGrad };
+    openSheet('grad');
+  }
 };
+
+/** 設定画面で編集中のグラデ */
+let gradEdit: { grad: Grad; old?: Grad } | null = null;
 
 let saveTimer = 0;
 ed.onChange((structural) => {
@@ -354,7 +370,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'file' | 'info' | 'events';
+type SheetKind = 'file' | 'info' | 'events' | 'grad';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -378,6 +394,7 @@ function refreshSheet() {
   if ($('sheetBody').contains(document.activeElement) && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) return;
   // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
   if (sheet === 'events' && document.getElementById('tjaText')) return;
+  if (sheet === 'grad') return;
   renderSheet();
 }
 
@@ -486,6 +503,8 @@ function renderSheet() {
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
+  } else if (sheet === 'grad' && gradEdit) {
+    renderGradSheet(body);
   } else if (sheet === 'events') {
     // TJA のテキスト（譜面全体）。書き換えて「反映」すると譜面に反映する
     $('sheetTitle').textContent = 'TJA';
@@ -977,3 +996,73 @@ startAutoUpdate({
   },
   notify: toast,
 });
+
+// ---------- グラデ ----------
+
+function renderGradSheet(body: HTMLElement) {
+  const st = gradEdit!;
+  const g = st.grad;
+  const m1 = ed.measureOf(g.start);
+  const m2 = ed.measureOf(g.end);
+  $('sheetTitle').textContent = st.old ? 'グラデを変更' : 'グラデ';
+  body.innerHTML = `
+    <p class="note">小節 ${m1.index + 1} 〜 ${m2.index + 1}。範囲の中の音符（1〜7）と小節線の位置に #SCROLL を置き、終点に終了値を置きます。</p>
+    <label class="field"><span>開始値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="from" value="${g.from}"></label>
+    <label class="field"><span>終了値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="to" value="${g.to}"></label>
+    <div class="btns">
+      <button data-gmode="linear" class="${g.mode === 'linear' ? 'primary' : ''}">等差</button>
+      <button data-gmode="geometric" class="${g.mode === 'geometric' ? 'primary' : ''}">等比</button>
+    </div>
+    <label class="field"><span>小数の桁数</span><input type="number" min="0" max="6" step="1" inputmode="numeric" data-g="digits" value="${g.digits}"></label>
+    <pre class="grad-preview" id="gradPreview"></pre>
+    <div class="btns${st.old ? ' three' : ''}">
+      ${st.old ? '<button data-gact="del">グラデを消す</button>' : ''}
+      <button data-gact="cancel">やめる</button>
+      <button data-gact="ok" class="primary">${st.old ? '変更' : '置く'}</button>
+    </div>`;
+  const preview = () => {
+    const err = gradValid(g);
+    const out = body.querySelector('#gradPreview')!;
+    if (err) { out.textContent = err; out.classList.add('bad'); return; }
+    out.classList.remove('bad');
+    const list = gradScrolls(ed.course, g);
+    out.textContent = list.map((s) => {
+      const m = ed.measureOf(s.tick);
+      const beat = ((s.tick - m.start) / (TPB * 4 / m.den)) + 1;
+      return `小節 ${m.index + 1}  ${Number(beat.toFixed(2))} 拍目   #SCROLL ${s.value}`;
+    }).join('\n');
+  };
+  body.querySelectorAll<HTMLInputElement>('input[data-g]').forEach((inp) => {
+    inp.addEventListener('input', () => {
+      const k = inp.dataset.g as 'from' | 'to' | 'digits';
+      const v = Number(inp.value);
+      if (inp.value.trim() === '') return;
+      g[k] = k === 'digits' ? Math.max(0, Math.min(6, Math.round(v))) : v;
+      preview();
+    });
+  });
+  body.querySelectorAll<HTMLButtonElement>('[data-gmode]').forEach((b) => {
+    b.addEventListener('click', () => {
+      g.mode = b.dataset.gmode as Grad['mode'];
+      body.querySelectorAll<HTMLButtonElement>('[data-gmode]').forEach((x) => x.classList.toggle('primary', x === b));
+      preview();
+    });
+  });
+  body.querySelectorAll<HTMLButtonElement>('[data-gact]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const act = b.dataset.gact;
+      if (act === 'ok') {
+        const err = gradValid(g);
+        if (err) { toast(err); return; }
+        ed.setGrad({ ...g }, st.old);
+        toast(st.old ? 'グラデを変更しました' : 'グラデを置きました');
+      } else if (act === 'del' && st.old) {
+        ed.removeGrad(st.old);
+        toast('グラデを消しました');
+      }
+      gradEdit = null;
+      closeSheet();
+    });
+  });
+  preview();
+}

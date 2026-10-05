@@ -93,7 +93,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   grid-template-rows: 1fr 1fr;
   gap: calc(8px * var(--es, 0.45));
 }
-.tool.gogo { width: max(52px, calc(120px * var(--es, 0.45))); }
+.tool.gogo, .tool.grad { width: max(52px, calc(120px * var(--es, 0.45))); }
 .tool.gogo b { font-size: max(11px, calc(26px * var(--es, 0.45))); font-weight: 900; color: #ff8a3a; letter-spacing: 0.02em; }
 .tool.gogo.active b { color: #ffb070; }
 .tool {
@@ -490,3 +490,21 @@ html, body { overscroll-behavior: none; }
 .sheet-diag { font: 9px/1.2 ui-monospace, Menlo, monospace; color: #6e6e76; max-width: 140px; white-space: normal; }
 /* TJA の画面のとき、万一画面の下に隙間ができても文字の欄と同じ色にしておく */
 html:has(body.tja-open), body.tja-open { background: #111114; }
+
+/* グラデのボタンと設定画面 */
+.tool.grad b { font-size: max(10px, calc(24px * var(--es, 0.45))); font-weight: 900; color: #c792ea; }
+.tool.grad.active b { color: #e3c8f5; }
+.grad-preview {
+  margin: 0;
+  max-height: 34vh;
+  overflow: auto;
+  padding: 8px 10px;
+  background: #111114;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace;
+  color: #e3c8f5;
+  white-space: pre;
+  touch-action: pan-x pan-y;
+}
+.grad-preview.bad { color: #ff8a7a; white-space: pre-wrap; }

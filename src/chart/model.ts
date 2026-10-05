@@ -1,4 +1,5 @@
 import type { BarLine, Course, Note, NoteType } from './types';
+import type { Grad } from '../editor/grad';
 
 /**
  * 編集用の譜面モデル。
@@ -33,6 +34,8 @@ export interface ECourse {
   events: EEvent[];
   /** LEVEL / BALLOON 以外の難易度ごとのヘッダ（SCOREINIT など）をそのまま保持 */
   extra: [string, string][];
+  /** グラデ（エディタの中だけで使う。.tja には書き込まない） */
+  grads?: Grad[];
 }
 
 export interface EChart {
