@@ -173,14 +173,6 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .side small { font-size: 10px; color: var(--sub); font-variant-numeric: tabular-nums; }
 .side .on { background: #3a2f1c; }
 .side .on svg { stroke: var(--accent); }
-.divbtn select {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  width: 100%;
-  height: 100%;
-  cursor: pointer;
-}
 
 /* ---------- シート ---------- */
 .sheet {
@@ -540,3 +532,26 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
   touch-action: pan-x pan-y;
   overscroll-behavior: contain;
 }
+
+/* グリッドのメニュー: 右のアイコンバーの少し左、グリッドのボタンの高さに下をそろえて出す */
+.div-menu {
+  position: absolute;
+  right: calc(max(40px, calc(90px * var(--es, 0.6))) + 8px);
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  min-width: 132px;
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  background: rgba(28, 27, 33, 0.97);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  touch-action: pan-y;
+}
+.div-menu.hidden { display: none; }
+.div-menu button { text-align: left; padding: 6px 12px; font-size: 15px; background: transparent; font-variant-numeric: tabular-nums; }
+.div-menu button.on { background: var(--accent); color: #1a1405; font-weight: 700; }
+.div-menu hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 3px 0; }

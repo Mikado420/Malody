@@ -49,10 +49,12 @@ const settings = {
   tjaBold: false,
   /** 音量の比率（自動で揃えた後に掛ける）。音源 : 打音 : メトロノーム */
   volMusic: 1,
-  volHit: 1,
+  volHit: 0.8,
   volMetro: 1.2,
   /** 拡大率の決め方の版（2 = プレイ画面と同じ間隔） */
   zoomVer: 0,
+  /** 打音の比率の初期値を 0.8 にした版 */
+  hitVolVer: 0,
 };
 try {
   // 横スクロール化で拡大率の意味が変わったので v2 のキーで保存
@@ -66,9 +68,15 @@ const saveSettings = () => {
 
 const audio = new AudioEngine();
 const ed = new Editor();
-ed.divisor = DIVISORS.includes(settings.divisor) ? settings.divisor : 4;
+// 自由グリッドで選んだ数も、1 拍の tick 数で割り切れれば使える
+ed.divisor = settings.divisor >= 1 && settings.divisor <= 192 && TPB % settings.divisor === 0 ? settings.divisor : 4;
 const view = new EditorView($<HTMLCanvasElement>('editor'), ed);
 // 拡大率の初期値をプレイ画面と同じ音符の間隔に変えたので、前の版で自分で変えた拡大率は一度だけ初期値に戻す
+// 打音を差し替えたので、打音の音量の比率を一度だけ 0.8 にする
+if (!settings.hitVolVer) {
+  settings.volHit = 0.8;
+  settings.hitVolVer = 1;
+}
 if (settings.zoomVer !== 2) {
   settings.zoomSet = false;
   settings.zoomVer = 2;
@@ -302,15 +310,57 @@ document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
 });
 setTool('don');
 
-const divSel = $<HTMLSelectElement>('divisor');
-divSel.innerHTML = DIVISORS.map((d) => `<option value="${d}">1/${d}</option>`).join('');
-divSel.value = String(ed.divisor);
-divSel.addEventListener('change', () => {
-  ed.divisor = Number(divSel.value);
-  updateHeader();
-  settings.divisor = ed.divisor;
+// グリッド（分割）: ボタンを押すと、右のアイコンバーの少し左に 1/2〜1/32 と「自由グリッド」のメニューを出す
+const divMenu = $('divMenu');
+const setDivisor = (d: number) => {
+  ed.divisor = d;
+  settings.divisor = d;
   saveSettings();
+  updateHeader();
   view.invalidate();
+};
+const closeDivMenu = () => divMenu.classList.add('hidden');
+const openDivMenu = () => {
+  const preset = DIVISORS.filter((d) => d >= 2);
+  const custom = !preset.includes(ed.divisor);
+  divMenu.innerHTML = preset.map((d) => `<button data-div="${d}" class="${d === ed.divisor ? 'on' : ''}">1/${d}</button>`).join('')
+    + `<hr><button data-div="free" class="${custom ? 'on' : ''}">自由グリッド${custom ? `（1/${ed.divisor}）` : '…'}</button>`;
+  divMenu.classList.remove('hidden');
+  // グリッドのボタンの下端にメニューの下端をそろえる（はみ出すときは上にそろえる）
+  const btn = $('btnDiv');
+  const app = $('app');
+  const bottom = btn.offsetTop + btn.offsetHeight - (btn.parentElement as HTMLElement).scrollTop;
+  divMenu.style.top = `${Math.max(8, Math.min(bottom - divMenu.offsetHeight, app.offsetHeight - divMenu.offsetHeight - 8))}px`;
+};
+$('btnDiv').addEventListener('click', (e) => {
+  e.stopPropagation();
+  if (divMenu.classList.contains('hidden')) openDivMenu();
+  else closeDivMenu();
+});
+divMenu.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-div]');
+  if (!b) return;
+  if (b.dataset.div === 'free') {
+    closeDivMenu();
+    const v = prompt('1 拍を何分割にするか（例: 5, 7, 10, 20, 48）', String(ed.divisor));
+    if (v === null) return;
+    const n = Math.round(Number(v));
+    if (!(n >= 1 && n <= 192) || TPB % n !== 0) {
+      toast('その分割数は使えません（使える例: 1〜8, 10, 12, 14, 15, 16, 20, 21, 24, 28, 30, 32, 35, 40, 48, 64…）');
+      return;
+    }
+    setDivisor(n);
+    toast(`グリッドを 1/${n} にしました`);
+    return;
+  }
+  setDivisor(Number(b.dataset.div));
+  closeDivMenu();
+});
+document.addEventListener('pointerdown', (e) => {
+  if (divMenu.classList.contains('hidden')) return;
+  const t = e.target as Node;
+  if (!divMenu.contains(t) && !$('btnDiv').contains(t)) closeDivMenu();
 });
 
 view.onZoomChange = (z) => {
