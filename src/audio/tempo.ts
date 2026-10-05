@@ -1067,13 +1067,48 @@ export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: numb
   const env = envelope(mono, sr, progress);
   const tg = tempogram(env.all, env.fr, progress);
   const path = tempoPath(tg);
-  const coarse = coarseToResult(analyzeCoarse(env, tg, path, duration), duration);
+  const craw = analyzeCoarse(env, tg, path, duration);
+  // 大まかな測り方の区間の整理: 8 秒未満の短い区間（裏拍や 3 連のリズムが目立つだけのことが多い）は隣につなぎ、
+  // BPM の差が 1.5% 未満の隣どうしもつなぐ（つないだ所は、つないだ範囲全体で合わせ直す）
+  {
+    let segs = craw.segs;
+    for (let guard = 0; guard < 50 && segs.length > 1; guard++) {
+      let j = segs.findIndex((x) => x.end - x.start < 8);
+      if (j < 0) j = segs.findIndex((x, i) => i > 0 && Math.abs(x.bpm / segs[i - 1].bpm - 1) < 0.015);
+      if (j < 0) break;
+      const k = j === 0 ? 1 : j === segs.length - 1 ? j - 1 : segs[j - 1].end - segs[j - 1].start >= segs[j + 1].end - segs[j + 1].start ? j - 1 : j + 1;
+      const a0 = Math.min(j, k);
+      const keep = segs[j].end - segs[j].start >= segs[k].end - segs[k].start ? segs[j] : segs[k];
+      const merged = refineCoarse(env, segs[a0].start, segs[a0 + 1].end, keep.bpm);
+      segs = [...segs.slice(0, a0), merged, ...segs.slice(a0 + 2)];
+    }
+    craw.segs = segs;
+    if (segs.length) craw.downbeat = findDownbeatCoarse(env, segs[0]);
+  }
+  const coarse = coarseToResult(craw, duration);
   const fine = analyzeFine(env, tg, path, duration, progress);
   progress?.(1);
+  // 曲全体を 1 つの BPM として合わせた案。多くの曲は BPM が変わらないので、変わる案ははっきりよいときだけ使う
+  // （裏拍や 3 連のリズムが目立つ所を、BPM が変わったと取り違えないように）
+  const med = [...path].sort((p, q) => p - q)[Math.floor(path.length / 2)] ?? 120;
+  const one = refineCoarse(env, 0, duration, med);
+  const single = coarseToResult({ segs: [one], downbeat: findDownbeatCoarse(env, one) }, duration);
+  const ss = alignScore(env, single);
   const sc = alignScore(env, coarse);
   const sf = alignScore(env, fine);
-  // 細かい測り方は区間が増えやすいので、はっきりよいときだけ使う
-  return sf > sc * 1.03 ? fine : coarse;
+  // 区間が多い案ほど、はっきりよいときだけ使う
+  let best = single;
+  let bs = ss;
+  if (coarse.segments.length > 1 && sc > bs * 1.04) {
+    best = coarse;
+    bs = sc;
+  }
+  // 細かい測り方は、BPM が隣の区間と大きく（8% 以上）違う所が多いときは使わない（拍の数え間違いの印）
+  let jumps = 0;
+  for (let i = 1; i < fine.segments.length; i++) if (Math.abs(fine.segments[i].bpm / fine.segments[i - 1].bpm - 1) > 0.08) jumps++;
+  const fineOk = jumps <= Math.max(2, fine.segments.length / 10);
+  if (fineOk && sf > bs * 1.03 && sf > ss * 1.04) best = fine;
+  return best;
 }
 
 // ---------- 譜面に入れる形にする ----------
