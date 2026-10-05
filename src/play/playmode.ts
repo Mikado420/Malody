@@ -130,7 +130,17 @@ export class PlayMode {
     if (!clicks) this.calibrating = false;
     const from = Math.max(fromTime, (course.notes[0]?.time ?? 0) - 1);
     const notes = course.notes.filter((n) => (n.endTime ?? n.time) >= from - 0.05);
-    const game = new Game(notes);
+    // 判定・点数・ゲージは譜面全体で数える。途中から始めたときは、そこまでをオートで叩いた状態にしておく
+    // （最初から通したときと、最後のコンボ数・点数・ゲージが一致する）
+    const game = new Game(course.notes);
+    const split = from - 0.05;
+    const allAuto = buildAutoEvents(course.notes);
+    for (const e of allAuto) {
+      if (e.t >= split) break;
+      game.update(e.t);
+      game.hit(e.kind, e.t);
+    }
+    game.update(split);
     game.onJudge = (e) => this.renderer.pushJudge(e);
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
@@ -159,7 +169,7 @@ export class PlayMode {
     const lastTime = Math.max(from, ...notes.map((n) => n.endTime ?? n.time));
     const endAt = Math.max(lastTime + 2, Math.min(this.audio.musicDuration, lastTime + 4));
 
-    this.autoEvents = buildAutoEvents(notes, from);
+    this.autoEvents = allAuto.filter((e) => e.t >= split);
     this.autoIdx = 0;
     this.soundIdx = 0;
     cancelAnimationFrame(this.raf);

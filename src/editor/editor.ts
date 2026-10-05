@@ -6,7 +6,8 @@ import type { NoteType } from '../chart/types';
 import type { AudioFile } from '../io/load';
 import { applyGrad, gradMatches, type Grad } from './grad';
 
-export type Tool = NoteType | 'erase' | 'gogo' | 'grad';
+/** scroll = #SCROLL（1 か所をタップ×2 でその位置だけ、2 か所でグラデ）、bpm = #BPMCHANGE、measure = #MEASURE */
+export type Tool = NoteType | 'erase' | 'gogo' | 'scroll' | 'bpm' | 'measure';
 
 /** 1拍あたりの分割数（Malody の 1/n 表記と同じ） */
 export const DIVISORS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
@@ -19,6 +20,8 @@ export interface TapResult {
   newGrad?: { start: number; end: number };
   /** UI 側で設定を変えるグラデ */
   editGrad?: Grad;
+  /** UI 側で値を聞く、1 か所の命令（#SCROLL / #BPMCHANGE / #MEASURE） */
+  point?: { kind: 'scroll' | 'bpm' | 'measure'; tick: number };
 }
 
 /**
@@ -211,7 +214,9 @@ export class Editor {
     const covering = this.longCovering(tick);
 
     if (tool === 'gogo') return this.tapGogo(tick);
-    if (tool === 'grad') return this.tapGrad(tick);
+    if (tool === 'scroll') return this.tapScroll(tick);
+    if (tool === 'bpm') return { point: { kind: 'bpm', tick } };
+    if (tool === 'measure') return { point: { kind: 'measure', tick: this.measureOf(tick).start } };
 
     // 置いてあるノーツ（連打・風船はその範囲のどこでも）をタップしたら、選んでいる音符に関係なく消す。
     // ただし風船を選んでいて風船の始点をタップしたときは、打数を変える
@@ -313,20 +318,28 @@ export class Editor {
     return this.course.grads?.find((g) => tick >= g.start && tick <= g.end);
   }
 
-  /** グラデ: 始点と終点をタップして範囲を決める（設定は UI 側で聞く）。グラデの中をタップするとその設定を開く */
-  private tapGrad(tick: number): TapResult {
+  /**
+   * SCROLL: 同じ位置を 2 回タップするとその位置の #SCROLL（値は UI 側で聞く）、
+   * 別の位置をタップするとその間をグラデにする。グラデの中をタップするとグラデの設定を開く
+   */
+  private tapScroll(tick: number): TapResult {
     if (this.pendingLong === null) {
       const g = this.gradAt(tick);
       if (g) return { editGrad: g };
       this.pendingLong = tick;
       this.emit();
-      return { message: 'グラデの終点をタップしてください（始点をもう一度タップで取り消し）' };
+      return { message: '同じ位置をもう一度タップで SCROLL、別の位置をタップでそこまでグラデ' };
     }
     const p = this.pendingLong;
     this.pendingLong = null;
     this.emit();
-    if (tick === p) return { message: '取り消しました' };
+    if (tick === p) return { point: { kind: 'scroll', tick } };
     return { newGrad: { start: Math.min(p, tick), end: Math.max(p, tick) } };
+  }
+
+  /** その位置・種類の命令 */
+  eventAt(kind: 'scroll' | 'bpm' | 'measure', tick: number): EEvent | undefined {
+    return this.course.events.find((e) => e.kind === kind && e.tick === tick);
   }
 
   /** グラデを追加・変更する（old を渡すと置き換え）。重なる別のグラデは外す（その #SCROLL は新しい値で上書き） */

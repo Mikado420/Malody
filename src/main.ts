@@ -219,7 +219,9 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   roll: ['roll', 'bigRoll'],
   balloon: ['balloon'],
   gogo: ['gogo'],
-  grad: ['grad'],
+  scroll: ['scroll'],
+  bpm: ['bpm'],
+  measure: ['measure'],
 };
 const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   don: { label: 'ドン', cls: 'don' },
@@ -231,10 +233,12 @@ const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   balloon: { label: '風船', cls: 'balloon' },
   erase: { label: '消去', cls: 'erase' },
   gogo: { label: 'GOGO', cls: 'gogo' },
-  grad: { label: 'グラデ', cls: 'grad' },
+  scroll: { label: 'SCROLL・グラデ', cls: 'cmd scroll' },
+  bpm: { label: 'BPMCHANGE', cls: 'cmd bpm' },
+  measure: { label: 'MEASURE', cls: 'cmd measure' },
 };
 /** 各ボタンが今どちらの音符になっているか */
-const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', gogo: 'gogo', grad: 'grad' };
+const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', gogo: 'gogo', scroll: 'scroll', bpm: 'bpm', measure: 'measure' };
 const groupOf = (t: Tool) => Object.keys(TOOL_GROUPS).find((g) => TOOL_GROUPS[g].includes(t))!;
 
 function setTool(t: Tool) {
@@ -243,7 +247,7 @@ function setTool(t: Tool) {
   groupTool[groupOf(t)] = t;
   // 始点を決めた後に別の種類のツールに替えたら、始点を取り消す（連打・大連打・風船どうしはそのまま終点を選べる）
   const longs: Tool[] = ['roll', 'bigRoll', 'balloon'];
-  const keep = (longs.includes(t) && longs.includes(prevTool)) || (t === 'gogo' && prevTool === 'gogo') || (t === 'grad' && prevTool === 'grad');
+  const keep = (longs.includes(t) && longs.includes(prevTool)) || (t === 'gogo' && prevTool === 'gogo') || (t === 'scroll' && prevTool === 'scroll');
   if (ed.pendingLong !== null && !keep) ed.pendingLong = null;
   document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
     const g = b.dataset.group!;
@@ -309,10 +313,11 @@ view.onTap = (tick) => {
     const v = prompt('風船の打数', String(r.editBalloon.hits ?? 5));
     if (v !== null) ed.setBalloonHits(r.editBalloon, Number(v));
   }
-  if (r.newGrad || r.editGrad) $('toast').classList.remove('show');
+  if (r.newGrad || r.editGrad || r.point) $('toast').classList.remove('show');
+  if (r.point) openPoint(r.point.kind, r.point.tick);
   if (r.newGrad) {
     const from = ed.timing.scrollAt(r.newGrad.start);
-    gradEdit = { grad: { ...r.newGrad, from, to: from * 2, mode: 'linear', digits: 3, speed: 'visual', barlines: true } };
+    gradEdit = { grad: { ...r.newGrad, from, to: from * 2, mode: 'linear', digits: 3, speed: 'visual' } };
     openSheet('grad');
   }
   if (r.editGrad) {
@@ -371,7 +376,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'file' | 'info' | 'events' | 'grad';
+type SheetKind = 'file' | 'info' | 'events' | 'grad' | 'point';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -397,7 +402,7 @@ function refreshSheet() {
   if ($('sheetBody').contains(document.activeElement) && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) return;
   // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
   if (sheet === 'events' && document.getElementById('tjaText')) return;
-  if (sheet === 'grad') return;
+  if (sheet === 'grad' || sheet === 'point') return;
   renderSheet();
 }
 
@@ -506,6 +511,8 @@ function renderSheet() {
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
+  } else if (sheet === 'point' && pointEdit) {
+    renderPointSheet(body);
   } else if (sheet === 'grad' && gradEdit) {
     renderGradSheet(body);
   } else if (sheet === 'events') {
@@ -1010,24 +1017,17 @@ function renderGradSheet(body: HTMLElement) {
   const hasBpm = ed.course.events.some((e) => e.kind === 'bpm' && e.tick > g.start && e.tick < g.end)
     || ed.timing.bpmAt(g.start) !== ed.timing.bpmAt(g.end);
   const seg = (key: string, items: [string, string][], cur: string) =>
-    `<div class="btns grad-seg">${items.map(([v, label]) => `<button data-gset="${key}" data-v="${v}" class="${v === cur ? 'primary' : ''}">${label}</button>`).join('')}</div>`;
+    `<div class="btns grad-seg" style="grid-template-columns: repeat(${items.length}, minmax(0, 1fr))">${items.map(([v, label]) => `<button data-gset="${key}" data-v="${v}" class="${v === cur ? 'primary' : ''}">${label}</button>`).join('')}</div>`;
   $('sheetTitle').textContent = st.old ? 'グラデを変更' : 'グラデ';
   body.innerHTML = `
     <div class="grad-layout">
       <div class="grad-form">
-        <p class="note">小節 ${m1.index + 1} 〜 ${m2.index + 1}。範囲の中の音符（1〜7）と小節線の位置に #SCROLL を置き、終点に終了値を置きます。</p>
         <label class="field"><span>開始値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="from" value="${g.from}"></label>
         <label class="field"><span>終了値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="to" value="${g.to}"></label>
         ${seg('mode', [['linear', '等差'], ['geometric', '等比']], g.mode)}
         <label class="field"><span>小数の桁数</span><input type="number" min="0" max="6" step="1" inputmode="numeric" data-g="digits" value="${g.digits}"></label>
-        <h3>#BPMCHANGE があるとき${hasBpm ? '' : '（この範囲にはありません）'}</h3>
-        ${seg('speed', [['visual', '見た目・終点の BPM'], ['visualBase', '見た目・始点の BPM'], ['scroll', 'SCROLL の値']], g.speed ?? 'scroll')}
-        <p class="note">見た目の 2 つは、BPM × SCROLL が滑らかに変わるように BPM に合わせて #SCROLL を割り戻します（#BPMCHANGE の位置にも #SCROLL を置きます）。<br>
-        ・終点の BPM: 終了値は終点での #SCROLL の値（見た目の速さ = 終了値 × 終点の BPM）<br>
-        ・始点の BPM: 開始値・終了値とも始点の BPM を基準にした見た目の速さ（見た目で ちょうど 終了値 ÷ 開始値 倍に）<br>
-        「SCROLL の値」は #SCROLL の値だけを変えるので、BPM が変わる所で速さが跳ねます。</p>
-        <h3>小節線（#MEASURE で長さが変わる小節も同じ）</h3>
-        ${seg('barlines', [['on', '対象に入れる'], ['off', '入れない']], g.barlines === false ? 'off' : 'on')}
+        <h3>#BPMCHANGE${hasBpm ? '' : '（この範囲にはなし）'}</h3>
+        ${seg('speed', [['visual', '見た目(終点)'], ['visualBase', '見た目(始点)'], ['scroll', 'SCROLL値']], g.speed ?? 'scroll')}
         <p class="grad-err" id="gradErr"></p>
         <div class="btns${st.old ? ' three' : ''}">
           ${st.old ? '<button data-gact="del">グラデを消す</button>' : ''}
@@ -1062,7 +1062,6 @@ function renderGradSheet(body: HTMLElement) {
       const v = b.dataset.v!;
       if (key === 'mode') g.mode = v as Grad['mode'];
       else if (key === 'speed') g.speed = v as Grad['speed'];
-      else if (key === 'barlines') g.barlines = v === 'on';
       body.querySelectorAll<HTMLButtonElement>(`[data-gset="${key}"]`).forEach((x) => x.classList.toggle('primary', x === b));
       preview();
     });
@@ -1111,4 +1110,70 @@ function gradTjaPreview(g: Grad, old?: Grad): string {
   let to = head(b + 1);
   if (to < 0) to = n - 1;
   return tjaLinesHtml(text, marks, from, to);
+}
+
+// ---------- SCROLL / BPMCHANGE / MEASURE（1 か所） ----------
+
+let pointEdit: { kind: 'scroll' | 'bpm' | 'measure'; tick: number } | null = null;
+
+function openPoint(kind: 'scroll' | 'bpm' | 'measure', tick: number) {
+  pointEdit = { kind, tick };
+  openSheet('point');
+}
+
+function renderPointSheet(body: HTMLElement) {
+  const { kind, tick } = pointEdit!;
+  const m = ed.measureOf(tick);
+  const beat = (tick - m.start) / ((TPB * 4) / m.den) + 1;
+  const cur = ed.eventAt(kind, tick);
+  const title = { scroll: '#SCROLL', bpm: '#BPMCHANGE', measure: '#MEASURE' }[kind];
+  let value = '';
+  if (kind === 'scroll') value = String(cur && cur.kind === 'scroll' ? cur.value : ed.timing.scrollAt(tick));
+  else if (kind === 'bpm') value = String(cur && cur.kind === 'bpm' ? cur.value : ed.timing.bpmAt(tick));
+  else value = `${m.num}/${m.den}`;
+  $('sheetTitle').textContent = title;
+  const where = kind === 'measure' ? `小節 ${m.index + 1} から` : `小節 ${m.index + 1}・${Number(beat.toFixed(2))} 拍目から`;
+  const label = { scroll: 'SCROLL', bpm: 'BPM', measure: '拍子（例: 3/4）' }[kind];
+  body.innerHTML = `
+    <p class="note">${where}</p>
+    <label class="field"><span>${label}</span><input type="text" autocapitalize="off" autocomplete="off" id="pointValue" value="${value}"></label>
+    <div class="btns${cur ? ' three' : ''}">
+      ${cur ? '<button data-pact="del">消す</button>' : ''}
+      <button data-pact="cancel">やめる</button>
+      <button data-pact="ok" class="primary">${cur ? '変更' : '置く'}</button>
+    </div>`;
+  const inp = body.querySelector<HTMLInputElement>('#pointValue')!;
+  const ok = () => {
+    const v = inp.value.trim();
+    let ev: EEvent | null = null;
+    if (kind === 'scroll') {
+      if (v !== '' && Number.isFinite(Number(v))) ev = { tick, kind: 'scroll', value: Number(v) };
+    } else if (kind === 'bpm') {
+      if (Number(v) > 0) ev = { tick, kind: 'bpm', value: Number(v) };
+    } else {
+      const mm = v.match(/^(\d+(?:\.\d+)?)\s*\/\s*(\d+(?:\.\d+)?)$/);
+      if (mm && Number(mm[1]) > 0 && Number(mm[2]) > 0) ev = { tick, kind: 'measure', num: Number(mm[1]), den: Number(mm[2]) };
+    }
+    if (!ev) {
+      toast(kind === 'measure' ? '「3/4」の形で入力してください' : kind === 'bpm' ? '0 より大きい数を入力してください' : '数を入力してください');
+      return;
+    }
+    ed.addEvent(ev);
+    toast(`${eventText(ev)} を置きました`);
+    pointEdit = null;
+    closeSheet();
+  };
+  inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') ok(); });
+  body.querySelectorAll<HTMLButtonElement>('[data-pact]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const act = b.dataset.pact;
+      if (act === 'ok') { ok(); return; }
+      if (act === 'del' && cur) {
+        ed.removeEvent(cur);
+        toast(`${title} を消しました`);
+      }
+      pointEdit = null;
+      closeSheet();
+    });
+  });
 }

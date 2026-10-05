@@ -21,15 +21,34 @@
       <div class="stage">
         <canvas id="editor"></canvas>
         <div id="tools" class="tools">
-          <!-- 上の段: 小音符・大音符、下の段: 連打・風船。選んでいるボタンをもう一度タップすると、ドン⇔カッ・大ドン⇔大カッ・連打⇔大連打 が切り替わる -->
+          <!-- ノーツ 4 つ（選んでいるボタンをもう一度タップすると、ドン⇔カッ・大ドン⇔大カッ・連打⇔大連打 が切り替わる） -->
           <div class="note-tools">
             <button data-group="small" class="tool" aria-label="ドン / カッ"><i></i></button>
             <button data-group="big" class="tool" aria-label="大ドン / 大カッ"><i></i></button>
             <button data-group="roll" class="tool" aria-label="連打 / 大連打"><i></i></button>
             <button data-group="balloon" class="tool" aria-label="風船"><i></i></button>
           </div>
-          <button data-group="gogo" class="tool gogo" aria-label="ゴーゴータイム"><b>GOGO</b></button>
-          <button data-group="grad" class="tool grad" aria-label="グラデ（SCROLL を少しずつ変える）"><b>グラデ</b></button>
+          <!-- 命令: ゴーゴー（判定枠の炎の玉）、SCROLL・グラデ、BPMCHANGE、MEASURE -->
+          <div class="cmd-tools">
+            <button data-group="gogo" class="tool gogo" aria-label="ゴーゴータイム"><svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M24 9c6-3 9 1 13-2-1 6-2 11-6 17z" fill="#ee6e30"/>
+              <circle cx="18" cy="22" r="14" fill="#f07436"/>
+              <circle cx="18" cy="22" r="12" fill="none" stroke="#ffcf8a" stroke-width="1.2"/>
+              <circle cx="18" cy="22" r="8" fill="#f3a35f" stroke="#ffe2a0" stroke-width="1.6"/>
+            </svg></button>
+            <button data-group="scroll" class="tool cmd scroll" aria-label="SCROLL・グラデ"><svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M4 13h9M2 20h11M4 27h9" stroke-width="2.4"/>
+              <path d="M17 11l9 9-9 9M26 11l9 9-9 9" stroke-width="3.4"/>
+            </svg></button>
+            <button data-group="bpm" class="tool cmd bpm" aria-label="BPMCHANGE"><svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M2 22h8l4-11 6 20 5-14 3 5h10" stroke-width="3"/>
+            </svg></button>
+            <button data-group="measure" class="tool cmd measure" aria-label="MEASURE"><svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M7 4v32" stroke-width="2.6"/>
+              <text x="24" y="18" text-anchor="middle">3</text>
+              <text x="24" y="36" text-anchor="middle">4</text>
+            </svg></button>
+          </div>
         </div>
       </div>
       <nav class="side">

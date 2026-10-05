@@ -78,24 +78,28 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   left: calc(205px * var(--es, 0.45));
   right: calc(20px * var(--es, 0.45));
   bottom: calc(44px * var(--es, 0.45));
-  height: max(64px, calc(132px * var(--es, 0.45)));
+  height: max(36px, calc(112px * var(--es, 0.45)));
   display: flex;
   align-items: stretch;
-  /* 4 つのノーツの組と GOGO の間は少しだけ広く空ける */
-  gap: calc(24px * var(--es, 0.45));
+  /* ノーツの 4 つと、命令（GOGO など）の間は少しだけ広く空ける */
+  gap: calc(28px * var(--es, 0.45));
   pointer-events: none;
 }
 .tools > * { pointer-events: auto; }
-/* 左に寄せた 2 × 2（上: 小音符・大音符、下: 連打・風船） */
-.note-tools {
+/* 左に寄せた 1 列のノーツ 4 つと、その右の命令 4 つ */
+.note-tools, .cmd-tools {
   display: grid;
-  grid-template-columns: repeat(2, max(52px, calc(120px * var(--es, 0.45))));
-  grid-template-rows: 1fr 1fr;
-  gap: calc(8px * var(--es, 0.45));
+  grid-auto-flow: column;
+  grid-auto-columns: max(44px, calc(118px * var(--es, 0.45)));
+  gap: calc(10px * var(--es, 0.45));
 }
-.tool.gogo, .tool.grad { width: max(52px, calc(120px * var(--es, 0.45))); }
-.tool.gogo b { font-size: max(11px, calc(26px * var(--es, 0.45))); font-weight: 900; color: #ff8a3a; letter-spacing: 0.02em; }
-.tool.gogo.active b { color: #ffb070; }
+.tool svg { width: 72%; height: 72%; max-width: calc(80px * var(--es, 0.45)); min-width: 26px; }
+.tool.cmd svg { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.tool.scroll svg { stroke: #c792ea; }
+.tool.bpm svg { stroke: #5cc8f0; }
+.tool.measure svg { stroke: #ffd21f; }
+.tool.measure svg text { fill: #ffd21f; stroke: none; font: 900 17px system-ui, sans-serif; }
+
 .tool {
   display: flex;
   flex-direction: column;
@@ -492,8 +496,6 @@ html, body { overscroll-behavior: none; }
 html:has(body.tja-open), body.tja-open { background: #111114; }
 
 /* グラデのボタンと設定画面 */
-.tool.grad b { font-size: max(10px, calc(24px * var(--es, 0.45))); font-weight: 900; color: #c792ea; }
-.tool.grad.active b { color: #e3c8f5; }
 .sheet.grad { align-items: stretch; }
 .sheet.grad .sheet-panel {
   width: min(1200px, 100%);
@@ -521,8 +523,7 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
   padding-right: 2px;
 }
 .grad-form h3 { margin: 6px 0 0; }
-.grad-seg { grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); grid-auto-flow: column; }
-.grad-seg button { white-space: normal; line-height: 1.25; }
+.grad-seg button { white-space: nowrap; padding: 8px 4px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
 .grad-err { margin: 0; color: #ff8a7a; font-size: 12px; }
 .grad-err:empty { display: none; }
 .grad-tja { display: flex; flex-direction: column; min-height: 0; background: #111114; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }

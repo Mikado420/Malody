@@ -66,6 +66,20 @@ export interface Stats {
 }
 
 export const CLEAR_LINE = 80;
+/** 全部「良」のとき、音符の何割を叩き終えたらゲージが満タンになるか（クリアは 0.75 × 0.8 = 6 割） */
+const GAUGE_FULL_AT = 0.75;
+/** 風船（くす玉も）1 打の点数 */
+export const BALLOON_HIT_SCORE = 100;
+/** 最大スコア（全部「良」・連打なし） */
+export const MAX_SCORE = 1_000_000;
+
+/**
+ * 初項（「良」1 つの点数）。最大コンボ数 × 初項 ＋ 風船の総打数 × 100 ＝ 100 万点 になるように決め、10 の位で切り上げる
+ */
+export function scoreBase(maxCombo: number, balloonHits: number): number {
+  if (maxCombo <= 0) return 0;
+  return Math.ceil((MAX_SCORE - balloonHits * BALLOON_HIT_SCORE) / maxCombo / 10) * 10;
+}
 
 /**
  * 判定ロジック本体。描画や入力から独立しているのでテストしやすい。
@@ -94,7 +108,12 @@ export class Game {
       .sort((a, b) => a.time - b.time)
       .map((note) => ({ note, done: false, count: 0 }));
     this.hitIdx = this.states.map((_, i) => i).filter((i) => isHitNote(this.states[i].note.type));
+    const balloonHits = notes.reduce((a, n) => a + (n.type === 'balloon' ? Math.max(1, n.hits ?? 5) : 0), 0);
+    this.base = scoreBase(this.hitIdx.length, balloonHits);
   }
+
+  /** 初項（「良」1 つの点数）。「可」はその半分（10 点未満は切り捨て） */
+  readonly base: number;
 
   get totalHitNotes() {
     return this.hitIdx.length;
@@ -173,7 +192,6 @@ export class Game {
     if (bw && kind === bw.kind && now >= bw.at - EPS && now - bw.at <= BIG_WAIT + EPS) {
       this.bigWait = null;
       if (!near || now - bw.at < near.ad) {
-        this.stats.score += 500;
         return { type: 'big' };
       }
     }
@@ -189,11 +207,8 @@ export class Game {
       if (n.type === 'balloon') {
         if (kind !== 'don') return { type: 'roll' }; // 風船はドンだけ。カッは何も起きない
         ls.count++;
-        this.stats.score += 300;
-        if (ls.count >= (n.hits ?? 5)) {
-          ls.done = true;
-          this.stats.score += 5000;
-        }
+        this.stats.score += BALLOON_HIT_SCORE;
+        if (ls.count >= (n.hits ?? 5)) ls.done = true;
       } else {
         ls.count++;
         this.stats.rolls++;
@@ -252,14 +267,11 @@ export class Game {
     } else {
       st.combo++;
       st.maxCombo = Math.max(st.maxCombo, st.combo);
-      const big = s.note.type === 'bigDon' || s.note.type === 'bigKa';
-      let pts = judge === 'good' ? 1000 : 500;
-      if (big) pts *= 2;
-      if (s.note.gogo) pts = Math.round(pts * 1.2);
-      st.score += pts;
+      // 大音符・ゴーゴータイムでも点数は同じ（初項だけ）
+      st.score += judge === 'good' ? this.base : Math.floor(this.base / 2 / 10) * 10;
     }
-    // 全部「良」でちょうど満タン、「可」は半分、「不可」は 2 倍減る
-    const unit = 100 / Math.max(1, this.hitIdx.length);
+    // 全部「良」なら音符の 6 割でクリア、7.5 割で満タン。「可」は半分、「不可」は 2 倍減る
+    const unit = 100 / Math.max(1, this.hitIdx.length * GAUGE_FULL_AT);
     const dg = judge === 'good' ? unit : judge === 'ok' ? unit * 0.5 : -unit * 2;
     st.gauge = Math.min(100, Math.max(0, st.gauge + dg));
     if (st.gauge > 100 - 1e-6) st.gauge = 100; // 小数の誤差で満タンにならないのを防ぐ

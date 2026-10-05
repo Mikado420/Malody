@@ -550,10 +550,10 @@ export class EditorView {
     if (ed.pendingLong !== null) {
       const x = this.xOf(ed.pendingLong);
       ctx.setLineDash([8 * s, 8 * s]);
-      ctx.strokeStyle = ed.tool === 'gogo' ? '#ff6e28' : ed.tool === 'grad' ? '#c792ea' : '#fbbf14';
+      ctx.strokeStyle = ed.tool === 'gogo' ? '#ff6e28' : ed.tool === 'scroll' ? '#c792ea' : '#fbbf14';
       ctx.lineWidth = Math.max(2, 5 * s);
       ctx.beginPath();
-      if (ed.tool === 'gogo' || ed.tool === 'grad') {
+      if (ed.tool === 'gogo' || ed.tool === 'scroll') {
         // ゴーゴー・グラデの始点は縦の点線
         ctx.moveTo(x, L.laneY);
         ctx.lineTo(x, L.laneY + L.laneH);
@@ -569,8 +569,8 @@ export class EditorView {
       const t = ed.snap(this.tickOf(this.hoverX));
       const x = this.xOf(t);
       ctx.globalAlpha = 0.4;
-      if (ed.tool === 'gogo' || ed.tool === 'grad') {
-        ctx.fillStyle = ed.tool === 'gogo' ? '#ff6e28' : '#c792ea';
+      if (ed.tool === 'gogo' || ed.tool === 'scroll' || ed.tool === 'bpm' || ed.tool === 'measure') {
+        ctx.fillStyle = { gogo: '#ff6e28', scroll: '#c792ea', bpm: '#5cc8f0', measure: '#e0a400' }[ed.tool];
         ctx.fillRect(x - Math.max(1, 2 * s), L.laneY, Math.max(2, 4 * s), L.laneH);
       } else if (ed.tool === 'erase') {
         ctx.strokeStyle = '#fff';
