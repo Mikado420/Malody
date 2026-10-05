@@ -354,7 +354,8 @@ body.playing #app { visibility: hidden; }
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px;
-  font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  /* 16px 未満だと iPhone が入力時に拡大してしまう */
+  font: 16px/1.45 ui-monospace, Menlo, Consolas, monospace;
   white-space: pre;
   overflow: auto;
   tab-size: 4;
@@ -362,3 +363,14 @@ body.playing #app { visibility: hidden; }
   user-select: text;
   touch-action: auto;
 }
+
+.kb-only { display: none; }
+/* TJA の入力中: キーボードに隠れない部分いっぱいにテキストを広げる（説明・見出しは隠す） */
+.sheet.kb { align-items: stretch; bottom: auto; }
+.sheet.kb .sheet-panel { width: 100%; max-height: none; height: 100%; border-radius: 0; padding-bottom: 0; }
+.sheet.kb .sheet-head, .sheet.kb .sheet-body > .note { display: none; }
+.sheet.kb .sheet-body { flex: 1; min-height: 0; padding: 6px 8px; gap: 6px; overflow: hidden; }
+.sheet.kb .tja-btns { grid-template-columns: repeat(4, 1fr); }
+.sheet.kb .tja-btns button { padding: 6px; font-size: 13px; }
+.sheet.kb .kb-only { display: block; }
+.sheet.kb .tja-text { min-height: 0; flex: 1; resize: none; }

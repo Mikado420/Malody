@@ -408,10 +408,11 @@ function renderSheet() {
     const text = writeTJA(ed.chart);
     body.innerHTML = `
       <p class="note">譜面全体の TJA です。書き換えて「反映」すると譜面に反映されます（元に戻すで戻せます）。#BPMCHANGE や #GOGOSTART などのイベントもここで編集できます。</p>
-      <div class="btns three">
+      <div class="btns three tja-btns">
         <button data-tja="apply" class="primary">反映</button>
         <button data-tja="copy">コピー</button>
         <button data-tja="reset">書き換えを取り消す</button>
+        <button data-tja="done" class="kb-only">完了</button>
       </div>
       <textarea id="tjaText" class="tja-text" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>`;
     const ta = body.querySelector<HTMLTextAreaElement>('#tjaText')!;
@@ -424,6 +425,45 @@ function renderSheet() {
     });
   }
 }
+
+/**
+ * TJA のテキストを入力している間は、キーボードに隠れない部分（visualViewport）いっぱいに
+ * テキストを広げる（横向きだとキーボードが画面の半分以上を占めるため）
+ */
+function fitSheetToKeyboard() {
+  const el = $('sheet');
+  const vv = window.visualViewport;
+  if (!el.classList.contains('kb') || !vv) return;
+  el.style.top = `${vv.offsetTop}px`;
+  el.style.height = `${vv.height}px`;
+  el.style.bottom = 'auto';
+}
+$('sheet').addEventListener('focusin', (e) => {
+  if ((e.target as HTMLElement).id !== 'tjaText') return;
+  $('sheet').classList.add('kb');
+  fitSheetToKeyboard();
+  // キーボードが出きるまで何回か合わせ直す
+  for (const ms of [100, 300, 600]) setTimeout(fitSheetToKeyboard, ms);
+});
+$('sheet').addEventListener('focusout', (e) => {
+  if ((e.target as HTMLElement).id !== 'tjaText') return;
+  const el = $('sheet');
+  el.classList.remove('kb');
+  el.style.top = el.style.height = el.style.bottom = '';
+});
+// 入力中にボタンを押してもテキストからフォーカスが外れないようにする（外れると画面が戻り、押す位置がずれる）
+$('sheetBody').addEventListener('mousedown', (e) => {
+  if ((e.target as HTMLElement).closest('.tja-btns button') && $('sheet').classList.contains('kb')) e.preventDefault();
+});
+$('sheetBody').addEventListener('touchstart', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('.tja-btns button');
+  if (b && $('sheet').classList.contains('kb')) {
+    e.preventDefault();
+    b.click();
+  }
+}, { passive: false });
+window.visualViewport?.addEventListener('resize', fitSheetToKeyboard);
+window.visualViewport?.addEventListener('scroll', fitSheetToKeyboard);
 
 /** TJA のテキストで、その難易度の n 小節目（0 から）がある行 */
 function tjaLineOf(text: string, course: string, measure: number): number {
@@ -466,6 +506,8 @@ async function tjaAction(act: string) {
   } else if (act === 'reset') {
     ta.value = writeTJA(ed.chart);
     toast('書き換えを取り消しました');
+  } else if (act === 'done') {
+    ta.blur();
   }
 }
 
