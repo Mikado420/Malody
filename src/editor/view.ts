@@ -429,6 +429,25 @@ export class EditorView {
       if (m.start + m.length < leftTick) continue;
       if (m.start > rightTick) break;
       const count = Math.round(m.length / step);
+      // 波形の上の目安の線: 拍ごとに薄い線、グリッドごとにさらに薄い線（小節線だけはレーンまで通す）
+      const lw1 = Math.max(1, s);
+      const beatPx = this.zoom;
+      if (beatPx >= 6) {
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        for (let rel = TPB; rel < m.length; rel += TPB) {
+          const x = this.xOf(m.start + rel);
+          if (x >= L.colW && x <= this.w) ctx.fillRect(x - lw1 / 2, L.waveY, lw1, L.waveH);
+        }
+      }
+      if (stepPx >= 7) {
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        for (let k = 1; k < count; k++) {
+          const rel = k * step;
+          if (rel % TPB === 0) continue;
+          const x = this.xOf(m.start + rel);
+          if (x >= L.colW && x <= this.w) ctx.fillRect(x - lw1 / 2, L.waveY, lw1, L.waveH);
+        }
+      }
       for (let k = 1; k < count; k++) {
         const rel = k * step;
         const inBeat = rel % TPB;
