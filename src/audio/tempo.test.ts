@@ -99,10 +99,12 @@ describe('BPM・OFFSET の自動測定', () => {
     );
   });
 
-  it('倍・半分の関係にない BPM への変化（175 → 130）と、2 小節ごとに速くなって戻る所（130 → 145 → 160 → 175）', () => {
+  it('倍・半分の関係にない BPM への変化: 1 小節ずつ遅くなり（175 → 160 → 145 → 130）、2 小節ずつ速くなって戻る（→ 145 → 160 → 175）', () => {
     const sr = 22050;
     const parts = [
-      { bpm: 175, beats: 96 },
+      { bpm: 175, beats: 88 },
+      { bpm: 160, beats: 4 },
+      { bpm: 145, beats: 4 },
       { bpm: 130, beats: 64 },
       { bpm: 145, beats: 8 },
       { bpm: 160, beats: 8 },
@@ -111,7 +113,7 @@ describe('BPM・OFFSET の自動測定', () => {
     const x = song(sr, 0.4, parts);
     const plan = tempoPlan(analyzeTempo(x, sr), TPB)!;
     expect(plan.bpm).toBe(175);
-    expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual([[96, 130], [160, 145], [168, 160], [176, 175]]);
+    expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual([[88, 160], [92, 145], [96, 130], [160, 145], [168, 160], [176, 175]]);
   });
 
   it('BPM 230 は 229.98 などにせず 230 にする（音が少し揺れていても、曲全体のずれで判断）', () => {

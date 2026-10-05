@@ -774,6 +774,8 @@ function analyzeFine(env: Envelope, tg: { center: number; score: Float32Array }[
 interface CoarseSeg {
   start: number;
   end: number;
+  /** この区間の拍のうち、小節の頭の 1 つ（分かっているとき） */
+  down?: number;
   bpm: number;
   rawBpm: number;
   phase: number;
@@ -933,151 +935,212 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
 
 /**
  * BPM が変わる所を細かく決める（だんだん速く・遅くなる所も）。
- * 前の区間 A の拍から始めて、1 拍ずつ「どの BPM で次の拍に進むか」を選び、後ろの区間 B の拍にぴったりつながる道のうち、
+ * G = 続いた区間（最初 A・途中・最後 Z）。A の拍から始めて、1 拍ずつ「どの BPM で次の拍に進むか」を選び、Z の BPM で終わる道のうち、
  * 拍の位置に音がいちばんよく乗るものを探す（動的計画法）。BPM を変えるたびに減点し、同じ BPM は 4 拍（1 小節）以上続ける。
- * A・B の間に別の BPM の部分があれば、新しい区間として返す（見つからないときは null）
+ * BPM は今の区間から次の区間の BPM へ向かう向きにだけ変え、小節の頭以外で変えるときは減点する。
+ * 戻り値は A と Z の間の区間（A.end・Z.start も直す）。見つからないときは null
  */
-const KERN = [0.5, 0.85, 1, 0.85, 0.6, 0.3];
-function bridge(env: Envelope, A: CoarseSeg, B: CoarseSeg): CoarseSeg[] | null {
+const KERN = [0.5, 0.85, 1, 0.85, 0.5];
+function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   const { fr, t0, all } = env;
-  const bnd = A.end;
-  const lo = Math.max(A.start, bnd - 12);
-  const hi = Math.min(B.end, bnd + 12);
+  const A = G[0];
+  const Z = G[G.length - 1];
+  const inner = G.slice(1, -1);
+  const lo = Math.max(A.start, A.end - 12);
+  const hi = Math.min(Z.end, Z.start + 12);
   if (hi - lo < 6) return null;
   const PA = 60 / A.bpm;
-  const PB = 60 / B.bpm;
-  const hit = (t: number) => {
-    const i = Math.round((t - t0) * fr);
-    // 立ち上がりの山は少し早めに出る。拍の位置から離れるほど弱く数える
-    let a = 0;
-    let l = 0;
-    for (let d = -3; d <= 2; d++) {
-      const kw = KERN[d + 3];
-      a = Math.max(a, (all[i + d] ?? 0) * kw);
-      l = Math.max(l, (env.low[i + d] ?? 0) * kw);
+  const PZ = 60 / Z.bpm;
+  // 立ち上がりの山は拍の位置より少し早めに出る。どれだけ早いかは、A の拍の所で山がいちばん高くなるずれから決める
+  let lag = 0;
+  {
+    let bv = -Infinity;
+    for (let d = -4; d <= 2; d++) {
+      let sum = 0;
+      for (let t = A.phase + Math.ceil((lo - A.phase) / PA) * PA; t < A.end; t += PA) sum += all[Math.round((t - t0) * fr) + d] ?? 0;
+      if (sum > bv) { bv = sum; lag = d; }
     }
-    return a + l;
+  }
+  const hit = (t: number) => {
+    const i = Math.round((t - t0) * fr) + lag;
+    // 拍の位置から離れるほど弱く数える
+    // （低い音は使わない。裏にキックがある曲で、拍の位置を取り違えやすいため）
+    let a = 0;
+    for (let d = -2; d <= 2; d++) a = Math.max(a, (all[i + d] ?? 0) * KERN[d + 2]);
+    return a;
   };
   let mu = 0;
   let cnt = 0;
   for (let t = lo; t < hi; t += 0.01) { mu += hit(t); cnt++; }
   mu /= Math.max(1, cnt);
   if (!(mu > 0)) return null;
-  const LAMBDA = 4 * mu;
-  const MINLEN = 4;
-  // BPM の候補: A と B の間（少し外側まで）の整数と、A・B の BPM
-  const bl = Math.min(A.bpm, B.bpm) * 0.97;
-  const bh = Math.max(A.bpm, B.bpm) * 1.03;
-  const cand: number[] = [A.bpm, B.bpm];
-  for (let b = Math.ceil(bl); b <= bh; b++) if (b !== A.bpm && b !== B.bpm) cand.push(b);
+  const LAMBDA = 3 * mu;
+  // BPM の候補: 0 = A、1 = Z（同じ BPM でも別に扱う）、途中の区間の BPM、その間（少し外側まで）の整数
+  const all3 = G.map((g) => g.bpm);
+  const bl = Math.min(...all3) * 0.97;
+  const bh = Math.max(...all3) * 1.03;
+  const cand: number[] = [A.bpm, Z.bpm];
+  for (const g of inner) if (!cand.slice(2).includes(g.bpm)) cand.push(g.bpm);
+  const nAnchor = cand.length;
+  for (let b = Math.ceil(bl); b <= bh; b++) if (!cand.slice(2).includes(b)) cand.push(b);
   const nT = cand.length;
   // きりのいい BPM（5 の倍数）を少し優先する
-  const odd = (k: number) => (k > 1 && cand[k] % 5 !== 0 ? LAMBDA * 0.5 : 0);
+  const odd = (k: number) => (k >= nAnchor && cand[k] % 5 !== 0 ? LAMBDA * 0.5 : 0);
+  // 途中の区間の中ほどは、その区間の BPM のままでいて、拍は数えない。
+  // 途中の区間の拍の位置は、区間の中の音の強さ（裏拍が強い曲などで迷う）ではなく、前後の BPM の変わり目からのつながりで決める。
+  // 中ほど = 4 秒の窓で見て、その区間の BPM がほかの候補の BPM よりよく合う所が続く範囲（両端を少し内側に）
+  const WIN = 4;
+  const inside = inner.map((g) => {
+    const others = cand.filter((b) => Math.abs(b / g.bpm - 1) > 0.05);
+    const wins: { T: number; w: boolean }[] = [];
+    const from = Math.max(lo, g.start - 10);
+    const to = Math.min(hi, g.end + 10) - WIN;
+    for (let T = from; T <= to + 1e-9; T += 0.5) {
+      const i0 = Math.max(0, Math.round((T - t0) * fr));
+      const i1 = Math.min(all.length, Math.round((T + WIN - t0) * fr));
+      const own = foldScore(all, fr, t0, i0, i1, 60 / g.bpm).score;
+      let w = own > 0;
+      for (const b of others) if (foldScore(all, fr, t0, i0, i1, 60 / b).score * 0.9 > own) { w = false; break; }
+      wins.push({ T, w });
+    }
+    // 勝つ窓が続く、いちばん長い範囲（1 つだけ負けた窓ははさんでもよい）
+    let best: [number, number] | null = null;
+    for (let i = 0; i < wins.length; i++) {
+      if (!wins[i].w || (i > 0 && wins[i - 1].w)) continue;
+      let j = i;
+      while (j + 1 < wins.length && (wins[j + 1].w || (j + 2 < wins.length && wins[j + 2].w))) j++;
+      if (!wins[j].w) j--;
+      if (!best || wins[j].T - wins[i].T > best[1] - best[0]) best = [wins[i].T, wins[j].T];
+    }
+    // 窓の中に前後の BPM が少し入っていても勝つことがあるので、内側に 2.5 秒ずつ寄せる
+    return best && best[1] + WIN - 2.5 > best[0] + 2.5 ? [best[0] + 2.5, best[1] + WIN - 2.5] : null;
+  });
+  const innerAt = (t: number) => {
+    for (let j = 0; j < inner.length; j++) { const r = inside[j]; if (r && t > r[0] && t < r[1]) return j; }
+    return -1;
+  };
+  const score = (_k: number, t: number) => (innerAt(t) >= 0 ? 0 : hit(t) - mu);
+  // 区間の順番（A → 途中の区間 → Z）。BPM は今の区間から次の区間の BPM へ向かう向きにだけ変える
+  // （行ってすぐ戻るような変化は、拍の位置を合わせるためだけのものになりやすいので使わない）
+  const ord = [0, ...inner.map((g) => cand.indexOf(g.bpm, 2)), 1];
+  const nSt = ord.length - 1;
   const ts = Math.ceil((lo - A.phase) / PA);
   const tStart = A.phase + ts * PA;
+  // 小節の中の拍の位置（0 = 小節の頭）。BPM は小節の頭で変わることが多いので、それ以外で変えるときは減点
+  const aDown = A.down ?? findDownbeatCoarse(env, A);
+  const bp0 = ((Math.round((tStart - aDown) / PA) % 4) + 4) % 4;
+  const OFFBAR = LAMBDA;
+  const NB = 4;
   const nF = Math.ceil((hi - tStart) * fr) + 2;
-  const S = nF * nT * MINLEN;
+  // 同じ BPM は 4 拍以上続ける（c = 今の BPM になってからの拍数。4 で止める）
+  const MINLEN = 4;
+  const S = nF * nT * NB * MINLEN * nSt;
   const val = new Float64Array(S).fill(-Infinity);
   const tim = new Float64Array(S);
   const back = new Int32Array(S).fill(-1);
-  const frac = new Float32Array(S);
-  const key = (f: number, k: number, c: number) => (f * nT + k) * MINLEN + (c - 1);
-  const s0 = key(0, 0, MINLEN);
+  const key = (f: number, k: number, bp: number, c: number, st: number) => (((f * nT + k) * NB + bp) * MINLEN + (c - 1)) * nSt + st;
+  const s0 = key(0, 0, bp0, MINLEN, 0);
   val[s0] = 0;
   tim[s0] = tStart;
+  const relax = (s2: number, v2: number, t2: number, from: number) => {
+    if (v2 > val[s2]) {
+      val[s2] = v2;
+      tim[s2] = t2;
+      back[s2] = from;
+    }
+  };
   for (let f = 0; f < nF; f++) {
     for (let k = 0; k < nT; k++) {
-      for (let c = 1; c <= MINLEN; c++) {
-        const s = key(f, k, c);
-        const v = val[s];
-        if (v === -Infinity) continue;
-        for (let k2 = 0; k2 < nT; k2++) {
-          if (k2 !== k && c < MINLEN) continue;
-          // A の BPM へは戻らない、B の BPM になったら変えない
-          if (k2 === 0 && k !== 0) continue;
-          if (k === 1 && k2 !== 1) continue;
-          const t2 = tim[s] + 60 / cand[k2];
-          if (t2 >= hi) continue;
-          const f2 = Math.round((t2 - tStart) * fr);
-          const c2 = k2 === k ? Math.min(MINLEN, c + 1) : 1;
-          const s2 = key(f2, k2, c2);
-          const v2 = v + hit(t2) - mu - (k2 === k ? 0 : LAMBDA + odd(k2));
-          if (v2 > val[s2]) {
-            val[s2] = v2;
-            tim[s2] = t2;
-            back[s2] = s;
-            frac[s2] = 0;
+      for (let bp = 0; bp < NB; bp++) for (let c = 1; c <= MINLEN; c++) {
+        for (let st = 0; st < nSt; st++) {
+          const s = key(f, k, bp, c, st);
+          const v = val[s];
+          if (v === -Infinity) continue;
+          const t = tim[s];
+          const bp2 = (bp + 1) % NB;
+          // 同じ BPM で次の拍へ
+          {
+            const t2 = t + 60 / cand[k];
+            const j = innerAt(t2);
+            if (t2 < hi && (j < 0 || ord[j + 1] === k)) relax(key(Math.round((t2 - tStart) * fr), k, bp2, Math.min(MINLEN, c + 1), st), v + score(k, t2), t2, s);
           }
-          // 拍の途中（1/4・1/2・3/4 拍の所）で BPM を変える
-          if (k2 !== k) {
-            for (const q of [0.25, 0.5, 0.75]) {
-              const t3 = tim[s] + (q * 60) / cand[k];
-              if (t3 >= hi) continue;
-              const f3 = Math.round((t3 - tStart) * fr);
-              const s3 = key(f3, k2, 1);
-              const v3 = v + hit(t3) - mu - LAMBDA * 1.5 - odd(k2);
-              if (v3 > val[s3]) {
-                val[s3] = v3;
-                tim[s3] = t3;
-                back[s3] = s;
-                frac[s3] = q;
-              }
-            }
+          if (k === 1 || c < MINLEN) continue;
+          // ここ（拍 t）から BPM を変える
+          const target = cand[ord[st + 1]];
+          for (let k2 = 0; k2 < nT; k2++) {
+            if (k2 === k) continue;
+            let st2 = st;
+            if (k2 === ord[st + 1]) st2 = Math.min(nSt - 1, st + 1);
+            else if (k2 < nAnchor) continue;
+            else if (!((cand[k2] - cand[k]) * (target - cand[k2]) > 0)) continue;
+            const pen = LAMBDA + odd(k2) + (bp === 0 ? 0 : OFFBAR);
+            const t2 = t + 60 / cand[k2];
+            const j = innerAt(t2);
+            if (t2 < hi && (j < 0 || ord[j + 1] === k2)) relax(key(Math.round((t2 - tStart) * fr), k2, bp2, 1, st2), v + score(k2, t2) - pen, t2, s);
           }
         }
       }
     }
   }
-  // 終わり: B の BPM で、B の拍の位置（±15ms）にいる所
+  // 終わり: Z の BPM で、Z の拍の位置（±15ms）にいる所。
+  // 16 分が続く曲では Z の拍が 1/4 拍ずれて測られていることがあるので、1/4 拍ずれた所も（少し減点して）認める
   let end = -1;
   let ev = -Infinity;
-  for (let f = Math.max(0, nF - Math.ceil(PB * fr) - 2); f < nF; f++) {
-    for (let c = 1; c <= MINLEN; c++) {
-      const s = key(f, 1, c);
+  for (let f = Math.max(0, nF - Math.ceil(PZ * fr) - 2); f < nF; f++) {
+    for (let bp = 0; bp < NB; bp++) for (let c = 1; c <= MINLEN; c++) {
+      const s = key(f, 1, bp, c, nSt - 1);
       if (val[s] === -Infinity) continue;
       const t = tim[s];
-      const d = Math.abs(t - (B.phase + Math.round((t - B.phase) / PB) * PB));
+      const x = (t - Z.phase) / PZ;
+      const q4 = Math.round(x * 4);
+      const d = Math.abs(x * 4 - q4) * (PZ / 4);
       if (d > 0.015) continue;
-      if (val[s] > ev) { ev = val[s]; end = s; }
+      const v = val[s] - (q4 % 4 === 0 ? 0 : LAMBDA * 0.5);
+      if (v > ev) { ev = v; end = s; }
     }
   }
   if (end < 0) return null;
-  // たどって、BPM ごとの区間にする
-  const path: { t: number; k: number; q: number }[] = [];
-  for (let s = end; s >= 0; s = back[s]) path.push({ t: tim[s], k: Math.floor(s / MINLEN) % nT, q: frac[s] });
+  // たどって、BPM ごとの区間にする（拍 i から i+1 までは、拍 i+1 の状態の BPM）
+  const path: { t: number; k: number }[] = [];
+  for (let s = end; s >= 0; s = back[s]) path.push({ t: tim[s], k: Math.floor(s / (NB * MINLEN * nSt)) % nT });
   path.reverse();
-  const pieces: { k: number; start: number; end: number; beats: number }[] = [{ k: path[0].k, start: path[0].t, end: path[0].t, beats: 0 }];
+  const endBp = Math.floor(end / (MINLEN * nSt)) % NB;
+  const pieces: { k: number; start: number; end: number; beats: number }[] = [];
   for (let i = 1; i < path.length; i++) {
     const k = path[i].k;
     const last = pieces[pieces.length - 1];
-    if (path[i].q) {
-      // 前の BPM のまま途中まで進み、そこから次の BPM
-      last.end = path[i].t;
-      last.beats += path[i].q;
-      pieces.push({ k, start: path[i].t, end: path[i].t, beats: 0 });
-    } else if (last.k === k) { last.end = path[i].t; last.beats++; }
+    if (last && last.k === k) { last.end = path[i].t; last.beats++; }
     else pieces.push({ k, start: path[i - 1].t, end: path[i].t, beats: 1 });
   }
-  // ほとんど同じ BPM（1.5% 未満の差）の隣どうしはつなぐ（長いほう、または A・B の BPM にする）
+  // ほとんど同じ BPM（1.5% 未満の差）の隣どうしはつなぐ（A・Z・途中の区間の BPM、または長いほうにする）
   for (let i = 1; i < pieces.length; ) {
     const p = pieces[i - 1];
     const q = pieces[i];
     if (Math.abs(cand[p.k] / cand[q.k] - 1) >= 0.015) { i++; continue; }
-    const rank = (x: typeof p) => (x.k <= 1 ? Infinity : x.end - x.start);
+    const rank = (x: typeof p) => (x.k <= 1 ? Infinity : x.k < nAnchor ? 1e6 + x.end - x.start : x.end - x.start);
     const k = rank(p) >= rank(q) ? p.k : q.k;
     const P = 60 / cand[k];
     pieces.splice(i - 1, 2, { k, start: p.start, end: q.end, beats: Math.max(0.25, Math.round((4 * (q.end - p.start)) / P) / 4) });
   }
   const out: CoarseSeg[] = [];
-  let aEnd = bnd;
-  let bStart = bnd;
+  let aEnd = A.end;
+  let zStart = A.end;
   for (const p of pieces) {
-    if (p.k === 0) { aEnd = p.end; bStart = p.end; }
-    else if (p.k === 1) { bStart = p.start; break; }
-    else out.push({ start: p.start, end: p.end, bpm: cand[p.k], rawBpm: cand[p.k], phase: p.start, beats: p.beats, matched: p.beats, jitterMs: 0 });
+    if (p.k === 0) { aEnd = p.end; zStart = p.end; }
+    else if (p.k === 1) { zStart = p.start; break; }
+    else {
+      // 途中の区間と同じ BPM なら、その区間の測った値（ずれの大きさなど）を使う
+      const g = inner.find((x) => x.bpm === cand[p.k]);
+      out.push(g && p.end - p.start > 8
+        ? { ...g, start: p.start, end: p.end, phase: p.start }
+        : { start: p.start, end: p.end, bpm: cand[p.k], rawBpm: cand[p.k], phase: p.start, beats: p.beats, matched: p.beats, jitterMs: 0 });
+    }
   }
   A.end = aEnd;
-  B.start = bStart;
+  Z.start = zStart;
+  // Z の拍の位置は、つながった所に合わせる（次の境目を探すときに使う）
+  Z.phase = tim[end];
+  Z.down = tim[end] - endBp * PZ;
   return out;
 }
 
@@ -1284,18 +1347,22 @@ export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: numb
       const merged = refineCoarse(env, segs[a0].start, segs[a0 + 1].end, keep.bpm);
       segs = [...segs.slice(0, a0), merged, ...segs.slice(a0 + 2)];
     }
-    // 境目を細かく決め、だんだん変わる所は小さな区間に分ける
-    const bridged: CoarseSeg[] = [];
-    for (let i = 0; i < segs.length; i++) {
-      if (i > 0) {
-        const mid = bridge(env, bridged[bridged.length - 1], segs[i]);
-        if (mid) bridged.push(...mid);
+    // 境目を細かく決め、だんだん変わる所は小さな区間に分ける。
+    // 短い（40 秒未満の）区間をはさむときは、その前後の区間とまとめて 1 度に決める
+    if (segs.length > 1) {
+      const out: CoarseSeg[] = [segs[0]];
+      let i = 0;
+      while (i < segs.length - 1) {
+        let j = i + 1;
+        while (j < segs.length - 1 && segs[j].end - segs[j].start < 40) j++;
+        const mid = bridge(env, segs.slice(i, j + 1));
+        out.push(...(mid ?? segs.slice(i + 1, j)), segs[j]);
+        i = j;
       }
-      bridged.push(segs[i]);
+      segs = out;
     }
-    segs = bridged;
     craw.segs = segs;
-    if (segs.length) craw.downbeat = findDownbeatCoarse(env, segs[0]);
+    if (segs.length) craw.downbeat = segs[0].down ?? findDownbeatCoarse(env, segs[0]);
   }
   const coarse = coarseToResult(craw, duration);
   const fine = analyzeFine(env, tg, path, duration, progress);
