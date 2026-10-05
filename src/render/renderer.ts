@@ -1199,7 +1199,7 @@ export class Renderer {
   private gogoStartWall = -1e9;
 
   /**
-   * 炎の形（玉の上側を包み、右上へ 3 本の先がのびる）。玉と同じ色で、玉の下に描くと 1 つの炎の玉に見える。
+   * 炎の形（玉の右上から 1 本の先がのびる）。玉と同じ色で、玉の下に描くと 1 つの炎の玉に見える。
    * 先の長さ・向きは約 16 コマ/秒で切り替える（アニメのコマ送りのように、ぬるぬるではなくパラパラ動く）
    */
   private flamePath(wall: number) {
@@ -1210,8 +1210,6 @@ export class Renderer {
     const P = (ang: number, r: number) => [JX + Math.cos(ang) * r, JY + Math.sin(ang) * r] as const;
     // 先: 付け根の角度、長さ、向き（右上 -45° を基準に少し開く）
     const tips = [
-      { a: -2.15, len: 46, dir: -1.25 },
-      { a: -1.45, len: 74, dir: -0.95 },
       { a: -0.75, len: 60, dir: -0.6 },
     ].map((t, i) => ({ a: t.a, len: t.len * (0.82 + 0.22 * n(i, 0)), dir: t.dir + 0.12 * n(i, 1) }));
     ctx.beginPath();
@@ -1235,14 +1233,14 @@ export class Renderer {
     ctx.closePath();
   }
 
-  /** ゴーゴータイムの判定枠: 炎の玉。ゴーゴーが始まった瞬間は、大きな炎がふわっと広がって玉に収まる（控えめに） */
+  /** ゴーゴータイムの判定枠: 炎の玉。ゴーゴーが始まった瞬間は、大きな炎がさっと広がって玉に収まる（控えめに・約 0.26 秒） */
   private drawFireball(wall: number) {
     const ctx = this.ctx;
     ctx.save();
     const since = wall - this.gogoStartWall;
-    if (since >= 0 && since < 480) {
+    if (since >= 0 && since < 260) {
       // ゴーゴースタート: 薄い大きな炎が玉から広がって消える。レーンも一瞬だけ明るく
-      const k = since / 480;
+      const k = since / 260;
       const e = 1 - (1 - k) * (1 - k);
       ctx.fillStyle = `rgba(255,150,120,${0.16 * (1 - k)})`;
       ctx.fillRect(LANE_X, LANE_TOP, this.vis.x1 - LANE_X, LANE_BOTTOM - LANE_TOP);
@@ -1262,7 +1260,7 @@ export class Renderer {
       // レーンの下の縁を右へ流れる小さな光
       ctx.fillStyle = `rgba(255,255,255,${0.6 * (1 - k)})`;
       for (let j = 0; j < 14; j++) {
-        const x = JX + 60 + ((j * 97 + since * 1.6) % 900);
+        const x = JX + 60 + ((j * 97 + since * 3) % 900);
         const y = LANE_BOTTOM - 10 - ((j * 37) % 30);
         const r = 2 + (j % 3);
         ctx.fillRect(x - r, y - 0.6, r * 2, 1.2);
