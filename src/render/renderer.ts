@@ -431,7 +431,10 @@ export class Renderer {
     this.lastScore = st.score;
 
     const gogo = course.gogo.some(([a, b]) => now >= a && now < b);
-    if (gogo && !this.wasGogo) this.startFireworks(wall);
+    if (gogo && !this.wasGogo) {
+      this.startFireworks(wall);
+      this.gogoStartWall = wall;
+    }
     this.wasGogo = gogo;
 
     // 背景は後ろの canvas に描いてあるので、手前は消すだけ
@@ -1192,21 +1195,87 @@ export class Renderer {
     ctx.restore();
   }
 
-  /** ゴーゴータイムの判定枠: オレンジの炎の玉と、右上へゆらめく小さく明るい炎の尾 */
+  /** ゴーゴータイムが始まった時刻（ゴーゴースタートの演出用） */
+  private gogoStartWall = -1e9;
+
+  /**
+   * 炎の形（玉の上側を包み、右上へ 3 本の先がのびる）。玉と同じ色で、玉の下に描くと 1 つの炎の玉に見える。
+   * 先の長さ・向きは約 16 コマ/秒で切り替える（アニメのコマ送りのように、ぬるぬるではなくパラパラ動く）
+   */
+  private flamePath(wall: number) {
+    const ctx = this.ctx;
+    const f = Math.floor(wall / 62); // コマ番号
+    const n = (i: number, k: number) => Math.sin(f * (0.9 + i * 0.37) + k * 2.3 + i * 1.7); // コマごとに変わる値（-1〜1）
+    const R = 95;
+    const P = (ang: number, r: number) => [JX + Math.cos(ang) * r, JY + Math.sin(ang) * r] as const;
+    // 先: 付け根の角度、長さ、向き（右上 -45° を基準に少し開く）
+    const tips = [
+      { a: -2.15, len: 46, dir: -1.25 },
+      { a: -1.45, len: 74, dir: -0.95 },
+      { a: -0.75, len: 60, dir: -0.6 },
+    ].map((t, i) => ({ a: t.a, len: t.len * (0.82 + 0.22 * n(i, 0)), dir: t.dir + 0.12 * n(i, 1) }));
+    ctx.beginPath();
+    const [sx, sy] = P(0.35, R - 4);
+    ctx.moveTo(sx, sy);
+    let prevA = 0.35;
+    // 右側から反時計回りに、谷 → 先 → 谷 … と外形をたどる
+    for (let i = tips.length - 1; i >= 0; i--) {
+      const t = tips[i];
+      const [vx, vy] = P((prevA + t.a) / 2 + 0.05, R + 6); // 谷
+      const [bx, by] = P(t.a, R + 4);
+      const tx = bx + Math.cos(t.dir) * t.len;
+      const ty = by + Math.sin(t.dir) * t.len;
+      ctx.quadraticCurveTo(vx + (tx - vx) * 0.15, vy + (ty - vy) * 0.15, vx, vy);
+      ctx.quadraticCurveTo(bx + (tx - bx) * 0.55 + 10, by + (ty - by) * 0.55 + 8, tx, ty);
+      ctx.quadraticCurveTo(bx + (tx - bx) * 0.35 - 14, by + (ty - by) * 0.35 - 4, ...P(t.a - 0.32, R + 2));
+      prevA = t.a - 0.32;
+    }
+    ctx.lineTo(...P(-2.9, R - 4));
+    ctx.arc(JX, JY, R - 4, -2.9, 0.35, false);
+    ctx.closePath();
+  }
+
+  /** ゴーゴータイムの判定枠: 炎の玉。ゴーゴーが始まった瞬間は、大きな炎がふわっと広がって玉に収まる（控えめに） */
   private drawFireball(wall: number) {
     const ctx = this.ctx;
     ctx.save();
-    // 速さの違う揺れを重ねてゆらめかせる（2 本の尾だったときの小さい方の尾。揺れは少し速く）
-    const t = (wall / 1000) * 1.3;
-    const v1 = Math.sin(t * 12.7 + 0.4) * 5 + Math.sin(t * 19.3) * 2;
-    const v2 = Math.sin(t * 8.9 + 1.7) * 4;
-    ctx.beginPath();
-    ctx.moveTo(JX + 52, JY - 74);
-    ctx.bezierCurveTo(JX + 86 + v2, JY - 92 + v1 * 0.5, JX + 104, JY - 76 + v2, JX + 120 + v1, JY - 90 + v2);
-    ctx.bezierCurveTo(JX + 110 + v2 * 0.5, JY - 56, JX + 98, JY - 34, JX + 84, JY - 16);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(255,190,110,0.75)';
+    const since = wall - this.gogoStartWall;
+    if (since >= 0 && since < 480) {
+      // ゴーゴースタート: 薄い大きな炎が玉から広がって消える。レーンも一瞬だけ明るく
+      const k = since / 480;
+      const e = 1 - (1 - k) * (1 - k);
+      ctx.fillStyle = `rgba(255,150,120,${0.16 * (1 - k)})`;
+      ctx.fillRect(LANE_X, LANE_TOP, this.vis.x1 - LANE_X, LANE_BOTTOM - LANE_TOP);
+      ctx.save();
+      ctx.globalAlpha = 0.4 * (1 - k);
+      ctx.translate(JX, JY);
+      const sc = 1.9 - 0.9 * e;
+      ctx.scale(sc, sc);
+      ctx.translate(-JX, -JY);
+      this.flamePath(wall);
+      ctx.fillStyle = '#ff9a7a';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(JX, JY, 95, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      // レーンの下の縁を右へ流れる小さな光
+      ctx.fillStyle = `rgba(255,255,255,${0.6 * (1 - k)})`;
+      for (let j = 0; j < 14; j++) {
+        const x = JX + 60 + ((j * 97 + since * 1.6) % 900);
+        const y = LANE_BOTTOM - 10 - ((j * 37) % 30);
+        const r = 2 + (j % 3);
+        ctx.fillRect(x - r, y - 0.6, r * 2, 1.2);
+        ctx.fillRect(x - 0.6, y - r, 1.2, r * 2);
+      }
+    }
+    // 炎（玉と同じ色）。縁だけ少し明るく
+    this.flamePath(wall);
+    ctx.fillStyle = '#f07436';
     ctx.fill();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(255,190,140,0.55)';
+    ctx.stroke();
     // 外の光と玉（動かないので一度だけ描いて貼る）
     this.drawSprite('fireball', JX - 120, JY - 120, 240, 240, () => this.paintFireball());
     ctx.restore();

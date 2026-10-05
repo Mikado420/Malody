@@ -187,9 +187,14 @@ export class Editor {
     return Math.max(this.minPos, Math.round(tick / step) * step);
   }
 
-  /** 判定枠を動かせる一番前: 1 小節目の長さぶん前（OFFSET は変えずに、音源の頭の前を見られるように） */
+  /**
+   * 判定枠を動かせる一番前: 音源の頭（0 秒）より 1 小節ほど前。
+   * 1 小節目の長さで後ろへ小節を並べた位置にそろえるので、OFFSET は変わらない（少なくとも 1 小節目の 1 つ前の小節までは戻れる）
+   */
   get minPos() {
-    return -this.measureOf(0).length;
+    const len = this.measureOf(0).length;
+    const audioStart = this.timing.timeToTick(0);
+    return Math.min(-len, (Math.floor(audioStart / len) - 1) * len);
   }
 
   private snapFree(tick: number): number {

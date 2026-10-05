@@ -174,9 +174,13 @@ async function startPlayback() {
   // メトロノーム: 拍子に合わせて 1 小節に「分子」の回数（4/4 なら 4 回、7/8 なら 8 分音符で 7 回）
   metroEvents = [];
   metroIdx = 0;
-  const fromTick = Math.max(0, view.pos);
+  const fromTick = view.pos;
   const endTick = ed.timing.timeToTick(endTime()) + TPB * 4;
-  for (const m of ed.measuresUntil(endTick)) {
+  // 曲の頭より前の小節（1 小節目と同じ拍子）でも鳴らす
+  const m0 = ed.measureOf(0);
+  const lead = [];
+  for (let k = Math.round(ed.minPos / m0.length); k < 0; k++) lead.push({ ...m0, start: k * m0.length });
+  for (const m of [...lead, ...ed.measuresUntil(endTick)]) {
     if (m.start + m.length <= fromTick - 1) continue;
     if (m.start > endTick) break;
     const beat = (TPB * 4) / m.den;

@@ -435,7 +435,11 @@ export class EditorView {
     ctx.fillRect(L.colW, L.laneY + L.laneH - edge / 2, this.w - L.colW, edge);
 
     // グリッド（小節線＋分割の点）
-    const ms = ed.measuresUntil(Math.max(0, rightTick));
+    // 曲の頭より前（音源の頭の 1 小節ほど前まで）にも、1 小節目と同じ拍子の小節を並べて見せる（番号は 0, -1, …。OFFSET は変えない）
+    const m0 = ed.measureOf(0);
+    const lead: typeof m0[] = [];
+    for (let k = Math.round(ed.minPos / m0.length); k < 0; k++) lead.push({ ...m0, index: k, start: k * m0.length });
+    const ms = [...lead, ...ed.measuresUntil(Math.max(0, rightTick))];
     const step = ed.step;
     const stepPx = (step / TPB) * this.zoom;
     for (const m of ms) {
