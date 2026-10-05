@@ -1021,8 +1021,11 @@ function renderGradSheet(body: HTMLElement) {
         ${seg('mode', [['linear', '等差'], ['geometric', '等比']], g.mode)}
         <label class="field"><span>小数の桁数</span><input type="number" min="0" max="6" step="1" inputmode="numeric" data-g="digits" value="${g.digits}"></label>
         <h3>#BPMCHANGE があるとき${hasBpm ? '' : '（この範囲にはありません）'}</h3>
-        ${seg('speed', [['visual', '見た目の速さで'], ['scroll', 'SCROLL の値で']], g.speed ?? 'scroll')}
-        <p class="note">「見た目の速さで」は BPM × SCROLL が滑らかに変わるように、BPM に合わせて #SCROLL を割り戻します（#BPMCHANGE の位置にも #SCROLL を置きます）。「SCROLL の値で」は #SCROLL の値だけを変えるので、BPM が変わる所で速さが跳ねます。</p>
+        ${seg('speed', [['visual', '見た目・終点の BPM'], ['visualBase', '見た目・始点の BPM'], ['scroll', 'SCROLL の値']], g.speed ?? 'scroll')}
+        <p class="note">見た目の 2 つは、BPM × SCROLL が滑らかに変わるように BPM に合わせて #SCROLL を割り戻します（#BPMCHANGE の位置にも #SCROLL を置きます）。<br>
+        ・終点の BPM: 終了値は終点での #SCROLL の値（見た目の速さ = 終了値 × 終点の BPM）<br>
+        ・始点の BPM: 開始値・終了値とも始点の BPM を基準にした見た目の速さ（見た目で ちょうど 終了値 ÷ 開始値 倍に）<br>
+        「SCROLL の値」は #SCROLL の値だけを変えるので、BPM が変わる所で速さが跳ねます。</p>
         <h3>小節線（#MEASURE で長さが変わる小節も同じ）</h3>
         ${seg('barlines', [['on', '対象に入れる'], ['off', '入れない']], g.barlines === false ? 'off' : 'on')}
         <p class="grad-err" id="gradErr"></p>

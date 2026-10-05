@@ -43,4 +43,12 @@ describe('グラデ', () => {
     // 見た目の速さは 120 → 120 で一定なので、BPM 120 の間は 1、BPM 240 の間は 0.5
     expect(s).toEqual([1, 1, 1, 1, 0.5, 0.5, 0.5, 0.5, 0.5]);
   });
+
+  it('見た目・始点の BPM: 1→2 は見た目でちょうど 2 倍（120 → 240）。終点の #SCROLL は 240 ÷ 240 = 1', () => {
+    const t = 'TITLE:t\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n#BPMCHANGE 120\n1111\n#BPMCHANGE 240\n1111,\n0,\n#END\n';
+    const ed = new Editor(parseTJA(t));
+    ed.setGrad({ start: 0, end: M, from: 1, to: 2, mode: 'linear', digits: 3, speed: 'visualBase' });
+    const s = ed.course.events.filter((e) => e.kind === 'scroll').map((e) => (e as { value: number }).value);
+    expect(s).toEqual([1, 1.125, 1.25, 1.375, 0.75, 0.813, 0.875, 0.938, 1]);
+  });
 });

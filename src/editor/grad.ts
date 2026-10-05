@@ -12,7 +12,10 @@ import { measures, type ECourse } from '../chart/model';
  * #BPMCHANGE があるときの選び方（speed）:
  * - 'scroll': #SCROLL の値そのものを滑らかに変える（BPM が変わるとそこで見た目の速さが跳ねる）
  * - 'visual': 見た目の速さ（BPM × SCROLL）を滑らかに変える。各位置の #SCROLL = その位置の見た目の速さ ÷ その位置の BPM。
- *             範囲の中の #BPMCHANGE の位置にも #SCROLL を置く（置かないとそこで速さが跳ねる）
+ *             範囲の中の #BPMCHANGE の位置にも #SCROLL を置く（置かないとそこで速さが跳ねる）。
+ *             開始値・終了値は、始点・終点での #SCROLL の値（終点の見た目の速さ = 終了値 × 終点の BPM）
+ * - 'visualBase': 'visual' と同じく見た目の速さを滑らかにするが、開始値・終了値は「始点の BPM を基準にした見た目の速さ」。
+ *             終点の見た目の速さ = 終了値 × 始点の BPM（終点の #SCROLL は、それを終点の BPM で割った値）
  * 小節線（#MEASURE で長さが変わっても同じ）を対象に入れるかは barlines で選ぶ。
  *
  * グラデの設定はエディタの中だけで覚えておき、.tja には書き込まない（書き出すのは普通の #SCROLL）。
@@ -26,7 +29,7 @@ export interface Grad {
   /** 小数の桁数 */
   digits: number;
   /** #BPMCHANGE があるとき、何を滑らかにするか（無いときは 'scroll'） */
-  speed?: 'scroll' | 'visual';
+  speed?: 'scroll' | 'visual' | 'visualBase';
   /** 小節線の位置も対象にするか（無いときは入れる） */
   barlines?: boolean;
 }
@@ -51,7 +54,7 @@ export function gradTargets(c: ECourse, g: Pick<Grad, 'start' | 'end' | 'speed' 
   const set = new Set<number>();
   for (const n of c.notes) if (n.tick >= start && n.tick < end) set.add(n.tick);
   if (g.barlines !== false) for (const m of measures(c, end)) if (m.start >= start && m.start < end) set.add(m.start);
-  if (g.speed === 'visual') for (const e of c.events) if (e.kind === 'bpm' && e.tick > start && e.tick < end) set.add(e.tick);
+  if (g.speed === 'visual' || g.speed === 'visualBase') for (const e of c.events) if (e.kind === 'bpm' && e.tick > start && e.tick < end) set.add(e.tick);
   return [...set].sort((a, b) => a - b);
 }
 
@@ -74,16 +77,17 @@ export function gradScrolls(c: ECourse, g: Grad, baseBpm: number): { tick: numbe
   const ts = gradTargets(c, g);
   const n = ts.length;
   const out: { tick: number; value: number }[] = [];
-  if (g.speed === 'visual') {
+  if (g.speed === 'visual' || g.speed === 'visualBase') {
     // 見た目の速さ（BPM × SCROLL）を滑らかにする
     const bpm = bpmFn(c, baseBpm);
     const v0 = g.from * bpm(g.start);
-    const v1 = g.to * bpm(g.end);
+    const v1 = g.to * (g.speed === 'visualBase' ? bpm(g.start) : bpm(g.end));
     ts.forEach((tick, k) => out.push({ tick, value: round(interp(g.mode, v0, v1, k / n) / bpm(tick), g.digits) }));
+    out.push({ tick: g.end, value: round(v1 / bpm(g.end), g.digits) });
   } else {
     ts.forEach((tick, k) => out.push({ tick, value: round(interp(g.mode, g.from, g.to, k / n), g.digits) }));
+    out.push({ tick: g.end, value: round(g.to, g.digits) });
   }
-  out.push({ tick: g.end, value: round(g.to, g.digits) });
   return out;
 }
 
