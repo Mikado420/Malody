@@ -1192,85 +1192,21 @@ export class Renderer {
     ctx.restore();
   }
 
-  /**
-   * ゴーゴータイムの判定枠: オレンジの炎の玉。玉の右上側から炎が何本も右上へなびき、
-   * 1 本ずつ長さ・曲がり方が違う速さでゆらゆら変わる。先からは小さな火の粉がちぎれて飛んで消える
-   */
+  /** ゴーゴータイムの判定枠: オレンジの炎の玉と、右上へゆらめく小さく明るい炎の尾 */
   private drawFireball(wall: number) {
     const ctx = this.ctx;
-    const t = (wall / 1000) * 1.4; // 少し速めにゆらす
-    const R = 95;
-    // 炎がなびく向き（右上）
-    const fa = -Math.PI / 4;
-    const fx = Math.cos(fa);
-    const fy = Math.sin(fa);
-    const at = (ang: number, r: number) => [JX + Math.cos(ang) * r, JY + Math.sin(ang) * r] as const;
-    // 炎の舌: 根元の角度、長さ（玉の外へどれだけ伸びるか）、揺れの速さ
-    const tongues = [
-      { a: 0.15, len: 70, w: 2.3, p: 0.0 },
-      { a: -0.35, len: 120, w: 1.7, p: 1.3 },
-      { a: -0.85, len: 150, w: 2.0, p: 2.6 },
-      { a: -1.35, len: 115, w: 1.5, p: 4.1 },
-      { a: -1.85, len: 60, w: 2.6, p: 5.0 },
-    ];
     ctx.save();
-    ctx.fillStyle = 'rgba(242,114,50,0.95)';
-    // 炎の舌は 1 本ずつ太いしずく形。全部を 1 つの形にまとめて塗る（重なっても濃くならない）
-    const nx = -fy;
-    const ny = fx;
+    // 速さの違う揺れを重ねてゆらめかせる（2 本の尾だったときの小さい方の尾。揺れは少し速く）
+    const t = (wall / 1000) * 1.3;
+    const v1 = Math.sin(t * 12.7 + 0.4) * 5 + Math.sin(t * 19.3) * 2;
+    const v2 = Math.sin(t * 8.9 + 1.7) * 4;
     ctx.beginPath();
-    for (const k of tongues) {
-      const sw = Math.sin(t * k.w * 2.2 + k.p);
-      const sw2 = Math.sin(t * k.w * 3.7 + k.p * 1.7);
-      const len = k.len * (0.8 + 0.2 * sw + 0.07 * sw2);
-      const half = 0.22 + 0.04 * sw2; // 根元の幅（角度）。細めの炎
-      const [lx, ly] = at(k.a + half, R - 6); // 根元の右下側
-      const [rx, ry] = at(k.a - half, R - 6); // 根元の左上側
-      const [bx, by] = at(k.a, R);
-      const w = R * half * 0.9; // 太さ
-      // 先端: 右上へなびき、横へゆらゆら曲がる
-      const bend = (0.5 * sw2 + 0.35 * Math.sin(t * k.w * 1.3 + k.p)) * len * 0.3;
-      const tx = bx + fx * len + nx * bend;
-      const ty = by + fy * len + ny * bend;
-      ctx.moveTo(lx, ly);
-      ctx.bezierCurveTo(
-        lx + fx * len * 0.35 + nx * w * 0.5, ly + fy * len * 0.35 + ny * w * 0.5,
-        tx - fx * len * 0.3 + nx * (w * 0.35 - bend * 0.6), ty - fy * len * 0.3 + ny * (w * 0.35 - bend * 0.6),
-        tx, ty,
-      );
-      ctx.bezierCurveTo(
-        tx - fx * len * 0.4 - nx * (w * 0.2 + bend * 0.3), ty - fy * len * 0.4 - ny * (w * 0.2 + bend * 0.3),
-        rx + fx * len * 0.3 - nx * w * 0.6, ry + fy * len * 0.3 - ny * w * 0.6,
-        rx, ry,
-      );
-      ctx.closePath();
-    }
-    // 根元をつなぐ帯（玉の縁を少し覆って、炎が玉から出ているように見せる）
-    ctx.moveTo(...at(0.75, R - 6));
-    ctx.arc(JX, JY, R + 4, 0.75, -2.3, true);
-    ctx.arc(JX, JY, R - 6, -2.3, 0.75, false);
+    ctx.moveTo(JX + 52, JY - 74);
+    ctx.bezierCurveTo(JX + 86 + v2, JY - 92 + v1 * 0.5, JX + 104, JY - 76 + v2, JX + 120 + v1, JY - 90 + v2);
+    ctx.bezierCurveTo(JX + 110 + v2 * 0.5, JY - 56, JX + 98, JY - 34, JX + 84, JY - 16);
     ctx.closePath();
+    ctx.fillStyle = 'rgba(255,190,110,0.75)';
     ctx.fill();
-
-    // 火の粉: 長い炎の先からちぎれて右上へ飛び、小さくなって消える
-    for (let j = 0; j < 6; j++) {
-      const ph = (t * 1.6 + j / 6) % 1;
-      const k = tongues[1 + (j % 3)];
-      const [bx, by] = at(k.a, R);
-      const d = k.len * 0.8 + ph * 90;
-      const wob = Math.sin(t * 5 + j * 2.1) * 10;
-      const x = bx + fx * d - fy * wob;
-      const y = by + fy * d + fx * wob;
-      const r = (1 - ph) * 11 + 2;
-      ctx.globalAlpha = (1 - ph) * 0.85;
-      ctx.beginPath();
-      // しずく形（尖りが進む向きの反対）
-      ctx.moveTo(x - fx * r * 1.8, y - fy * r * 1.8);
-      ctx.quadraticCurveTo(x - fy * r * 1.2, y + fx * r * 1.2, x + fx * r, y + fy * r);
-      ctx.quadraticCurveTo(x + fy * r * 1.2, y - fx * r * 1.2, x - fx * r * 1.8, y - fy * r * 1.8);
-      ctx.fill();
-    }
-    ctx.globalAlpha = 1;
     // 外の光と玉（動かないので一度だけ描いて貼る）
     this.drawSprite('fireball', JX - 120, JY - 120, 240, 240, () => this.paintFireball());
     ctx.restore();
