@@ -342,3 +342,23 @@ button.small { padding: 8px; font-size: 13px; background: #2a2930; color: var(--
 
 /* プレイ画面を出している間は、後ろに隠れているエディタを表示しない（重ねて描く手間を省く） */
 body.playing #app { visibility: hidden; }
+
+/* TJA のテキスト */
+.tja-text {
+  width: 100%;
+  min-height: 55vh;
+  flex: 1;
+  resize: vertical;
+  background: #111114;
+  color: #e8e8ec;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre;
+  overflow: auto;
+  tab-size: 4;
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: auto;
+}

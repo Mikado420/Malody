@@ -321,7 +321,9 @@ function closeSheet() {
 function refreshSheet() {
   if (!sheet) return;
   // 入力中は描き直さない（フォーカスが外れるため）
-  if ($('sheetBody').contains(document.activeElement) && document.activeElement instanceof HTMLInputElement) return;
+  if ($('sheetBody').contains(document.activeElement) && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) return;
+  // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
+  if (sheet === 'events' && document.getElementById('tjaText')) return;
   renderSheet();
 }
 
@@ -401,31 +403,69 @@ function renderSheet() {
       <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
   } else if (sheet === 'events') {
-    $('sheetTitle').textContent = 'イベント';
-    const pos = ed.snap(Math.max(0, view.pos));
-    const list = ed.course.events
-      .map(
-        (e, i) => `<div class="item">
-          <div class="grow">${esc(eventText(e))}<div class="pos">${ed.label(e.tick)}</div></div>
-          <button data-jump="${i}">移動</button>
-          <button data-del="${i}" class="danger">削除</button>
-        </div>`,
-      )
-      .join('');
+    // TJA のテキスト（譜面全体）。書き換えて「反映」すると譜面に反映する
+    $('sheetTitle').textContent = 'TJA';
+    const text = writeTJA(ed.chart);
     body.innerHTML = `
-      <p class="note">判定線の位置（${ed.label(pos)}）に追加します。拍子は小節の頭に入ります。</p>
-      <div class="btns">
-        <button data-ev="bpm">BPM 変更</button>
-        <button data-ev="scroll">SCROLL 変更</button>
-        <button data-ev="measure">拍子 変更</button>
-        <button data-ev="delay">DELAY</button>
-        <button data-ev="gogoOn">GOGO 開始</button>
-        <button data-ev="gogoOff">GOGO 終了</button>
-        <button data-ev="barOff">小節線 OFF</button>
-        <button data-ev="barOn">小節線 ON</button>
+      <p class="note">譜面全体の TJA です。書き換えて「反映」すると譜面に反映されます（元に戻すで戻せます）。#BPMCHANGE や #GOGOSTART などのイベントもここで編集できます。</p>
+      <div class="btns three">
+        <button data-tja="apply" class="primary">反映</button>
+        <button data-tja="copy">コピー</button>
+        <button data-tja="reset">書き換えを取り消す</button>
       </div>
-      <h3>この難易度のイベント（${ed.course.events.length}）</h3>
-      <div class="list">${list || '<p class="note">まだありません</p>'}</div>`;
+      <textarea id="tjaText" class="tja-text" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>`;
+    const ta = body.querySelector<HTMLTextAreaElement>('#tjaText')!;
+    ta.value = text;
+    // 今いる小節の行が見えるところまでスクロールする
+    const line = tjaLineOf(text, ed.course.name, ed.measureOf(Math.max(0, view.pos)).index);
+    requestAnimationFrame(() => {
+      const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+      ta.scrollTop = Math.max(0, (line - 3) * lh);
+    });
+  }
+}
+
+/** TJA のテキストで、その難易度の n 小節目（0 から）がある行 */
+function tjaLineOf(text: string, course: string, measure: number): number {
+  const lines = text.split('\n');
+  let i = lines.findIndex((l) => l.trim().toUpperCase() === `COURSE:${course}`.toUpperCase());
+  if (i < 0) return 0;
+  while (i < lines.length && !lines[i].trim().toUpperCase().startsWith('#START')) i++;
+  let m = 0;
+  for (i++; i < lines.length; i++) {
+    const l = lines[i].trim();
+    if (l.toUpperCase().startsWith('#END')) break;
+    if (l.startsWith('#') || l === '') continue;
+    if (m === measure) return i;
+    m += (l.match(/,/g) ?? []).length;
+  }
+  return i;
+}
+
+async function tjaAction(act: string) {
+  const ta = document.getElementById('tjaText') as HTMLTextAreaElement | null;
+  if (!ta) return;
+  if (act === 'apply') {
+    try {
+      const chart = parseTJA(ta.value);
+      if (!chart.courses.length) throw new Error('#START〜#END が見つかりません');
+      ed.replaceChart(chart);
+      toast('TJA を譜面に反映しました');
+    } catch (err) {
+      toast(`反映できませんでした: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  } else if (act === 'copy') {
+    try {
+      await navigator.clipboard.writeText(ta.value);
+      toast('コピーしました');
+    } catch {
+      ta.focus();
+      ta.select();
+      toast('全部選択したので、コピーしてください');
+    }
+  } else if (act === 'reset') {
+    ta.value = writeTJA(ed.chart);
+    toast('書き換えを取り消しました');
   }
 }
 
@@ -433,7 +473,8 @@ $('sheetBody').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest('button');
   if (!b) return;
   const d = b.dataset;
-  if (d.act) void fileAction(d.act);
+  if (d.tja) void tjaAction(d.tja);
+  else if (d.act) void fileAction(d.act);
   else if (d.course) ed.selectCourse(Number(d.course));
   else if (d.off) ed.mutate(() => { ed.chart.offset = Number((ed.chart.offset + Number(d.off)).toFixed(4)); });
   else if (d.ev) addEventAction(d.ev);

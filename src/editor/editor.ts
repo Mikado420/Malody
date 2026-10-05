@@ -95,6 +95,17 @@ export class Editor {
     this.emit(true);
   }
 
+  /** 譜面全体を差し替える（TJA のテキストを書き換えて反映したとき）。元に戻すで戻せる */
+  replaceChart(chart: EChart) {
+    this.mutate(() => {
+      const name = this.chart.courses[this.courseIndex]?.name;
+      this.chart = chart;
+      const i = chart.courses.findIndex((c) => c.name === name);
+      this.courseIndex = i >= 0 ? i : Math.max(0, Math.min(this.courseIndex, chart.courses.length - 1));
+      this.pendingLong = null;
+    });
+  }
+
   get canUndo() { return this.undoStack.length > 0; }
   get canRedo() { return this.redoStack.length > 0; }
 
