@@ -1,3 +1,5 @@
+/* iPhone の横向きで、入力欄以外の文字だけが勝手に大きくなるのを止める（入力欄と色付きの文字がずれる原因） */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 :root {
   --bg: #000;
   --bar: #0b0b0d;
@@ -361,8 +363,12 @@ body.playing #app { visibility: hidden; }
   padding-left: 88px;
   border: 0;
   /* 入力時の自動拡大は viewport の maximum-scale=1 で止めているので、小さめの文字で多くの行を見せる */
-  font: 13px/18.2px ui-monospace, Menlo, Consolas, monospace;
+  font: 13px/18px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0;
+  font-kerning: none;
+  font-variant-ligatures: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   tab-size: 4;
   white-space: pre;
   box-sizing: border-box;
@@ -375,6 +381,8 @@ body.playing #app { visibility: hidden; }
   color: #f4f4f4;
 }
 .tja-hl > div { will-change: transform; }
+/* iPhone/iPad の入力欄は、文字の左右に 3px の余白を勝手に足すので、色付きの文字も同じだけずらす */
+html.ios .tja-hl { padding-left: 91px; }
 /* 左端の行番号（灰色）と小節番号（金色） */
 .tja-gutter {
   position: absolute;
@@ -387,8 +395,8 @@ body.playing #app { visibility: hidden; }
   pointer-events: none;
   background: #18181c;
   border-right: 1px solid var(--line);
-  /* 行番号・小節番号は 5 桁でも収まるよう小さめの文字。行の高さは本文（13px × 1.4）と同じ */
-  font: 10px/18.2px ui-monospace, Menlo, Consolas, monospace;
+  /* 行番号・小節番号は 5 桁でも収まるよう小さめの文字。行の高さは本文と同じ 18px */
+  font: 10px/18px ui-monospace, Menlo, Consolas, monospace;
   white-space: pre;
   box-sizing: border-box;
   z-index: 1;
