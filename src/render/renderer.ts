@@ -1196,28 +1196,23 @@ export class Renderer {
   private drawFireball(wall: number) {
     const ctx = this.ctx;
     ctx.save();
-    // 炎の尾。速さの違う揺れを重ねて、先端と外側のふくらみをゆらめかせる
+    // 炎の尾（1 枚）。根元を軸に尾全体をゆっくり大きく揺らし、先端はさらに大きくゆらゆらさせる
     const t = wall / 1000;
-    const w1 = Math.sin(t * 9.1) * 7 + Math.sin(t * 14.3 + 1.2) * 4;
-    const w2 = Math.sin(t * 7.3 + 0.6) * 6 + Math.sin(t * 17.9) * 3;
-    const w3 = Math.sin(t * 11.7 + 2.1) * 5;
+    const sway = Math.sin(t * 3.1) * 0.09 + Math.sin(t * 5.3 + 1.1) * 0.04; // 尾全体の傾き（ラジアン）
+    const tip = Math.sin(t * 4.2 + 0.5) * 12 + Math.sin(t * 7.1) * 5; // 先端の上下
+    const bulge = Math.sin(t * 3.7 + 2.0) * 9; // 外側のふくらみ
+    ctx.save();
+    ctx.translate(JX + 60, JY - 40);
+    ctx.rotate(sway);
+    ctx.translate(-(JX + 60), -(JY - 40));
     ctx.beginPath();
     ctx.moveTo(JX + 34, JY - 86);
-    ctx.bezierCurveTo(JX + 82 + w3, JY - 114 + w2 * 0.6, JX + 112 + w1 * 0.5, JY - 86 + w3, JX + 140 + w1, JY - 106 + w2);
-    ctx.bezierCurveTo(JX + 130 + w2 * 0.6, JY - 56 + w1 * 0.5, JX + 112 + w3 * 0.5, JY - 24, JX + 90, JY + 4);
+    ctx.bezierCurveTo(JX + 84, JY - 112 - bulge * 0.5, JX + 112 + bulge * 0.4, JY - 84 + tip * 0.3, JX + 140 + tip * 0.4, JY - 106 + tip);
+    ctx.bezierCurveTo(JX + 128 + bulge, JY - 54, JX + 112, JY - 24, JX + 90, JY + 4);
     ctx.closePath();
     ctx.fillStyle = 'rgba(238,110,48,0.9)';
     ctx.fill();
-    // 内側の明るい炎（外とずらして揺らす）
-    const v1 = Math.sin(t * 12.7 + 0.4) * 5 + Math.sin(t * 19.3) * 2;
-    const v2 = Math.sin(t * 8.9 + 1.7) * 4;
-    ctx.beginPath();
-    ctx.moveTo(JX + 52, JY - 74);
-    ctx.bezierCurveTo(JX + 86 + v2, JY - 92 + v1 * 0.5, JX + 104, JY - 76 + v2, JX + 120 + v1, JY - 90 + v2);
-    ctx.bezierCurveTo(JX + 110 + v2 * 0.5, JY - 56, JX + 98, JY - 34, JX + 84, JY - 16);
-    ctx.closePath();
-    ctx.fillStyle = 'rgba(255,190,110,0.75)';
-    ctx.fill();
+    ctx.restore();
     // 外の光と玉（動かないので一度だけ描いて貼る）
     this.drawSprite('fireball', JX - 120, JY - 120, 240, 240, () => this.paintFireball());
     ctx.restore();

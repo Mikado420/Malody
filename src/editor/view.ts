@@ -38,7 +38,6 @@ const R = {
   evTop: 576,
   evBottom: 616,
   posLabel: { x: 205, y: 650 },
-  beatPx: 400, // 初期の拡大率（1拍あたり）
 };
 
 const C = {
@@ -177,8 +176,15 @@ export class EditorView {
   }
 
   /** 初期の拡大率（Malody と同じ間隔） */
+  /** プレイ画面のハイスピード（初期の拡大率をプレイ画面と同じ音符の間隔にするため） */
+  playSpeed = 1;
+
+  /**
+   * 初期の拡大率: プレイ画面と同じ「音符の大きさに対する間隔」。
+   * プレイ画面はハイスピード 1.0 で 1 小節 1470px・音符の半径 54px（1 拍 367.5px）。エディタの音符の半径も 54 なので同じ比率にする
+   */
   get defaultZoom() {
-    return R.beatPx * this.s;
+    return (1470 / 4) * (R.noteR / 54) * this.playSpeed * this.s;
   }
 
   xOf(tick: number) {

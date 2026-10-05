@@ -12,16 +12,89 @@ export class AudioEngine {
   private startedAt = 0; // 再生を開始した ctx 時刻
   private readonly musicGain = this.ctx.createGain();
   private readonly sfxGain = this.ctx.createGain();
+  private readonly metroGain = this.ctx.createGain();
+  /** 音量を上げたときに音が割れないように、最後に通す（強い音だけ抑える） */
+  private readonly limiter = this.ctx.createDynamicsCompressor();
 
   constructor() {
-    this.musicGain.connect(this.ctx.destination);
-    this.sfxGain.connect(this.ctx.destination);
-    this.musicGain.gain.value = 0.8;
-    this.sfxGain.gain.value = 0.9;
+    this.limiter.threshold.value = -3;
+    this.limiter.knee.value = 3;
+    this.limiter.ratio.value = 20;
+    this.limiter.attack.value = 0.002;
+    this.limiter.release.value = 0.1;
+    this.limiter.connect(this.ctx.destination);
+    this.musicGain.connect(this.limiter);
+    this.sfxGain.connect(this.limiter);
+    this.metroGain.connect(this.limiter);
+    this.applyMix();
+  }
+
+  // ---------- 音量（自動で揃える） ----------
+  // 音源・打音・メトロノームの「聞こえる大きさ」を測って、どれも同じ大きさ（TARGET）になるように音量を決め、
+  // そこに設定の比率（初期値 1 : 1 : 1.2）を掛ける。
+
+  /** 揃える先の大きさ（短い区間の RMS） */
+  private static readonly TARGET = 0.2;
+  private mix = { music: 1, hit: 1, metro: 1.2 };
+  private musicLevel = 0;
+  private hitLevel: Record<HitSound, number> = { don: 0, ka: 0, balloon: 0 };
+
+  /** 音量の比率（音源・打音・メトロノーム）を変える */
+  setMix(m: { music: number; hit: number; metro: number }) {
+    this.mix = { ...m };
+    this.applyMix();
+  }
+
+  private applyMix() {
+    const T = AudioEngine.TARGET;
+    const music = this.musicLevel > 0 ? Math.min(6, T / this.musicLevel) : 0.8;
+    this.musicGain.gain.value = music * this.mix.music;
+    this.sfxGain.gain.value = this.mix.hit;
+    this.metroGain.gain.value = this.mix.metro * Math.min(20, T / this.metroLevel());
+  }
+
+  /**
+   * 聞こえる大きさ: 50ms ごとの RMS を求める。
+   * 曲は大きい側から 1 割の所（サビなどの大きい部分の大きさ）、短い音（打音など）はいちばん大きい区間を使う
+   */
+  private static level(buf: AudioBuffer, short: boolean): number {
+    const win = Math.max(1, Math.round(buf.sampleRate * 0.05));
+    const chs = Array.from({ length: buf.numberOfChannels }, (_, i) => buf.getChannelData(i));
+    const step = short ? 1 : 4; // 曲は 4 サンプルおきに見て軽くする
+    const vals: number[] = [];
+    for (let a = 0; a < buf.length; a += win) {
+      const b = Math.min(buf.length, a + win);
+      let sum = 0;
+      let n = 0;
+      for (let i = a; i < b; i += step) {
+        let v = 0;
+        for (const d of chs) v += d[i];
+        v /= chs.length;
+        sum += v * v;
+        n++;
+      }
+      if (n) vals.push(Math.sqrt(sum / n));
+    }
+    if (!vals.length) return 0;
+    if (short) return Math.max(...vals);
+    vals.sort((x, y) => x - y);
+    return vals[Math.floor(vals.length * 0.9)] ?? 0;
+  }
+
+  /** 打音の 1 打ごとの音量（大きさを揃えるための倍率） */
+  private hitNorm(kind: HitSound) {
+    const lv = this.hitLevel[kind];
+    return lv > 0 ? Math.min(8, AudioEngine.TARGET / lv) : 1;
+  }
+
+  private measureHit(kind: HitSound) {
+    this.hitLevel[kind] = AudioEngine.level(this.customHit[kind] ?? this.builtinHit(kind), true);
   }
 
   async loadMusic(buf: ArrayBuffer | null) {
     this.music = buf ? await this.ctx.decodeAudioData(buf) : null;
+    this.musicLevel = this.music ? AudioEngine.level(this.music, false) : 0;
+    this.applyMix();
   }
 
   get buffer() {
@@ -68,18 +141,7 @@ export class AudioEngine {
 
   /** 曲の songTime 秒の位置で鳴るように、クリック音を予約する（タイミング調整用） */
   scheduleTick(songTime: number) {
-    const when = this.startedAt + (songTime - this.songStart) / this.rate;
-    if (when < this.ctx.currentTime) return;
-    const osc = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    osc.frequency.value = 1500;
-    g.gain.setValueAtTime(0.0001, when);
-    g.gain.linearRampToValueAtTime(0.35, when + 0.002);
-    g.gain.exponentialRampToValueAtTime(0.001, when + 0.06);
-    osc.connect(g).connect(this.sfxGain);
-    osc.start(when);
-    osc.stop(when + 0.07);
-    this.scheduled.push(osc);
+    this.scheduleMetro(true, songTime);
   }
 
   private scheduled: AudioScheduledSourceNode[] = [];
@@ -213,17 +275,53 @@ export class AudioEngine {
   private rate = 1;
   private songStart = 0;
 
-  /** 曲が無いとき用のメトロノーム音 */
+  private metroBufs: { strong: AudioBuffer; weak: AudioBuffer } | null = null;
+  private metroLv = 0;
+
+  /** メトロノームの音（小節の頭は高い音）。一度だけ作って使い回す */
+  private metroBuf(strong: boolean) {
+    if (!this.metroBufs) {
+      const sr = this.ctx.sampleRate;
+      const make = (f: number) => {
+        const len = Math.round(sr * 0.05);
+        const buf = this.ctx.createBuffer(1, len, sr);
+        const d = buf.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = Math.sin((2 * Math.PI * f * i) / sr) * 0.5 * Math.exp(-i / sr / 0.012);
+        return buf;
+      };
+      this.metroBufs = { strong: make(1600), weak: make(1000) };
+    }
+    return strong ? this.metroBufs.strong : this.metroBufs.weak;
+  }
+
+  private metroLevel() {
+    if (!this.metroLv) this.metroLv = AudioEngine.level(this.metroBuf(false), true);
+    return this.metroLv;
+  }
+
+  /** メトロノームの音を、曲の songTime 秒の位置で鳴るように予約する（過ぎていればすぐ鳴らす） */
+  scheduleMetro(strong: boolean, songTime: number) {
+    const ctx = this.ctx;
+    const when = this.startedAt + (songTime - this.songStart) / this.rate;
+    if (when < ctx.currentTime - 0.02) return;
+    const src = ctx.createBufferSource();
+    src.buffer = this.metroBuf(strong);
+    src.connect(this.metroGain);
+    src.start(Math.max(when, ctx.currentTime));
+    this.scheduled.push(src);
+    src.onended = () => {
+      const i = this.scheduled.indexOf(src);
+      if (i >= 0) this.scheduled.splice(i, 1);
+      src.disconnect();
+    };
+  }
+
+  /** メトロノームの音をすぐ鳴らす */
   playTick(strong: boolean) {
-    const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const g = this.ctx.createGain();
-    osc.frequency.value = strong ? 1600 : 1000;
-    g.gain.setValueAtTime(0.15, t);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
-    osc.connect(g).connect(this.sfxGain);
-    osc.start(t);
-    osc.stop(t + 0.05);
+    const src = this.ctx.createBufferSource();
+    src.buffer = this.metroBuf(strong);
+    src.connect(this.metroGain);
+    src.start();
   }
 
   // ---------- 打音 ----------
@@ -237,6 +335,7 @@ export class AudioEngine {
   /** 自分で用意した打音（ogg / mp3 / wav など）。null で内蔵の音に戻す */
   async setCustomHit(kind: HitSound, data: ArrayBuffer | null) {
     this.customHit[kind] = data ? await this.ctx.decodeAudioData(data.slice(0)) : null;
+    this.measureHit(kind);
   }
 
   hasCustomHit(kind: HitSound) {
@@ -294,6 +393,8 @@ export class AudioEngine {
     const src = ctx.createBufferSource();
     src.buffer = this.customHit[kind] ?? this.builtinHit(kind);
     const g = ctx.createGain();
+    if (!this.hitLevel[kind]) this.measureHit(kind);
+    g.gain.value = this.hitNorm(kind);
     src.connect(g).connect(this.sfxGain);
     src.start(at);
     this.lastScheduled[kind] = { g, end: at + src.buffer.duration };
@@ -320,6 +421,8 @@ export class AudioEngine {
     const src = ctx.createBufferSource();
     src.buffer = this.customHit[kind] ?? this.builtinHit(kind);
     const g = ctx.createGain();
+    if (!this.hitLevel[kind]) this.measureHit(kind);
+    g.gain.value = this.hitNorm(kind);
     src.connect(g).connect(this.sfxGain);
     src.start(t);
     const v = { src, g };

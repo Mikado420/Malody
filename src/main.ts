@@ -47,6 +47,12 @@ const settings = {
   donWidth: 0.6,
   /** TJA のテキストを太字で表示する */
   tjaBold: false,
+  /** 音量の比率（自動で揃えた後に掛ける）。音源 : 打音 : メトロノーム */
+  volMusic: 1,
+  volHit: 1,
+  volMetro: 1.2,
+  /** 拡大率の決め方の版（2 = プレイ画面と同じ間隔） */
+  zoomVer: 0,
 };
 try {
   // 横スクロール化で拡大率の意味が変わったので v2 のキーで保存
@@ -62,7 +68,19 @@ const audio = new AudioEngine();
 const ed = new Editor();
 ed.divisor = DIVISORS.includes(settings.divisor) ? settings.divisor : 4;
 const view = new EditorView($<HTMLCanvasElement>('editor'), ed);
-// 拡大率: 自分で変えるまでは Malody と同じ間隔（画面の高さに比例）
+// 拡大率の初期値をプレイ画面と同じ音符の間隔に変えたので、前の版で自分で変えた拡大率は一度だけ初期値に戻す
+if (settings.zoomVer !== 2) {
+  settings.zoomSet = false;
+  settings.zoomVer = 2;
+}
+view.playSpeed = settings.speed;
+const applyMix = () => audio.setMix({ music: settings.volMusic, hit: settings.volHit, metro: settings.volMetro });
+/** ハイスピードを変えたら、自分で拡大率を変えていない限りエディタの間隔も合わせる */
+const applyPlayZoom = () => {
+  view.playSpeed = settings.speed;
+  if (!settings.zoomSet) view.setZoom(view.defaultZoom);
+};
+// 拡大率: 自分で変えるまではプレイ画面と同じ音符の間隔（画面の高さに比例）
 // 右のアイコンバーとツールも Malody の画面と同じ比率で大きさを決める（CSS の --es）
 const onViewResize = () => {
   document.documentElement.style.setProperty('--es', String(view.s));
@@ -71,6 +89,7 @@ const onViewResize = () => {
 view.onResize = onViewResize;
 onViewResize();
 if (settings.zoomSet) view.zoom = Math.min(2400, Math.max(20, settings.zoom));
+applyMix();
 const play = new PlayMode($('play'), $<HTMLCanvasElement>('game'), $('result'), audio, settings);
 
 let playable: Note[] = [];
@@ -141,6 +160,8 @@ function endTime() {
 
 let hitEvents: AutoEvent[] = [];
 let hitIdx = 0;
+let metroEvents: { t: number; strong: boolean }[] = [];
+let metroIdx = 0;
 
 async function startPlayback() {
   if (playing) return;
@@ -150,6 +171,21 @@ async function startPlayback() {
   // 判定枠にちょうど乗っている音符（再生を始めた位置の音符）も鳴らす
   hitEvents = buildAutoEvents(playable, from).filter((e) => e.t >= from - 0.001);
   hitIdx = 0;
+  // メトロノーム: 拍子に合わせて 1 小節に「分子」の回数（4/4 なら 4 回、7/8 なら 8 分音符で 7 回）
+  metroEvents = [];
+  metroIdx = 0;
+  const fromTick = Math.max(0, view.pos);
+  const endTick = ed.timing.timeToTick(endTime()) + TPB * 4;
+  for (const m of ed.measuresUntil(endTick)) {
+    if (m.start + m.length <= fromTick - 1) continue;
+    if (m.start > endTick) break;
+    const beat = (TPB * 4) / m.den;
+    for (let k = 0; k < m.num - 1e-9; k++) {
+      const tick = m.start + Math.round(k * beat);
+      if (tick < fromTick - 1) continue;
+      metroEvents.push({ t: ed.timing.tickToTime(tick), strong: k === 0 });
+    }
+  }
   await audio.startAt(from, settings.rate);
   lastTime = from;
   playing = true;
@@ -177,16 +213,9 @@ function tickPlayback() {
     audio.scheduleHit(e.kind, e.t);
     if (e.pop) audio.scheduleHit('balloon', e.t);
   }
-  if (settings.metronome) {
-    const a = ed.timing.timeToTick(lastTime);
-    const b = view.pos;
-    for (const m of ed.measuresUntil(b)) {
-      if (m.start + m.length <= a) continue;
-      if (m.start > b) break;
-      for (let k = m.start; k < m.start + m.length; k += TPB) {
-        if (k > a && k <= b) audio.playTick(k === m.start);
-      }
-    }
+  while (metroIdx < metroEvents.length && metroEvents[metroIdx].t <= t + 0.3 * settings.rate) {
+    const e = metroEvents[metroIdx++];
+    if (settings.metronome) audio.scheduleMetro(e.strong, e.t);
   }
   lastTime = t;
   if (t > endTime()) stopPlayback();
@@ -502,6 +531,10 @@ function renderSheet() {
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
       <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
+      <h3>音量（自動で同じ大きさに揃えてから、この比率を掛けます）</h3>
+      <label class="field"><span>音源</span><input type="range" min="0" max="2" step="0.05" data-set="volMusic" value="${settings.volMusic}"><output>${settings.volMusic.toFixed(2)}</output></label>
+      <label class="field"><span>打音</span><input type="range" min="0" max="2" step="0.05" data-set="volHit" value="${settings.volHit}"><output>${settings.volHit.toFixed(2)}</output></label>
+      <label class="field"><span>メトロノーム</span><input type="range" min="0" max="2" step="0.05" data-set="volMetro" value="${settings.volMetro}"><output>${settings.volMetro.toFixed(2)}</output></label>
       <h3>打音</h3>
       <p class="note">ドン: ${esc(hitNames.don ?? '内蔵の音')} ／ カッ: ${esc(hitNames.ka ?? '内蔵の音')} ／ 風船が割れる音: ${esc(hitNames.balloon ?? '内蔵の音')}<br>
         3 つまとめて選べます。ファイル名に「don」が入っているものをドン、「ka」をカッ、「balloon」を風船が割れる音にします（例: dong.ogg / ka.ogg / Balloon.ogg）。読み込んだ音はこの端末の中だけに保存されます。</p>
@@ -509,7 +542,7 @@ function renderSheet() {
         <button data-act="hitLoad">打音ファイルを選ぶ</button>
         <button data-act="hitReset" ${hitNames.don || hitNames.ka || hitNames.balloon ? '' : 'disabled'}>内蔵の音に戻す</button>
       </div>
-      <button data-act="resetZoom">エディタの拡大率を初期値（Malody と同じ間隔）に戻す</button>
+      <button data-act="resetZoom">エディタの拡大率を初期値（プレイ画面と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
   } else if (sheet === 'point' && pointEdit) {
     renderPointSheet(body);
@@ -705,9 +738,11 @@ $('sheetBody').addEventListener('input', (e) => {
   else {
     (settings[key] as number) = Number(el.value);
     const out = el.parentElement?.querySelector('output');
-    if (out) out.textContent = key === 'speed' ? Number(el.value).toFixed(1) : key === 'donWidth' ? `${Math.round(Number(el.value) * 100)}%` : el.value;
+    if (out) out.textContent = key === 'speed' ? Number(el.value).toFixed(1) : key === 'donWidth' ? `${Math.round(Number(el.value) * 100)}%` : key.startsWith('vol') ? Number(el.value).toFixed(2) : el.value;
   }
   saveSettings();
+  if (key.startsWith('vol')) applyMix();
+  if (key === 'speed') applyPlayZoom();
 });
 
 function addEventAction(kind: string) {
@@ -1009,6 +1044,13 @@ startAutoUpdate({
 
 // ---------- グラデ ----------
 
+/** 位置の表示（小節・拍） */
+function posText(tick: number) {
+  const m = ed.measureOf(tick);
+  const beat = (tick - m.start) / ((TPB * 4) / m.den) + 1;
+  return `小節 ${m.index + 1}・${Number(beat.toFixed(3))} 拍目`;
+}
+
 function renderGradSheet(body: HTMLElement) {
   const st = gradEdit!;
   const g = st.grad;
@@ -1022,6 +1064,8 @@ function renderGradSheet(body: HTMLElement) {
   body.innerHTML = `
     <div class="grad-layout">
       <div class="grad-form">
+        <div class="field grad-pos"><span>始点</span><button data-gpos="start" data-d="-1" aria-label="始点を前へ">◀</button><b>${posText(g.start)}</b><button data-gpos="start" data-d="1" aria-label="始点を後ろへ">▶</button></div>
+        <div class="field grad-pos"><span>終点</span><button data-gpos="end" data-d="-1" aria-label="終点を前へ">◀</button><b>${posText(g.end)}</b><button data-gpos="end" data-d="1" aria-label="終点を後ろへ">▶</button></div>
         <label class="field"><span>開始値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="from" value="${g.from}"></label>
         <label class="field"><span>終了値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="to" value="${g.to}"></label>
         ${seg('mode', [['linear', '等差'], ['geometric', '等比']], g.mode)}
@@ -1054,6 +1098,16 @@ function renderGradSheet(body: HTMLElement) {
       const v = Number(inp.value);
       g[k] = k === 'digits' ? Math.max(0, Math.min(6, Math.round(v))) : v;
       preview();
+    });
+  });
+  // 始点・終点を 1 グリッド（今の分割）ずつ動かす
+  body.querySelectorAll<HTMLButtonElement>('[data-gpos]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const key = b.dataset.gpos as 'start' | 'end';
+      const v = Math.max(0, g[key] + Number(b.dataset.d) * ed.step);
+      if (key === 'start' ? v >= g.end : v <= g.start) return;
+      g[key] = v;
+      renderGradSheet(body);
     });
   });
   body.querySelectorAll<HTMLButtonElement>('[data-gset]').forEach((b) => {

@@ -540,3 +540,5 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
   touch-action: pan-x pan-y;
   overscroll-behavior: contain;
 }
+.grad-pos button { flex: none; width: 40px; height: 36px; padding: 0; }
+.grad-pos b { flex: 1; text-align: center; font-weight: 600; font-size: 14px; white-space: nowrap; }
