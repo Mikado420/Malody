@@ -941,11 +941,17 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
  * 戻り値は A と Z の間の区間（A.end・Z.start も直す）。見つからないときは null
  */
 const KERN = [0.5, 0.85, 1, 0.85, 0.5];
+/** 短い区間（16 拍以下）の BPM は細かく測れないので、5 の倍数まで 1% 以内なら 5 の倍数にする */
+function snap5(bpm: number, beats: number) {
+  const r = Math.round(bpm / 5) * 5;
+  return beats <= 16 && Math.abs(bpm / r - 1) <= 0.01 ? r : bpm;
+}
 function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   const { fr, t0, all } = env;
   const A = G[0];
   const Z = G[G.length - 1];
-  const inner = G.slice(1, -1);
+  // 途中の区間のうち短いもの（16 秒未満）は、だんだん変わる所を大まかに 1 つの BPM で見ただけのことが多いので、目印にしない
+  const inner = G.slice(1, -1).filter((g) => g.end - g.start >= 16);
   const lo = Math.max(A.start, A.end - 12);
   const hi = Math.min(Z.end, Z.start + 12);
   if (hi - lo < 6) return null;
@@ -1133,7 +1139,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
       const g = inner.find((x) => x.bpm === cand[p.k]);
       out.push(g && p.end - p.start > 8
         ? { ...g, start: p.start, end: p.end, phase: p.start }
-        : { start: p.start, end: p.end, bpm: cand[p.k], rawBpm: cand[p.k], phase: p.start, beats: p.beats, matched: p.beats, jitterMs: 0 });
+        : { start: p.start, end: p.end, bpm: snap5(cand[p.k], p.beats), rawBpm: cand[p.k], phase: p.start, beats: p.beats, matched: p.beats, jitterMs: 0 });
     }
   }
   A.end = aEnd;
