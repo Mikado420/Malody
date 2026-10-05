@@ -216,6 +216,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   big: ['bigDon', 'bigKa'],
   roll: ['roll', 'bigRoll'],
   balloon: ['balloon'],
+  gogo: ['gogo'],
 };
 const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   don: { label: 'ドン', cls: 'don' },
@@ -226,21 +227,26 @@ const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   bigRoll: { label: '大連打', cls: 'roll big' },
   balloon: { label: '風船', cls: 'balloon' },
   erase: { label: '消去', cls: 'erase' },
+  gogo: { label: 'GOGO', cls: 'gogo' },
 };
 /** 各ボタンが今どちらの音符になっているか */
-const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon' };
+const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', gogo: 'gogo' };
 const groupOf = (t: Tool) => Object.keys(TOOL_GROUPS).find((g) => TOOL_GROUPS[g].includes(t))!;
 
 function setTool(t: Tool) {
+  const prevTool = ed.tool;
   ed.tool = t;
   groupTool[groupOf(t)] = t;
-  if (ed.pendingLong !== null && t !== 'roll' && t !== 'bigRoll' && t !== 'balloon') ed.pendingLong = null;
+  // 始点を決めた後に別の種類のツールに替えたら、始点を取り消す（連打・大連打・風船どうしはそのまま終点を選べる）
+  const longs: Tool[] = ['roll', 'bigRoll', 'balloon'];
+  const keep = (longs.includes(t) && longs.includes(prevTool)) || (t === 'gogo' && prevTool === 'gogo');
+  if (ed.pendingLong !== null && !keep) ed.pendingLong = null;
   document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
     const g = b.dataset.group!;
     const look = TOOL_LOOK[groupTool[g]];
     b.className = `tool ${look.cls}`;
     b.classList.toggle('active', g === groupOf(t));
-    b.querySelector('span')!.textContent = look.label;
+    b.title = look.label;
   });
   view.invalidate();
 }

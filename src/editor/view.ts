@@ -401,14 +401,7 @@ export class EditorView {
     ctx.fillRect(L.colW, L.laneY, this.w - L.colW, L.laneH);
 
     // ゴーゴー区間
-    let gogoFrom: number | null = null;
-    const ranges: [number, number][] = [];
-    for (const e of course.events) {
-      if (e.kind !== 'gogo') continue;
-      if (e.on && gogoFrom === null) gogoFrom = e.tick;
-      if (!e.on && gogoFrom !== null) { ranges.push([gogoFrom, e.tick]); gogoFrom = null; }
-    }
-    if (gogoFrom !== null) ranges.push([gogoFrom, Infinity]);
+    const ranges = this.ed.gogoRanges();
     ctx.fillStyle = C.gogo;
     for (const [a, b] of ranges) {
       const x1 = Math.max(L.colW, this.xOf(a));
@@ -540,10 +533,16 @@ export class EditorView {
     if (ed.pendingLong !== null) {
       const x = this.xOf(ed.pendingLong);
       ctx.setLineDash([8 * s, 8 * s]);
-      ctx.strokeStyle = '#fbbf14';
+      ctx.strokeStyle = ed.tool === 'gogo' ? '#ff6e28' : '#fbbf14';
       ctx.lineWidth = Math.max(2, 5 * s);
       ctx.beginPath();
-      ctx.arc(x, L.cy, L.r * 1.15, 0, Math.PI * 2);
+      if (ed.tool === 'gogo') {
+        // ゴーゴーの始点は縦の点線
+        ctx.moveTo(x, L.laneY);
+        ctx.lineTo(x, L.laneY + L.laneH);
+      } else {
+        ctx.arc(x, L.cy, L.r * 1.15, 0, Math.PI * 2);
+      }
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -553,7 +552,10 @@ export class EditorView {
       const t = ed.snap(this.tickOf(this.hoverX));
       const x = this.xOf(t);
       ctx.globalAlpha = 0.4;
-      if (ed.tool === 'erase') {
+      if (ed.tool === 'gogo') {
+        ctx.fillStyle = '#ff6e28';
+        ctx.fillRect(x - Math.max(1, 2 * s), L.laneY, Math.max(2, 4 * s), L.laneH);
+      } else if (ed.tool === 'erase') {
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 2;
         ctx.beginPath();

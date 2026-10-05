@@ -21,11 +21,14 @@
       <div class="stage">
         <canvas id="editor"></canvas>
         <div id="tools" class="tools">
-          <!-- 選んでいるボタンをもう一度タップすると、ドン⇔カッ・大ドン⇔大カッ・連打⇔大連打 が切り替わる -->
-          <button data-group="small" class="tool"><i></i><span></span></button>
-          <button data-group="big" class="tool"><i></i><span></span></button>
-          <button data-group="roll" class="tool"><i></i><span></span></button>
-          <button data-group="balloon" class="tool"><i></i><span></span></button>
+          <!-- 上の段: 小音符・大音符、下の段: 連打・風船。選んでいるボタンをもう一度タップすると、ドン⇔カッ・大ドン⇔大カッ・連打⇔大連打 が切り替わる -->
+          <div class="note-tools">
+            <button data-group="small" class="tool" aria-label="ドン / カッ"><i></i></button>
+            <button data-group="big" class="tool" aria-label="大ドン / 大カッ"><i></i></button>
+            <button data-group="roll" class="tool" aria-label="連打 / 大連打"><i></i></button>
+            <button data-group="balloon" class="tool" aria-label="風船"><i></i></button>
+          </div>
+          <button data-group="gogo" class="tool gogo" aria-label="ゴーゴータイム"><b>GOGO</b></button>
         </div>
       </div>
       <nav class="side">

@@ -5,7 +5,7 @@ import {
 import type { NoteType } from '../chart/types';
 import type { AudioFile } from '../io/load';
 
-export type Tool = NoteType | 'erase';
+export type Tool = NoteType | 'erase' | 'gogo';
 
 /** 1拍あたりの分割数（Malody の 1/n 表記と同じ） */
 export const DIVISORS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
@@ -26,7 +26,7 @@ export class Editor {
   audio: AudioFile | null = null;
   tool: Tool = 'don';
   divisor = 4;
-  /** 連打・風船の始点（終点のタップ待ち） */
+  /** 連打・風船・ゴーゴーの始点（終点のタップ待ち） */
   pendingLong: number | null = null;
   timing!: Timing;
 
@@ -187,6 +187,8 @@ export class Editor {
     const exact = this.noteAt(tick);
     const covering = this.longCovering(tick);
 
+    if (tool === 'gogo') return this.tapGogo(tick);
+
     // 置いてあるノーツ（連打・風船はその範囲のどこでも）をタップしたら、選んでいる音符に関係なく消す。
     // ただし風船を選んでいて風船の始点をタップしたときは、打数を変える
     const target = exact ?? covering;
@@ -226,6 +228,58 @@ export class Editor {
       const note: ENote = { tick: start, type: tool, endTick: end };
       if (tool === 'balloon') note.hits = Math.max(3, Math.round(((end - start) / TPB) * 2));
       this.course.notes.push(note);
+    });
+    return {};
+  }
+
+  /** ゴーゴータイムの区間 [始まり, 終わり]（終わりがなければ Infinity） */
+  gogoRanges(): [number, number][] {
+    const ranges: [number, number][] = [];
+    let from: number | null = null;
+    for (const e of this.course.events) {
+      if (e.kind !== 'gogo') continue;
+      if (e.on && from === null) from = e.tick;
+      if (!e.on && from !== null) { ranges.push([from, e.tick]); from = null; }
+    }
+    if (from !== null) ranges.push([from, Infinity]);
+    return ranges;
+  }
+
+  /** ゴーゴー: 始点と終点をタップして区間を作る。区間の中をタップするとその区間を消す */
+  private tapGogo(tick: number): TapResult {
+    const ranges = this.gogoRanges();
+    if (this.pendingLong === null) {
+      const hit = ranges.find(([a, b]) => tick >= a && tick < b);
+      if (hit) {
+        this.mutate(() => {
+          this.course.events = this.course.events.filter(
+            (e) => !(e.kind === 'gogo' && e.tick >= hit[0] && (hit[1] === Infinity || e.tick <= hit[1])),
+          );
+        });
+        return { message: 'ゴーゴーを消しました' };
+      }
+      this.pendingLong = tick;
+      this.emit();
+      return { message: 'ゴーゴーの終点をタップしてください（始点をもう一度タップで取り消し）' };
+    }
+    const p = this.pendingLong;
+    this.pendingLong = null;
+    if (tick === p) {
+      this.emit();
+      return { message: '取り消しました' };
+    }
+    let start = Math.min(p, tick);
+    let end = Math.max(p, tick);
+    // 重なる・つながる区間はひとつにまとめる
+    for (const [a, b] of ranges) {
+      if (a <= end && b >= start) {
+        start = Math.min(start, a);
+        end = Math.max(end, b === Infinity ? end : b);
+      }
+    }
+    this.mutate(() => {
+      this.course.events = this.course.events.filter((e) => !(e.kind === 'gogo' && e.tick >= start && e.tick <= end));
+      this.course.events.push({ tick: start, kind: 'gogo', on: true }, { tick: end, kind: 'gogo', on: false });
     });
     return {};
   }

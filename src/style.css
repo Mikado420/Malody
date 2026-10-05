@@ -78,11 +78,24 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   left: calc(205px * var(--es, 0.45));
   right: calc(20px * var(--es, 0.45));
   bottom: calc(44px * var(--es, 0.45));
-  height: max(36px, calc(112px * var(--es, 0.45)));
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: calc(10px * var(--es, 0.45));
+  height: max(64px, calc(132px * var(--es, 0.45)));
+  display: flex;
+  align-items: stretch;
+  /* 4 つのノーツの組と GOGO の間は少しだけ広く空ける */
+  gap: calc(24px * var(--es, 0.45));
+  pointer-events: none;
 }
+.tools > * { pointer-events: auto; }
+/* 左に寄せた 2 × 2（上: 小音符・大音符、下: 連打・風船） */
+.note-tools {
+  display: grid;
+  grid-template-columns: repeat(2, max(52px, calc(120px * var(--es, 0.45))));
+  grid-template-rows: 1fr 1fr;
+  gap: calc(8px * var(--es, 0.45));
+}
+.tool.gogo { width: max(52px, calc(120px * var(--es, 0.45))); }
+.tool.gogo b { font-size: max(11px, calc(26px * var(--es, 0.45))); font-weight: 900; color: #ff8a3a; letter-spacing: 0.02em; }
+.tool.gogo.active b { color: #ffb070; }
 .tool {
   display: flex;
   flex-direction: column;
