@@ -228,7 +228,7 @@ export class EditorView {
     cancelAnimationFrame(this.settleAnim);
     if (this.playing) return;
     const from = this.pos;
-    const to = this.ed.snap(Math.max(0, from));
+    const to = this.ed.snapView(from);
     if (Math.abs(to - from) < 1) {
       this.pos = to;
       this.invalidate();
@@ -251,7 +251,7 @@ export class EditorView {
   }
 
   scrollBy(ticks: number) {
-    this.pos = Math.max(-TPB * 2, this.pos + ticks);
+    this.pos = Math.max(this.ed.minPos, this.pos + ticks);
     this.invalidate();
   }
 
@@ -371,11 +371,12 @@ export class EditorView {
     if (y >= L.waveY && y <= L.waveY + L.waveH) {
       // 波形をタップ → その位置へ移動
       this.onUserScroll();
-      this.pos = Math.max(0, this.ed.snap(this.tickOf(x)));
+      this.pos = this.ed.snapView(this.tickOf(x));
       this.invalidate();
       return;
     }
-    if (y >= L.laneY - L.r * 0.5 && y <= L.evTop + L.evH) this.onTap(this.tickOf(x));
+    // 曲の頭より前には置けない
+    if (y >= L.laneY - L.r * 0.5 && y <= L.evTop + L.evH && this.tickOf(x) > -this.ed.step / 2) this.onTap(this.tickOf(x));
   }
 
   // ---------- 描画 ----------

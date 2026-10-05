@@ -165,7 +165,7 @@ let metroIdx = 0;
 
 async function startPlayback() {
   if (playing) return;
-  const from = ed.timing.tickToTime(Math.max(0, view.pos));
+  const from = ed.timing.tickToTime(view.pos);
   playable = toPlayable(ed.chart, ed.course).notes;
   // 打音はプレイ画面のオートと同じ予定（音符・連打・風船）を、その時刻ちょうどに予約して鳴らす。
   // 判定枠にちょうど乗っている音符（再生を始めた位置の音符）も鳴らす
@@ -391,7 +391,7 @@ window.addEventListener('keydown', (e) => {
   const move = (ticks: number) => {
     e.preventDefault();
     stopPlayback();
-    view.pos = Math.max(0, ed.snap(view.pos) + ticks);
+    view.pos = Math.max(ed.minPos, ed.snapView(view.pos) + ticks);
     view.invalidate();
   };
   if (e.code === 'ArrowRight' || e.code === 'ArrowUp') move(ed.step);

@@ -177,6 +177,22 @@ export class Editor {
 
   snap(tick: number): number {
     if (tick <= 0) return 0;
+    return this.snapFree(tick);
+  }
+
+  /** 判定枠の位置用: 曲の頭より前（1 小節ぶん）も、同じ間隔のグリッドに寄せる */
+  snapView(tick: number): number {
+    if (tick >= 0) return this.snapFree(tick);
+    const step = this.step;
+    return Math.max(this.minPos, Math.round(tick / step) * step);
+  }
+
+  /** 判定枠を動かせる一番前: 1 小節目の長さぶん前（OFFSET は変えずに、音源の頭の前を見られるように） */
+  get minPos() {
+    return -this.measureOf(0).length;
+  }
+
+  private snapFree(tick: number): number {
     const m = this.measureOf(tick);
     const step = this.step;
     return Math.max(0, m.start + Math.round((tick - m.start) / step) * step);

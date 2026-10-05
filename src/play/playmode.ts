@@ -167,7 +167,9 @@ export class PlayMode {
     for (const t of clicks ?? []) this.audio.scheduleTick(t);
 
     const lastTime = Math.max(from, ...notes.map((n) => n.endTime ?? n.time));
-    const endAt = Math.max(lastTime + 2, Math.min(this.audio.musicDuration, lastTime + 4));
+    // 音源があるときは、音源が完全に終わってから 1 秒後に終える。ないときは最後の音符の 2 秒後
+    const music = this.audio.musicDuration;
+    const endAt = music > 0 && !this.calibrating ? Math.max(music + 1, lastTime + 1.5) : lastTime + 2;
 
     this.autoEvents = allAuto.filter((e) => e.t >= split);
     this.autoIdx = 0;
@@ -195,7 +197,7 @@ export class PlayMode {
       P.frames++;
       P.work += w;
       if (w > P.workMax) P.workMax = w;
-      if (now > endAt || (game.finished && now > lastTime + 1.5)) {
+      if (now > endAt) {
         this.finish();
         return;
       }
