@@ -1198,7 +1198,7 @@ export class Renderer {
    */
   private drawFireball(wall: number) {
     const ctx = this.ctx;
-    const t = wall / 1000;
+    const t = (wall / 1000) * 1.4; // 少し速めにゆらす
     const R = 95;
     // 炎がなびく向き（右上）
     const fa = -Math.PI / 4;
@@ -1223,11 +1223,11 @@ export class Renderer {
       const sw = Math.sin(t * k.w * 2.2 + k.p);
       const sw2 = Math.sin(t * k.w * 3.7 + k.p * 1.7);
       const len = k.len * (0.8 + 0.2 * sw + 0.07 * sw2);
-      const half = 0.34 + 0.05 * sw2; // 根元の幅（角度）
+      const half = 0.22 + 0.04 * sw2; // 根元の幅（角度）。細めの炎
       const [lx, ly] = at(k.a + half, R - 6); // 根元の右下側
       const [rx, ry] = at(k.a - half, R - 6); // 根元の左上側
       const [bx, by] = at(k.a, R);
-      const w = R * half * 1.2; // 太さ
+      const w = R * half * 0.9; // 太さ
       // 先端: 右上へなびき、横へゆらゆら曲がる
       const bend = (0.5 * sw2 + 0.35 * Math.sin(t * k.w * 1.3 + k.p)) * len * 0.3;
       const tx = bx + fx * len + nx * bend;
@@ -1247,7 +1247,7 @@ export class Renderer {
     }
     // 根元をつなぐ帯（玉の縁を少し覆って、炎が玉から出ているように見せる）
     ctx.moveTo(...at(0.75, R - 6));
-    ctx.arc(JX, JY, R + 8, 0.75, -2.3, true);
+    ctx.arc(JX, JY, R + 4, 0.75, -2.3, true);
     ctx.arc(JX, JY, R - 6, -2.3, 0.75, false);
     ctx.closePath();
     ctx.fill();
