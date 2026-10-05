@@ -629,22 +629,30 @@ export class EditorView {
     const len = this.songLength();
     const step = Math.max(3, 7 * s);
     const n = Math.max(8, Math.floor((g.bottom - g.top) / step));
-    const counts = new Float32Array(n);
+    // ドン（赤）とカッ（水色）を分けて数え、右端からドン → カッの順に積む（連打・風船はドンに数える）
+    const dons = new Float32Array(n);
+    const kas = new Float32Array(n);
     const timing = this.ed.timing;
     for (const note of this.ed.course.notes) {
       const t = timing.tickToTime(note.tick);
       const i = Math.floor((t / len) * n);
-      if (i >= 0 && i < n) counts[i] += 1;
+      if (i < 0 || i >= n) continue;
+      if (note.type === 'ka' || note.type === 'bigKa') kas[i] += 1;
+      else dons[i] += 1;
     }
     let max = 0;
-    for (const c of counts) max = Math.max(max, c);
-    ctx.fillStyle = C.wave;
+    for (let i = 0; i < n; i++) max = Math.max(max, dons[i] + kas[i]);
     const bh = ((g.bottom - g.top) / n) * 0.8;
     for (let i = 0; i < n; i++) {
-      if (!counts[i] || !max) continue;
-      const w = Math.max(1, (counts[i] / max) * maxW);
+      const total = dons[i] + kas[i];
+      if (!total || !max) continue;
+      const w = Math.max(1, (total / max) * maxW);
+      const wd = (dons[i] / total) * w;
       const y = g.bottom - ((i + 1) * (g.bottom - g.top)) / n;
-      ctx.fillRect(x1 - w, y, w, bh);
+      ctx.fillStyle = '#f2442b';
+      ctx.fillRect(x1 - wd, y, wd, bh);
+      ctx.fillStyle = '#5ec4d4';
+      ctx.fillRect(x1 - w, y, w - wd, bh);
     }
     // 今の位置
     const now = timing.tickToTime(Math.max(0, this.pos));

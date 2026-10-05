@@ -358,10 +358,10 @@ body.playing #app { visibility: hidden; }
   margin: 0;
   padding: 10px;
   /* 左端の行番号・小節番号の列のぶん空ける */
-  padding-left: calc(9ch + 22px);
+  padding-left: 88px;
   border: 0;
   /* 入力時の自動拡大は viewport の maximum-scale=1 で止めているので、小さめの文字で多くの行を見せる */
-  font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  font: 13px/18.2px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0;
   tab-size: 4;
   white-space: pre;
@@ -381,20 +381,21 @@ body.playing #app { visibility: hidden; }
   left: 0;
   top: 0;
   bottom: 0;
-  width: calc(9ch + 12px);
-  padding: 10px 0 10px 6px;
+  width: 78px;
+  padding: 10px 0 10px 4px;
   overflow: hidden;
   pointer-events: none;
   background: #18181c;
   border-right: 1px solid var(--line);
-  font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  /* 行番号・小節番号は 5 桁でも収まるよう小さめの文字。行の高さは本文（13px × 1.4）と同じ */
+  font: 10px/18.2px ui-monospace, Menlo, Consolas, monospace;
   white-space: pre;
   box-sizing: border-box;
   z-index: 1;
 }
 .tja-gutter > div { will-change: transform; }
-.tja-gutter .ln { display: inline-block; width: 5ch; text-align: right; color: #5a5a62; }
-.tja-gutter .ms { display: inline-block; width: 4ch; text-align: right; color: #e0a400; }
+.tja-gutter .ln { display: inline-block; width: 6ch; text-align: right; color: #5a5a62; }
+.tja-gutter .ms { display: inline-block; width: 5ch; text-align: right; color: #e0a400; }
 .tja-text {
   position: relative;
   flex: 1;
