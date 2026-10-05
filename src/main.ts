@@ -29,7 +29,10 @@ const esc = (s: string) =>
 // ---------- 設定 ----------
 
 const settings = {
-  divisor: 4,
+  /** 前の版の「1 拍を何分割」（読み込みの引き継ぎ用） */
+  divisor: 0,
+  /** グリッド: 1 小節（4/4、全音符）を何分割するか */
+  grid: 0,
   zoom: 220,
   /** 拡大率を自分で変えたか（変えるまではプレイ画面と同じ間隔） */
   zoomSet: false,
@@ -71,8 +74,10 @@ const saveSettings = () => {
 
 const audio = new AudioEngine();
 const ed = new Editor();
-// 自由グリッドで選んだ数も、1 拍の tick 数で割り切れれば使える
-ed.divisor = settings.divisor >= 1 && settings.divisor <= 192 && TPB % settings.divisor === 0 ? settings.divisor : 4;
+// グリッドは 1 小節の分割数。前の版（1 拍の分割数）で保存したものは 4 倍して引き継ぐ
+const gridOk = (n: number) => Number.isInteger(n) && n >= 1 && n <= 768 && (TPB * 4) % n === 0;
+if (!settings.grid && settings.divisor) settings.grid = settings.divisor * 4;
+ed.divisor = gridOk(settings.grid) ? settings.grid : 16;
 const view = new EditorView($<HTMLCanvasElement>('editor'), ed);
 // 拡大率の初期値をプレイ画面と同じ音符の間隔に変えたので、前の版で自分で変えた拡大率は一度だけ初期値に戻す
 // 打音を差し替えたので、打音の音量の比率を一度だけ 0.8 にする
@@ -321,14 +326,14 @@ setTool('don');
 const divMenu = $('divMenu');
 const setDivisor = (d: number) => {
   ed.divisor = d;
-  settings.divisor = d;
+  settings.grid = d;
   saveSettings();
   updateHeader();
   view.invalidate();
 };
 const closeDivMenu = () => divMenu.classList.add('hidden');
 const openDivMenu = () => {
-  const preset = DIVISORS.filter((d) => d >= 2);
+  const preset = DIVISORS;
   const custom = !preset.includes(ed.divisor);
   divMenu.innerHTML = preset.map((d) => `<button data-div="${d}" class="${d === ed.divisor ? 'on' : ''}">1/${d}</button>`).join('')
     + `<hr><button data-div="free" class="${custom ? 'on' : ''}">${custom ? `自由 1/${ed.divisor}` : '自由…'}</button>`;
@@ -351,11 +356,11 @@ divMenu.addEventListener('click', (e) => {
   if (!b) return;
   if (b.dataset.div === 'free') {
     closeDivMenu();
-    const v = prompt('1 拍を何分割にするか（例: 5, 7, 10, 20, 48）', String(ed.divisor));
+    const v = prompt('1 小節を何分割にするか（例: 20, 28, 36, 40, 96）', String(ed.divisor));
     if (v === null) return;
     const n = Math.round(Number(v));
-    if (!(n >= 1 && n <= 192) || TPB % n !== 0) {
-      toast('その分割数は使えません（使える例: 1〜8, 10, 12, 14, 15, 16, 20, 21, 24, 28, 30, 32, 35, 40, 48, 64…）');
+    if (!gridOk(n)) {
+      toast('その分割数は使えません（使える例: 1〜16, 18, 20, 21, 24, 28, 30, 32, 35, 36, 40, 42, 48, 56, 60, 64, 80, 96…）');
       return;
     }
     setDivisor(n);

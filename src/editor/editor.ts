@@ -10,7 +10,8 @@ import { applyGrad, gradMatches, type Grad } from './grad';
 export type Tool = NoteType | 'erase' | 'gogo' | 'scroll' | 'bpm' | 'measure';
 
 /** 1拍あたりの分割数（Malody の 1/n 表記と同じ） */
-export const DIVISORS = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32];
+/** グリッド: 1 小節（4/4、全音符）を何分割するか。1/16 なら 16 分音符 */
+export const DIVISORS = [4, 8, 12, 16, 24, 32, 48, 64];
 
 export interface TapResult {
   message?: string;
@@ -33,7 +34,8 @@ export class Editor {
   courseIndex = 0;
   audio: AudioFile | null = null;
   tool: Tool = 'don';
-  divisor = 4;
+  /** 1 小節（4/4、全音符 = 4 拍）を何分割するか */
+  divisor = 16;
   /** 連打・風船・ゴーゴーの始点（終点のタップ待ち） */
   pendingLong: number | null = null;
   timing!: Timing;
@@ -172,7 +174,7 @@ export class Editor {
   }
 
   get step() {
-    return TPB / this.divisor;
+    return (TPB * 4) / this.divisor;
   }
 
   snap(tick: number): number {
