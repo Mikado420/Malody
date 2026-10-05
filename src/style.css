@@ -457,12 +457,19 @@ html, body { overscroll-behavior: none; }
 /* TJA の画面を開いている間は、縦向きでも回転させない */
 @media (orientation: portrait) {
   /* 画面の下まで使う（保存してある高さは古いことがあり、下に黒い隙間ができていた） */
+  /* 画面の下まで使う。ホーム画面から開いたときは、iPhone が高さを上の帯（時刻の所）のぶん短く伝えてくることがあるので、
+     JS で画面そのものの高さ（--tja-h）を入れる */
   body.tja-open #root {
-    position: fixed;
-    inset: 0;
-    width: auto;
-    height: auto;
-    transform: none;
+    width: 100vw;
+    height: var(--tja-h, 100lvh);
+    transform: translateZ(0);
   }
 }
 .sheet.tja #sheetClose { min-width: 48px; height: 48px; font-size: 22px; }
+
+/* TJA の見出しの隣の太字ボタン（TJA の画面のときだけ出す） */
+.sheet-title { display: flex; align-items: center; gap: 10px; }
+.bold-toggle { display: none; min-width: 40px; height: 36px; padding: 0 10px; font-weight: 800; font-size: 16px; color: var(--sub); }
+.bold-toggle.on { background: var(--accent); color: #1a1405; }
+.sheet.tja .bold-toggle { display: inline-block; }
+.sheet.tja-bold .tja-hl, .sheet.tja-bold .tja-text { font-weight: 700; }

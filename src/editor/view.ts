@@ -637,8 +637,9 @@ export class EditorView {
       const t = timing.tickToTime(note.tick);
       const i = Math.floor((t / len) * n);
       if (i < 0 || i >= n) continue;
+      // ドンは 1・3、カッは 2・4 だけ数える（連打・風船は数えない）
       if (note.type === 'ka' || note.type === 'bigKa') kas[i] += 1;
-      else dons[i] += 1;
+      else if (note.type === 'don' || note.type === 'bigDon') dons[i] += 1;
     }
     let max = 0;
     for (let i = 0; i < n; i++) max = Math.max(max, dons[i] + kas[i]);

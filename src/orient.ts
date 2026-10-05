@@ -33,6 +33,11 @@ export function fitRoot() {
     const st = document.documentElement.style;
     st.setProperty('--vw', `${window.innerWidth}px`);
     st.setProperty('--vh', `${window.innerHeight}px`);
+    // TJA の画面（縦向き）の高さ。ホーム画面から開いたとき（standalone）は innerHeight が上の帯のぶん短いことがあるので、
+    // 画面そのものの高さを使う（iPhone の screen.height は向きに関係なく長い辺）
+    const standalone = (navigator as Navigator & { standalone?: boolean }).standalone || matchMedia('(display-mode: standalone)').matches;
+    const full = Math.max(screen.width, screen.height);
+    st.setProperty('--tja-h', `${standalone && portrait.matches ? Math.max(full, window.innerHeight) : window.innerHeight}px`);
   };
   apply();
   const later = () => {

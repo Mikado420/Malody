@@ -42,6 +42,8 @@ const settings = {
   passiveTouch: false,
   /** タッチ用の中央のドンの帯の幅 */
   donWidth: 0.6,
+  /** TJA のテキストを太字で表示する */
+  tjaBold: false,
 };
 try {
   // 横スクロール化で拡大率の意味が変わったので v2 のキーで保存
@@ -334,6 +336,19 @@ function refreshSheet() {
 }
 
 $('sheetClose').addEventListener('click', closeSheet);
+// TJA の文字の太さ（ふつう / 太字）。入力欄と色付きの文字の両方を同じ太さにする
+const applyTjaBold = () => {
+  $('sheet').classList.toggle('tja-bold', settings.tjaBold);
+  $('sheetBold').classList.toggle('on', settings.tjaBold);
+  $('sheetBold').setAttribute('aria-pressed', String(settings.tjaBold));
+};
+applyTjaBold();
+$('sheetBold').addEventListener('click', () => {
+  settings.tjaBold = !settings.tjaBold;
+  saveSettings();
+  applyTjaBold();
+  scheduleTjaHl();
+});
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
 $('btnFile').addEventListener('click', () => openSheet('file'));
 $('btnInfo').addEventListener('click', () => openSheet('info'));
