@@ -312,6 +312,8 @@ function openSheet(kind: SheetKind) {
   stopPlayback();
   sheet = kind;
   $('sheet').classList.remove('hidden');
+  // TJA の画面は縦いっぱいに使う
+  $('sheet').classList.toggle('tja', kind === 'events');
   renderSheet();
 }
 function closeSheet() {
@@ -407,7 +409,6 @@ function renderSheet() {
     $('sheetTitle').textContent = 'TJA';
     const text = writeTJA(ed.chart);
     body.innerHTML = `
-      <p class="note">譜面全体の TJA です。書き換えると、手を止めたところで自動で譜面に反映されます（元に戻すで、書き始める前に戻せます）。#BPMCHANGE や #GOGOSTART などのイベントもここで編集できます。</p>
       <p class="tja-status" id="tjaStatus"></p>
       <textarea id="tjaText" class="tja-text" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>`;
     const ta = body.querySelector<HTMLTextAreaElement>('#tjaText')!;

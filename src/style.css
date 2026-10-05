@@ -371,5 +371,26 @@ body.playing #app { visibility: hidden; }
 .sheet.kb .sheet-body { flex: 1; min-height: 0; padding: 6px 8px; gap: 6px; overflow: hidden; }
 .sheet.kb .tja-text { min-height: 0; flex: 1; resize: none; }
 
-.tja-status { margin: 0; min-height: 1.4em; font-size: 12px; color: var(--sub); }
+.sheet.tja .sheet-body { position: relative; }
+/* 状態（入力中… / 反映済み）はテキストの右上に重ねて出す（場所を取らず、出ても位置がずれない） */
+.tja-status {
+  position: absolute;
+  top: 14px;
+  right: 22px;
+  margin: 0;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(20, 20, 24, 0.85);
+  font-size: 12px;
+  color: var(--sub);
+  pointer-events: none;
+  z-index: 1;
+}
+.tja-status:empty { display: none; }
 .tja-status.bad { color: #ff8a7a; }
+
+/* TJA の画面（入力していないとき）: 縦いっぱいに使う */
+.sheet.tja { align-items: stretch; }
+.sheet.tja .sheet-panel { max-height: none; height: 100%; border-radius: 0; }
+.sheet.tja .sheet-body { flex: 1; min-height: 0; overflow: hidden; padding: 8px 12px 10px; gap: 6px; }
+.sheet.tja .tja-text { min-height: 0; flex: 1; resize: none; }
