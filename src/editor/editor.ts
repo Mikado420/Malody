@@ -384,6 +384,18 @@ export class Editor {
     });
   }
 
+  /** 自動で測った BPM・OFFSET を入れる（全部の難易度の #BPMCHANGE を置き換える。音符の拍の位置はそのまま） */
+  applyTempo(plan: { bpm: number; offset: number; changes: { tick: number; bpm: number }[] }) {
+    this.mutate(() => {
+      this.chart.bpm = plan.bpm;
+      this.chart.offset = plan.offset;
+      for (const c of this.chart.courses) {
+        c.events = c.events.filter((e) => e.kind !== 'bpm');
+        for (const ch of plan.changes) c.events.push({ tick: ch.tick, kind: 'bpm', value: ch.bpm });
+      }
+    });
+  }
+
   setBalloonHits(n: ENote, hits: number) {
     if (!(hits > 0)) return;
     this.mutate(() => { n.hits = Math.round(hits); });

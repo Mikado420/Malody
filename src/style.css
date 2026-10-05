@@ -564,3 +564,15 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .ev-row i { width: 6px; align-self: stretch; border-radius: 3px; flex: none; }
 .ev-row .ev-name { flex: 1; display: flex; flex-direction: column; font-size: 15px; }
 .ev-row .ev-name small { color: var(--sub); font-size: 12px; }
+
+/* BPM・OFFSET の自動測定 */
+.tempo-progress { height: 8px; border-radius: 4px; background: #2a2930; overflow: hidden; }
+.tempo-progress i { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
+.tempo-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+.tempo-table th { text-align: left; color: var(--sub); font-weight: 600; font-size: 12px; padding: 4px 6px; }
+.tempo-table td { padding: 6px; border-top: 1px solid var(--line); vertical-align: middle; }
+.tempo-table small { display: block; color: var(--sub); font-size: 11px; }
+.tempo-bpm { font-weight: 800; font-size: 17px; }
+.tempo-mul { white-space: nowrap; }
+.tempo-mul button { padding: 4px 8px; font-size: 13px; margin-left: 4px; }
+.note.bad { color: #ff8a7a; }

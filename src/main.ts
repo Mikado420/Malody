@@ -7,6 +7,7 @@ import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { buildAutoEvents, type AutoEvent } from './play/auto';
+import { analyzeTempo, tempoPlan, type TempoResult } from './audio/tempo';
 import { applyGrad, gradValid, type Grad } from './editor/grad';
 import { writeCourseBody } from './chart/tjaWrite';
 
@@ -464,7 +465,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'file' | 'info' | 'events' | 'grad' | 'point' | 'evlist';
+type SheetKind = 'file' | 'info' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -490,7 +491,7 @@ function refreshSheet() {
   if ($('sheetBody').contains(document.activeElement) && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) return;
   // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
   if (sheet === 'events' && document.getElementById('tjaText')) return;
-  if (sheet === 'grad' || sheet === 'point') return;
+  if (sheet === 'grad' || sheet === 'point' || sheet === 'tempo') return;
   if (sheet === 'evlist') { renderSheet(); return; }
   renderSheet();
 }
@@ -540,6 +541,7 @@ function renderSheet() {
       <div class="btns">
         <button data-act="open" class="primary">.tja / .zip を開く</button>
         <button data-act="audio">音源を差し替え</button>
+        <button data-act="tempo">BPM・OFFSET を自動で測る</button>
         <button data-act="new">新規作成</button>
         <button data-act="sample">サンプル譜面</button>
       </div>
@@ -606,6 +608,8 @@ function renderSheet() {
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（プレイ画面と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
+  } else if (sheet === 'tempo') {
+    renderTempoSheet(body);
   } else if (sheet === 'evlist' && evList) {
     renderEvListSheet(body);
   } else if (sheet === 'point' && pointEdit) {
@@ -901,6 +905,7 @@ const safeName = (s: string) => (s || 'chart').replace(/[\\/:*?"<>|]+/g, '_').sl
 async function fileAction(act: string) {
   if (act === 'open') fileOpen.click();
   else if (act === 'audio') fileAudio.click();
+  else if (act === 'tempo') startTempo();
   else if (act === 'new') {
     if (!confirm('新しい譜面を作りますか？（今の譜面はファイル保存していなければ消えます）')) return;
     ed.load(newChart(), null, 0);
@@ -1349,4 +1354,127 @@ function posText(tick: number) {
   const m = ed.measureOf(tick);
   const beat = (tick - m.start) / ((TPB * 4) / m.den) + 1;
   return `小節 ${m.index + 1}・${Number(beat.toFixed(3))} 拍目`;
+}
+
+// ---------- BPM・OFFSET の自動測定 ----------
+
+const tempoState: { running: boolean; progress: number; result: TempoResult | null; error: string; mul: number[]; shift: number } = {
+  running: false, progress: 0, result: null, error: '', mul: [], shift: 0,
+};
+
+/** 音源を 1 ch にまとめて、別のスレッドで測る（使えないときはこの画面で測る） */
+function startTempo() {
+  const buf = audio.buffer;
+  if (!buf) {
+    toast('先に音源を読み込んでください');
+    return;
+  }
+  stopPlayback();
+  const mono = new Float32Array(buf.length);
+  for (let c = 0; c < buf.numberOfChannels; c++) {
+    const d = buf.getChannelData(c);
+    for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels;
+  }
+  Object.assign(tempoState, { running: true, progress: 0, result: null, error: '', mul: [], shift: 0 });
+  openSheet('tempo');
+  const done = (r: TempoResult) => {
+    tempoState.running = false;
+    tempoState.result = r;
+    tempoState.mul = r.segments.map(() => 1);
+    if (sheet === 'tempo') renderSheet();
+  };
+  const fail = (msg: string) => {
+    tempoState.running = false;
+    tempoState.error = msg;
+    if (sheet === 'tempo') renderSheet();
+  };
+  const runHere = () => {
+    setTimeout(() => {
+      try { done(analyzeTempo(mono, buf.sampleRate)); } catch (err) { fail(err instanceof Error ? err.message : String(err)); }
+    }, 50);
+  };
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL('./audio/tempoWorker.ts', import.meta.url), { type: 'module' });
+  } catch {
+    runHere();
+    return;
+  }
+  let started = false;
+  worker.onmessage = (e: MessageEvent<{ type: string; p?: number; result?: TempoResult; message?: string }>) => {
+    started = true;
+    const m = e.data;
+    if (m.type === 'progress') {
+      tempoState.progress = m.p ?? 0;
+      const bar = document.getElementById('tempoBar');
+      if (bar) bar.style.width = `${Math.round(tempoState.progress * 100)}%`;
+    } else if (m.type === 'done' && m.result) {
+      worker.terminate();
+      done(m.result);
+    } else if (m.type === 'error') {
+      worker.terminate();
+      fail(m.message ?? '測れませんでした');
+    }
+  };
+  worker.onerror = () => {
+    worker.terminate();
+    if (!started) runHere();
+    else fail('測れませんでした');
+  };
+  // 測れなかったときにこの画面で測り直せるよう、データは渡さずに写す（transfer しない）
+  worker.postMessage({ mono, sr: buf.sampleRate });
+}
+
+const fmtSec = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;
+
+function renderTempoSheet(body: HTMLElement) {
+  $('sheetTitle').textContent = 'BPM・OFFSET の自動測定';
+  const st = tempoState;
+  if (st.running) {
+    body.innerHTML = `<p class="note">曲全体を調べています…</p><div class="tempo-progress"><i id="tempoBar" style="width:${Math.round(st.progress * 100)}%"></i></div>`;
+    return;
+  }
+  if (st.error || !st.result) {
+    body.innerHTML = `<p class="note">測れませんでした: ${st.error}</p>`;
+    return;
+  }
+  const r = st.result;
+  const plan = tempoPlan(r, TPB, st.mul, st.shift);
+  if (!plan) {
+    body.innerHTML = '<p class="note">拍が見つかりませんでした</p>';
+    return;
+  }
+  const weak = r.segments.some((s) => s.matched / Math.max(1, s.beats) < 0.6 || s.jitterMs > 8);
+  const hasNotes = ed.chart.courses.some((c) => c.notes.length);
+  const rows = r.segments.map((s, i) => {
+    const bpm = Number((s.bpm * st.mul[i]).toFixed(3));
+    const rate = Math.round((s.matched / Math.max(1, s.beats)) * 100);
+    return `<tr><td>${fmtSec(s.start)}〜${fmtSec(s.end)}</td><td class="tempo-bpm">${bpm}<small>測定 ${Number((s.rawBpm * st.mul[i]).toFixed(3))}</small></td>
+      <td>${rate}%<small>ずれ ${s.jitterMs.toFixed(1)}ms</small></td>
+      <td class="tempo-mul"><button data-tmul="${i}" data-v="0.5">÷2</button><button data-tmul="${i}" data-v="2">×2</button></td></tr>`;
+  }).join('');
+  body.innerHTML = `
+    <p class="note">曲全体（${fmtSec(r.duration)}）の拍を 1 つずつ確かめて、区間ごとに BPM を合わせました。「合った拍」は実際の音と拍が合った割合、「ずれ」はその平均のずれです。</p>
+    <table class="tempo-table"><tr><th>区間</th><th>BPM</th><th>合った拍</th><th>速さ</th></tr>${rows}</table>
+    ${weak ? '<p class="note bad">合い方が弱い区間があります。入れた後にメトロノームで確かめてください。</p>' : ''}
+    <div class="field grad-pos"><span>1 拍目</span><button data-tshift="-1" aria-label="1 拍前へ">◀</button><b>OFFSET ${plan.offset.toFixed(3)}</b><button data-tshift="1" aria-label="1 拍後ろへ">▶</button></div>
+    <p class="note">入れる内容: BPM ${plan.bpm} ／ OFFSET ${plan.offset.toFixed(3)}${plan.changes.length ? ` ／ #BPMCHANGE ${plan.changes.length} か所（${plan.changes.map((c) => `小節 ${Math.floor(c.tick / (TPB * 4)) + 1} で ${c.bpm}`).join('、')}）` : ''}</p>
+    ${hasNotes ? '<p class="note">今の #BPMCHANGE は置き換えます。音符の拍の位置はそのままで、時刻が変わります。</p>' : ''}
+    <div class="btns"><button data-tact="cancel">やめる</button><button data-tact="ok" class="primary">入れる</button></div>`;
+  body.querySelectorAll<HTMLButtonElement>('[data-tmul]').forEach((b) => b.addEventListener('click', () => {
+    const i = Number(b.dataset.tmul);
+    st.mul[i] = Math.min(4, Math.max(0.25, st.mul[i] * Number(b.dataset.v)));
+    renderTempoSheet(body);
+  }));
+  body.querySelectorAll<HTMLButtonElement>('[data-tshift]').forEach((b) => b.addEventListener('click', () => {
+    st.shift += Number(b.dataset.tshift);
+    renderTempoSheet(body);
+  }));
+  body.querySelectorAll<HTMLButtonElement>('[data-tact]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.tact === 'ok') {
+      ed.applyTempo(plan);
+      toast(`BPM ${plan.bpm}・OFFSET ${plan.offset.toFixed(3)} を入れました`);
+    }
+    closeSheet();
+  }));
 }
