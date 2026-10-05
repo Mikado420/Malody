@@ -32,7 +32,8 @@ function song(sr: number, first: number, parts: { bpm: number; beats: number }[]
     for (let i = 0; i < n && i0 + i < len; i++) {
       const tt = i / sr;
       let v = 0;
-      if (h.kind === 'kick') v = Math.sin(2 * Math.PI * (55 + 80 * Math.exp(-tt / 0.02)) * tt) * Math.exp(-tt / 0.08) * 0.9;
+      // キック（低い音＋叩いた瞬間の短いアタック音）
+      if (h.kind === 'kick') v = Math.sin(2 * Math.PI * (55 + 80 * Math.exp(-tt / 0.02)) * tt) * Math.exp(-tt / 0.08) * 0.9 + (rand() * 2 - 1) * Math.exp(-tt / 0.004) * 0.4;
       else if (h.kind === 'snare') v = (rand() * 2 - 1) * Math.exp(-tt / 0.05) * 0.5 + Math.sin(2 * Math.PI * 190 * tt) * Math.exp(-tt / 0.04) * 0.3;
       else v = (rand() * 2 - 1) * Math.exp(-tt / 0.015) * 0.25;
       x[i0 + i] += v;
