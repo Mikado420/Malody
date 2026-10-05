@@ -473,3 +473,7 @@ html, body { overscroll-behavior: none; }
 .bold-toggle.on { background: var(--accent); color: #1a1405; }
 .sheet.tja .bold-toggle { display: inline-block; }
 .sheet.tja-bold .tja-hl, .sheet.tja-bold .tja-text { font-weight: 700; }
+
+.sheet-diag { font: 9px/1.2 ui-monospace, Menlo, monospace; color: #6e6e76; max-width: 140px; white-space: normal; }
+/* TJA の画面のとき、万一画面の下に隙間ができても文字の欄と同じ色にしておく */
+html:has(body.tja-open), body.tja-open { background: #111114; }

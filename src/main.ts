@@ -320,6 +320,7 @@ function openSheet(kind: SheetKind) {
   $('sheet').classList.toggle('tja', kind === 'events');
   document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
+  if (kind === 'events') requestAnimationFrame(showTjaDiag);
 }
 function closeSheet() {
   sheet = null;
@@ -336,6 +337,23 @@ function refreshSheet() {
 }
 
 $('sheetClose').addEventListener('click', closeSheet);
+// 【調査用・一時的】画面の下の隙間の原因を調べるため、画面の高さの値を TJA の見出しの横に小さく出す
+function showTjaDiag() {
+  const root = document.getElementById('root')!.getBoundingClientRect();
+  const panel = document.querySelector('#sheet .sheet-panel')!.getBoundingClientRect();
+  const probe = document.createElement('div');
+  probe.style.cssText = 'position:fixed;left:0;width:1px;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);pointer-events:none;visibility:hidden';
+  document.body.appendChild(probe);
+  const pr = probe.getBoundingClientRect();
+  probe.remove();
+  const nav = navigator as Navigator & { standalone?: boolean };
+  const v = window.visualViewport;
+  $('sheetDiag').textContent = [
+    `ih${innerHeight}`, `ch${document.documentElement.clientHeight}`, `vv${v ? Math.round(v.height) : '-'}`,
+    `sh${screen.height}`, `st${nav.standalone ? 1 : 0}`, `root${Math.round(root.height)}`, `pan${Math.round(panel.bottom)}`,
+    `sa${Math.round(pr.top)}/${Math.round(innerHeight - pr.bottom)}`,
+  ].join(' ');
+}
 // TJA の文字の太さ（ふつう / 太字）。入力欄と色付きの文字の両方を同じ太さにする
 const applyTjaBold = () => {
   $('sheet').classList.toggle('tja-bold', settings.tjaBold);
