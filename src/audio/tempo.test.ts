@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeTempo, tempoPlan } from './tempo';
+import { analyzeTempo, tempoPlan, computeMeters } from './tempo';
 
 const TPB = 6720;
 
@@ -11,14 +11,15 @@ const rand = () => {
 };
 
 /** テスト用の曲: 区間ごとの BPM で、1 拍目にキック、2・4 拍目にスネア、8 分でハイハット */
-function song(sr: number, first: number, parts: { bpm: number; beats: number }[], tail = 2, jitter = 0) {
+function song(sr: number, first: number, parts: { bpm: number; beats: number; bar?: number }[], tail = 2, jitter = 0) {
   let t = first;
   const hits: { t: number; kind: 'kick' | 'snare' | 'hat' }[] = [];
   for (const p of parts) {
     const P = 60 / p.bpm;
     for (let k = 0; k < p.beats; k++) {
       const bt = t + k * P + (rand() - 0.5) * 2 * jitter;
-      hits.push({ t: bt, kind: k % 4 === 0 ? 'kick' : k % 2 === 1 ? 'snare' : 'hat' });
+      const bar = p.bar ?? 4;
+      hits.push({ t: bt, kind: k % bar === 0 ? 'kick' : bar === 4 && k % 2 === 1 ? 'snare' : 'hat' });
       hits.push({ t: bt + P / 2, kind: 'hat' });
     }
     t += p.beats * P;
@@ -114,6 +115,44 @@ describe('BPM・OFFSET の自動測定', () => {
     const plan = tempoPlan(analyzeTempo(x, sr), TPB)!;
     expect(plan.bpm).toBe(175);
     expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual([[88, 160], [92, 145], [96, 130], [160, 145], [168, 160], [176, 175]]);
+  });
+
+  it('3/4 拍子の曲は #MEASURE 3/4 にする', () => {
+    const sr = 22050;
+    const x = song(sr, 0.5, [{ bpm: 150, beats: 120, bar: 3 }]);
+    const plan = tempoPlan(analyzeTempo(x, sr), TPB)!;
+    expect(plan.bpm).toBe(150);
+    expect(plan.measures).toEqual([{ tick: 0, num: 3, den: 4 }]);
+    expect(Math.abs(plan.offset - -0.5)).toBeLessThan(0.006);
+  });
+
+  it('途中に 1 小節だけ 2/4 の小節があれば、そこだけ #MEASURE 2/4 にして 4/4 に戻す', () => {
+    const sr = 22050;
+    const x = song(sr, 0.5, [{ bpm: 160, beats: 64 }, { bpm: 160, beats: 2, bar: 2 }, { bpm: 160, beats: 96 }]);
+    const plan = tempoPlan(analyzeTempo(x, sr), TPB)!;
+    expect(plan.bpm).toBe(160);
+    expect(plan.changes.length).toBe(0);
+    expect(plan.measures).toEqual([{ tick: 64 * TPB, num: 2, den: 4 }, { tick: 66 * TPB, num: 4, den: 4 }]);
+  });
+
+  it('手で決めた 1 拍目を通るように測り直す（拍子を手で決めても、そこが小節の頭になる）', () => {
+    const sr = 22050;
+    const P = 60 / 150;
+    const x = song(sr, 0.6, [{ bpm: 150, beats: 96 }]);
+    // 本当の小節の頭から 2 拍ずれた所を 1 拍目と決める
+    const anchor = 0.6 + 20 * P + 2 * P;
+    const r = analyzeTempo(x, sr, undefined, { anchors: [anchor] });
+    const plan = tempoPlan(r, TPB)!;
+    expect(plan.bpm).toBe(150);
+    const beatsFromDown = (anchor + plan.offset) / P;
+    expect(Math.abs(beatsFromDown - Math.round(beatsFromDown))).toBeLessThan(0.02);
+    expect(((Math.round(beatsFromDown) % 4) + 4) % 4).toBe(0);
+    // 拍子を 3/4 に決め直しても、手で決めた 1 拍目は小節の頭のまま
+    computeMeters(r, [{ num: 3, den: 4 }], [anchor]);
+    const p3 = tempoPlan(r, TPB)!;
+    expect(p3.measures[0]).toEqual({ tick: 0, num: 3, den: 4 });
+    const b3 = Math.round((anchor + p3.offset) / P);
+    expect(b3 % 3).toBe(0);
   });
 
   it('BPM 230 は 229.98 などにせず 230 にする（音が少し揺れていても、曲全体のずれで判断）', () => {

@@ -387,13 +387,14 @@ export class Editor {
   }
 
   /** 自動で測った BPM・OFFSET を入れる（全部の難易度の #BPMCHANGE を置き換える。音符の拍の位置はそのまま） */
-  applyTempo(plan: { bpm: number; offset: number; changes: { tick: number; bpm: number }[] }) {
+  applyTempo(plan: { bpm: number; offset: number; changes: { tick: number; bpm: number }[]; measures?: { tick: number; num: number; den: number }[] }) {
     this.mutate(() => {
       this.chart.bpm = plan.bpm;
       this.chart.offset = plan.offset;
       for (const c of this.chart.courses) {
-        c.events = c.events.filter((e) => e.kind !== 'bpm');
+        c.events = c.events.filter((e) => e.kind !== 'bpm' && (!plan.measures || e.kind !== 'measure'));
         for (const ch of plan.changes) c.events.push({ tick: ch.tick, kind: 'bpm', value: ch.bpm });
+        for (const m of plan.measures ?? []) c.events.push({ tick: m.tick, kind: 'measure', num: m.num, den: m.den });
       }
     });
   }

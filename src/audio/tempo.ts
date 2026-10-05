@@ -40,7 +40,21 @@ export interface TempoResult {
   duration: number;
   /** 測り方の途中経過（うまく測れないときの確認用） */
   info?: string;
+  /**
+   * 拍子（小節の長さ）の変わる所。beat はその小節の頭の拍の番号（downbeat と同じ数え方）。
+   * 最初のものは downbeat の位置。途中で 1 小節だけ短い・長い小節があるときも、ここに入る
+   */
+  meters?: { beat: number; num: number; den: number }[];
+  /** 区間ごとに自動で決めた拍子 */
+  meterAuto?: Meter[];
+  /** 半拍ごとの音の強さ（区間の頭から順に。拍子を決め直すのに使う） */
+  beatAcc?: number[];
 }
+
+/** 拍子（num/den。4/4 なら 1 小節 = 4 拍） */
+export interface Meter { num: number; den: number }
+/** 1 小節の拍数（4 分音符で数える） */
+export const meterLen = (m: Meter) => (m.num * 4) / m.den;
 
 // ---------- FFT ----------
 
@@ -815,6 +829,9 @@ function foldScore(env: Float32Array, fr: number, t0: number, i0: number, i1: nu
 
 /** フレームの山の位置（放物線で細かく） */
 
+/** 手で決めた 1 拍目（秒、近くの音の立ち上がりに合わせたもの）。analyzeTempo の間だけ使う */
+let curAnchors: number[] = [];
+
 function refineCoarse(env: Envelope, start: number, end: number, roughBpm: number): CoarseSeg {
   const { all, fr, t0 } = env;
   const i0 = Math.max(0, Math.floor((start - t0) * fr));
@@ -834,27 +851,35 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
   // 1 拍ずつ実際の立ち上がりを拾い、区間全体で直線（時刻 = 基準 + k × 拍の長さ）に当てはめる
   let P = 60 / bestBpm;
   let phase = best.phase;
-  // 16 分音符が続く曲では、拍の 1/4・1/2・3/4 ずれた所にも同じくらい音が乗る。
-  // 低い音（キック・太鼓など）も合わせて見て、いちばん強い所を拍にする
-  {
-    const hitAt = (t: number) => {
-      const i = Math.round((t - t0) * fr);
-      let a = 0;
-      let l = 0;
-      for (let d = -3; d <= 2; d++) {
-        a = Math.max(a, all[i + d] ?? 0);
-        l = Math.max(l, env.low[i + d] ?? 0);
+  // 手で決めた 1 拍目がこの区間にあれば、拍の線は必ずそこを通す
+  const anchor = curAnchors.find((x) => x >= start && x < end);
+  if (anchor !== undefined) {
+    phase = anchor;
+  } else {
+    // 16 分音符が続く曲では、拍の 1/4・1/2・3/4 ずれた所にも同じくらい音が乗る。
+    // 低い音（キック・太鼓など）も合わせて見て、いちばん強い所を拍にする。
+    // 低い音をどれだけ重く見るかは区間ごとに決める（低い音が拍の位置にはっきり集まっている区間ほど重く見る）
+    const sumAt = (arr: Float32Array, ph: number) => {
+      let sum = 0;
+      let n = 0;
+      for (let t = ph + Math.ceil((start - ph) / P) * P; t < end; t += P) {
+        const i = Math.round((t - t0) * fr);
+        let v = 0;
+        for (let d = -3; d <= 2; d++) v = Math.max(v, arr[i + d] ?? 0);
+        sum += v;
+        n++;
       }
-      return a + l;
+      return n ? sum / n : 0;
     };
+    const qa = [0, 1, 2, 3].map((q) => sumAt(all, phase + (q * P) / 4));
+    const ql = [0, 1, 2, 3].map((q) => sumAt(env.low, phase + (q * P) / 4));
+    const lmean = (ql[0] + ql[1] + ql[2] + ql[3]) / 4;
+    const peak = lmean > 0 ? Math.max(...ql) / lmean : 1;
+    const wLow = 1 + Math.max(0, Math.min(1, (peak - 1.3) / 0.4));
     let bq = 0;
     let bv = -Infinity;
     for (let q = 0; q < 4; q++) {
-      const ph = phase + (q * P) / 4;
-      let sum = 0;
-      let n = 0;
-      for (let t = ph + Math.ceil((start - ph) / P) * P; t < end; t += P) { sum += hitAt(t); n++; }
-      const v = n ? sum / n : 0;
+      const v = qa[q] + wLow * ql[q];
       if (v > bv * 1.02) { bv = v; bq = q; }
     }
     phase += (bq * P) / 4;
@@ -895,6 +920,13 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
     jitter = Math.sqrt(use.reduce((s, p) => s + Math.pow(p.t - (a + p.k * P), 2), 0) / Math.max(1, use.length));
   }
   phase = a;
+  // 手で決めた 1 拍目が区間に 2 つ以上あれば、その間がちょうど整数拍になるように拍の長さを決める
+  const anchorsIn = curAnchors.filter((x) => x >= start && x < end);
+  if (anchorsIn.length >= 2) {
+    const span = anchorsIn[anchorsIn.length - 1] - anchorsIn[0];
+    const n = Math.round(span / P);
+    if (n > 0) P = span / n;
+  }
   const rawBpm = 60 / P;
   // きりのいい BPM（整数 → 小数 1 桁 → 2 桁）にしても、区間全体のずれがほとんど増えなければそちらを使う
   const rmsWith = (Pc: number) => {
@@ -914,8 +946,9 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
       break;
     }
   }
-  // 決めた BPM で基準の時刻を合わせ直す
-  if (use.length) {
+  // 決めた BPM で基準の時刻を合わせ直す（手で決めた 1 拍目があれば、そこを通す）
+  if (anchor !== undefined) phase = anchor;
+  else if (use.length) {
     const Pc = 60 / bpm;
     let sw = 0, s = 0;
     for (const p of use) {
@@ -927,6 +960,7 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
   return {
     start, end, bpm, rawBpm,
     phase,
+    down: anchor,
     beats: k1 - k0 + 1,
     matched: use.length,
     jitterMs: jitter * 1000,
@@ -1038,6 +1072,12 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   const aDown = A.down ?? findDownbeatCoarse(env, A);
   const bp0 = ((Math.round((tStart - aDown) / PA) % 4) + 4) % 4;
   const OFFBAR = LAMBDA;
+  // 手で決めた 1 拍目: そこに小節の頭が来る道を強く選ぶ（拍は来るが小節の頭でない道は強く避ける）
+  const anchorsW = curAnchors.filter((x) => x > lo - 0.05 && x < hi + 0.05);
+  const aBonus = (t: number, bp: number) => {
+    for (const x of anchorsW) if (Math.abs(t - x) < 0.035) return bp === 0 ? 20 * LAMBDA : -20 * LAMBDA;
+    return 0;
+  };
   const NB = 4;
   // 状態は時刻を 2 フレームごとにまとめて持つ（メモリを減らすため。時刻そのものは別に細かく覚える）
   const BK = fr / 2;
@@ -1073,7 +1113,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
           {
             const t2 = t + 60 / cand[k];
             const j = innerAt(t2);
-            if (t2 < hi && (j < 0 || ord[j + 1] === k)) relax(key(Math.round((t2 - tStart) * BK), k, bp2, Math.min(MINLEN, c + 1), st), v + score(k, t2), t2, s);
+            if (t2 < hi && (j < 0 || ord[j + 1] === k)) relax(key(Math.round((t2 - tStart) * BK), k, bp2, Math.min(MINLEN, c + 1), st), v + score(k, t2) + aBonus(t2, bp2), t2, s);
           }
           if (k === 1 || c < MINLEN) continue;
           // ここ（拍 t）から BPM を変える
@@ -1087,7 +1127,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
             const pen = LAMBDA + odd(k2) + (bp === 0 ? 0 : OFFBAR);
             const t2 = t + 60 / cand[k2];
             const j = innerAt(t2);
-            if (t2 < hi && (j < 0 || ord[j + 1] === k2)) relax(key(Math.round((t2 - tStart) * BK), k2, bp2, 1, st2), v + score(k2, t2) - pen, t2, s);
+            if (t2 < hi && (j < 0 || ord[j + 1] === k2)) relax(key(Math.round((t2 - tStart) * BK), k2, bp2, 1, st2), v + score(k2, t2) + aBonus(t2, bp2) - pen, t2, s);
           }
         }
       }
@@ -1157,6 +1197,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
 
 /** 小節の頭: 4 拍ごとの位置のうち、低い音の立ち上がりがいちばん強い所 */
 function findDownbeatCoarse(env: Envelope, seg: CoarseSeg): number {
+  if (seg.down !== undefined) return seg.down;
   const P = 60 / seg.bpm;
   const k0 = Math.ceil((seg.start - seg.phase) / P);
   const k1 = Math.floor((seg.end - seg.phase) / P);
@@ -1166,6 +1207,7 @@ function findDownbeatCoarse(env: Envelope, seg: CoarseSeg): number {
     const t = seg.phase + k * P;
     const i = Math.round((t - env.t0) * env.fr);
     let v = 0;
+    // （BPM の変わり目を決める途中の目安。最後の小節の頭は computeMeters で、強い音の集まり方から決め直す）
     for (let d = -2; d <= 2; d++) v = Math.max(v, env.low[i + d] ?? 0, (env.all[i + d] ?? 0) * 0.3);
     const m = ((k % 4) + 4) % 4;
     sums[m] += v;
@@ -1296,6 +1338,233 @@ function coarseToResult(c: { segs: CoarseSeg[]; downbeat: number }, duration: nu
 }
 
 /** 案の拍が、曲の音の立ち上がりにどれだけ乗っているか（高いほどよい）。2 つの測り方のどちらを使うか決めるのに使う */
+
+/** 拍の時刻の一覧（区間ごとに、半拍ずつ。step = 1 で 1 拍ずつ） */
+function eachBeat(r: TempoResult, half: boolean, fn: (t: number, seg: number, h: number) => void) {
+  let ts = r.t0;
+  r.segments.forEach((s, si) => {
+    const P = 60 / s.bpm;
+    const nb = s.endBeat - s.startBeat;
+    const n = half ? nb * 2 : nb;
+    for (let h = 0; h < n - 1e-9; h++) fn(ts + (half ? h / 2 : h) * P, si, h);
+    ts += nb * P;
+  });
+}
+
+/** 手で決めた 1 拍目と、いちばん近い拍とのずれの最大（秒） */
+function anchorErr(r: TempoResult): number {
+  if (!r.segments.length) return Infinity;
+  let worst = 0;
+  for (const a of curAnchors) {
+    let d = Infinity;
+    eachBeat(r, false, (t) => { d = Math.min(d, Math.abs(t - a)); });
+    worst = Math.max(worst, d);
+  }
+  return worst;
+}
+
+/** 半拍ごとの音の強さ（小節の頭は、キックなど低くて強い音が来やすいので、低い音を主に見る） */
+function beatAccents(env: Envelope, r: TempoResult): number[] {
+  const out: number[] = [];
+  eachBeat(r, true, (t) => {
+    const i = Math.round((t - env.t0) * env.fr);
+    let v = 0;
+    for (let d = -3; d <= 1; d++) v = Math.max(v, env.low[i + d] ?? 0, (env.all[i + d] ?? 0) * 0.3);
+    out.push(v);
+  });
+  return out;
+}
+
+const sameMeter = (a: Meter, b: Meter) => a.num * b.den === b.num * a.den && a.den === b.den;
+
+/** 小節の長さ（拍）から拍子にする */
+function meterOfLen(len: number, like?: Meter): Meter {
+  if (like && Math.abs(meterLen(like) - len) < 1e-6) return like;
+  if (Math.abs(len - Math.round(len)) < 1e-6) return { num: Math.round(len), den: 4 };
+  if (Math.abs(len * 2 - Math.round(len * 2)) < 1e-6) return { num: Math.round(len * 2), den: 8 };
+  return { num: Math.max(1, Math.round(len * 4)), den: 16 };
+}
+
+/**
+ * 拍子と小節の頭を決める（区間の拍はもう決まっている前提）。
+ * - 区間ごとの拍子: 手で決めたものがあればそれ、なければ強い音が 3 拍ごとか 4 拍ごとかで決める（短い区間は前の区間と同じ）
+ * - 小節の頭: 区間を 8 小節ずつに分け、それぞれで「強い音がいちばん集まる位置」を調べ、
+ *   位置を変える（1 小節だけ短い・長い小節を入れる）のを減点しながら、曲全体でいちばん合う並びを選ぶ。
+ *   区間の変わり目は、前の区間の小節がちょうど終わった所で次の区間の小節が始まるのを減点なしにする
+ * - 手で決めた 1 拍目があれば、そこは必ず小節の頭にする
+ * 結果は r.meters・r.downbeat・r.meterAuto に入れる
+ */
+export function computeMeters(r: TempoResult, override: (Meter | null)[] = [], anchorTimes: number[] = []) {
+  const acc = r.beatAcc;
+  const segs = r.segments;
+  if (!acc || !segs.length) return;
+  // 区間ごとの、半拍の強さの範囲
+  const ranges: { off: number; n: number; t: number; P: number; base: number }[] = [];
+  {
+    let off = 0;
+    let ts = r.t0;
+    for (const s of segs) {
+      const P = 60 / s.bpm;
+      const nb = s.endBeat - s.startBeat;
+      const n = Math.ceil(nb * 2 - 1e-9);
+      ranges.push({ off, n, t: ts, P, base: s.startBeat });
+      off += n;
+      ts += nb * P;
+    }
+  }
+  const a = (si: number, h: number) => acc[ranges[si].off + h] ?? 0;
+  // 1. 拍子（自動）
+  const auto: (Meter | null)[] = segs.map((_, si) => {
+    const R = ranges[si];
+    const beats = Math.floor(R.n / 2);
+    if (beats < 24) return null;
+    const contrast = (m: number) => {
+      const sum = new Array(m).fill(0);
+      const cnt = new Array(m).fill(0);
+      let all = 0;
+      for (let j = 0; j < beats; j++) { const v = a(si, j * 2); sum[j % m] += v; cnt[j % m]++; all += v; }
+      const mean = all / beats || 1;
+      return Math.max(...sum.map((x, o) => x / Math.max(1, cnt[o]))) / mean - 1;
+    };
+    const c3 = contrast(3);
+    const c4 = contrast(4);
+    return c3 > c4 * 1.25 && c3 > 0.15 ? { num: 3, den: 4 } : { num: 4, den: 4 };
+  });
+  for (let i = 0; i < auto.length; i++) if (!auto[i]) auto[i] = auto.slice(0, i).reverse().find((x) => x) ?? null;
+  for (let i = auto.length - 1; i >= 0; i--) if (!auto[i]) auto[i] = auto[i + 1] ?? { num: 4, den: 4 };
+  r.meterAuto = auto as Meter[];
+  const meters = segs.map((_, i) => override[i] ?? (auto[i] as Meter));
+  // 2. 8 小節ずつの単位と、その中での小節の頭の位置（半拍の番号 o、0〜小節の長さ-1）ごとの点数
+  type Unit = { si: number; h0: number; h1: number; L2: number; score: Float64Array; force: number };
+  const units: Unit[] = [];
+  segs.forEach((_, si) => {
+    const R = ranges[si];
+    const L2 = Math.max(1, Math.round(meterLen(meters[si]) * 2));
+    const size = L2 * 8;
+    for (let h0 = 0; h0 < R.n; h0 += size) {
+      const h1 = Math.min(R.n, h0 + size);
+      const score = new Float64Array(L2);
+      let all = 0;
+      for (let h = h0; h < h1; h++) all += a(si, h);
+      const mean = all / Math.max(1, h1 - h0) || 1;
+      const bars = Math.max(1, (h1 - h0) / L2);
+      for (let o = 0; o < L2; o++) {
+        // x/4 の拍子では、小節の頭は拍の上（半拍の位置にはしない）
+        if (meters[si].den <= 4 && o % 2) { score[o] = -Infinity; continue; }
+        let s2 = 0;
+        let c = 0;
+        for (let h = h0 + ((o - h0) % L2 + L2) % L2; h < h1; h += L2) { s2 += a(si, h); c++; }
+        score[o] = c ? ((s2 / c) / mean - 1) * Math.sqrt(bars) : 0;
+      }
+      // BPM の変わり目（区間の頭）は小節の頭であることが多い
+      if (si > 0 && h0 === 0 && score[0] !== -Infinity) score[0] += 3;
+      units.push({ si, h0, h1, L2, score, force: -1 });
+    }
+  });
+  // 手で決めた 1 拍目
+  for (const at of anchorTimes) {
+    const si = ranges.findIndex((R, i) => at >= R.t - R.P / 4 && (i === ranges.length - 1 || at < ranges[i + 1].t - ranges[i + 1].P / 4));
+    if (si < 0) continue;
+    const R = ranges[si];
+    const h = Math.round((at - R.t) / (R.P / 2));
+    const u = units.find((x) => x.si === si && h >= x.h0 && h < x.h1);
+    if (u) u.force = ((h % u.L2) + u.L2) % u.L2;
+  }
+  if (!units.length) return;
+  // 3. 動的計画法: 単位ごとの位置を選ぶ
+  const C = 10;
+  const lastDown = (u: Unit, o: number) => {
+    const R = ranges[u.si];
+    const lastH = o + Math.floor((R.n - 1 - o) / u.L2) * u.L2;
+    return R.base + lastH / 2;
+  };
+  const trans = (u: Unit, o: number, v: Unit, o2: number) => {
+    if (u.si === v.si) return o === o2 ? 0 : C;
+    const gap = ranges[v.si].base + o2 / 2 - lastDown(u, o);
+    return Math.abs(gap - u.L2 / 2) < 1e-6 ? 0 : C;
+  };
+  const val: Float64Array[] = [];
+  const back: Int32Array[] = [];
+  units.forEach((u, ui) => {
+    const cur = new Float64Array(u.L2).fill(-Infinity);
+    const bk = new Int32Array(u.L2).fill(-1);
+    for (let o = 0; o < u.L2; o++) {
+      if (u.force >= 0 && o !== u.force) continue;
+      if (u.score[o] === -Infinity) continue;
+      if (ui === 0) { cur[o] = u.score[o]; continue; }
+      const p = units[ui - 1];
+      for (let po = 0; po < p.L2; po++) {
+        const pv = val[ui - 1][po];
+        if (pv === -Infinity) continue;
+        const v = pv - trans(p, po, u, o) + u.score[o];
+        if (v > cur[o]) { cur[o] = v; bk[o] = po; }
+      }
+    }
+    val.push(cur);
+    back.push(bk);
+  });
+  const last = val[val.length - 1];
+  let o = 0;
+  for (let i = 1; i < last.length; i++) if (last[i] > last[o]) o = i;
+  if (last[o] === -Infinity) return;
+  const os = new Array<number>(units.length);
+  for (let ui = units.length - 1; ui >= 0; ui--) {
+    os[ui] = o;
+    o = back[ui][o];
+  }
+  // 4. 小節の頭の並び。同じ区間の中で位置が変わる所（1 小節だけ短い・長い小節）は、
+  //    前後の単位の中で「前の並びの最後の小節の頭」をどこにすると音にいちばん合うかで細かく決める
+  type Piece = { si: number; o: number; h0: number; h1: number; L2: number };
+  const pieces: Piece[] = [];
+  units.forEach((u, ui) => {
+    const last = pieces[pieces.length - 1];
+    if (last && last.si === u.si && last.o === os[ui]) last.h1 = u.h1;
+    else pieces.push({ si: u.si, o: os[ui], h0: u.h0, h1: u.h1, L2: u.L2 });
+  });
+  const first = (o: number, L2: number, from: number) => from + (((o - from) % L2) + L2) % L2;
+  for (let i = 1; i < pieces.length; i++) {
+    const p = pieces[i - 1];
+    const q = pieces[i];
+    if (p.si !== q.si) continue;
+    const si = p.si;
+    let bestX = -1;
+    let bestNew = -1;
+    let bestS = -Infinity;
+    for (let x = first(p.o, p.L2, p.h0); x < q.h1; x += p.L2) {
+      const xNew = first(q.o, q.L2, x + 1);
+      let sc = 0;
+      for (let h = first(p.o, p.L2, p.h0); h <= x; h += p.L2) sc += a(si, h);
+      for (let h = xNew; h < q.h1; h += q.L2) sc += a(si, h);
+      if (sc > bestS) { bestS = sc; bestX = x; bestNew = xNew; }
+    }
+    if (bestX >= 0) {
+      p.h1 = bestX + 1;
+      q.h0 = bestNew;
+    }
+  }
+  const downs: { beat: number; si: number }[] = [];
+  for (const pc of pieces) {
+    const R = ranges[pc.si];
+    for (let h = first(pc.o, pc.L2, pc.h0); h < pc.h1; h += pc.L2) {
+      const beat = R.base + h / 2;
+      if (!downs.length || beat > downs[downs.length - 1].beat + 1e-6) downs.push({ beat, si: pc.si });
+    }
+  }
+  if (!downs.length) return;
+  const out: { beat: number; num: number; den: number }[] = [];
+  let curLen = -1;
+  downs.forEach((d, i) => {
+    const len = i + 1 < downs.length ? downs[i + 1].beat - d.beat : meterLen(meters[d.si]);
+    if (Math.abs(len - curLen) > 1e-6) {
+      const m = meterOfLen(len, meters[d.si]);
+      if (!out.length || !sameMeter(m, out[out.length - 1])) out.push({ beat: d.beat, num: m.num, den: m.den });
+      curLen = len;
+    }
+  });
+  r.meters = out;
+  r.downbeat = downs[0].beat;
+}
+
 function alignScore(env: Envelope, r: TempoResult, phaseFree = false): number {
   if (!r.segments.length) return -Infinity;
   let sum = 0;
@@ -1329,9 +1598,26 @@ function alignScore(env: Envelope, r: TempoResult, phaseFree = false): number {
  * 曲の BPM（途中の変化も）と、小節の頭を測る。
  * 2 つの測り方（大まかに区間全体で合わせる／拍を 1 つずつ追う）で測り、曲の音の立ち上がりによく乗っているほうを使う
  */
-export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: number) => void): TempoResult {
+export interface TempoOptions {
+  /** 手で決めた 1 拍目（小節の頭）の時刻（秒） */
+  anchors?: number[];
+  /** 区間ごとに手で決めた拍子（null は自動） */
+  meters?: (Meter | null)[];
+}
+
+export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: number) => void, opts: TempoOptions = {}): TempoResult {
   const duration = mono.length / sr;
   const env = envelope(mono, sr, progress);
+  // 手で決めた 1 拍目は、近くの音の立ち上がりに合わせる
+  curAnchors = (opts.anchors ?? []).filter((x) => x >= 0 && x < duration).map((x) => fineOnset(env, x, 0.04)).sort((a, b) => a - b);
+  try {
+    return analyzeInner(env, duration, progress, opts);
+  } finally {
+    curAnchors = [];
+  }
+}
+
+function analyzeInner(env: Envelope, duration: number, progress: ((p: number) => void) | undefined, opts: TempoOptions): TempoResult {
   const tg = tempogram(env.all, env.fr, progress);
   const path = tempoPath(tg);
   const craw = analyzeCoarse(env, tg, path, duration);
@@ -1410,6 +1696,14 @@ export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: numb
   for (let i = 1; i < fine.segments.length; i++) if (Math.abs(fine.segments[i].bpm / fine.segments[i - 1].bpm - 1) > 0.08) jumps++;
   const fineOk = jumps <= Math.max(2, fine.segments.length / 10);
   if (fineOk && sf > bs * 1.03 && sf > ss * 1.04) best = fine;
+  // 手で決めた 1 拍目があるときは、そこに拍が来る案を使う
+  if (curAnchors.length && anchorErr(best) > 0.035) {
+    const ok = [coarse, single, fine].filter((r) => anchorErr(r) <= 0.035);
+    if (ok.length) best = ok[0];
+  }
+  // 拍子と小節の頭（途中で 1 小節だけ短い・長い小節も）
+  best.beatAcc = beatAccents(env, best);
+  computeMeters(best, opts.meters ?? [], curAnchors);
   const name = best === single ? '1 つの BPM' : best === coarse ? '区間ごと' : '1 拍ずつ';
   const bpms = (r: TempoResult) => r.segments.map((x) => x.bpm).join('→');
   best.info = `大まかな区間 ${rawInfo}／区間ごと ${bpms(coarse)}${bridgeFail ? `（つなぎ失敗 ${bridgeFail}）` : ''}／合い方 1 つ ${ss.toFixed(3)}・区間 ${sc.toFixed(3)}・1 拍ずつ ${sf.toFixed(3)}／採用 ${name}`;
@@ -1423,6 +1717,8 @@ export interface TempoPlan {
   offset: number;
   /** 2 つ目以降の区間の #BPMCHANGE（tick は 1 拍 = tpb） */
   changes: { tick: number; bpm: number }[];
+  /** #MEASURE（4/4 から変わる所。1 小節だけ短い・長い小節は、その小節と次の小節の 2 つ） */
+  measures: { tick: number; num: number; den: number }[];
 }
 
 /**
@@ -1435,16 +1731,28 @@ export function tempoPlan(r: TempoResult, tpb: number, mul: number | number[] = 
   const m = (i: number) => (Array.isArray(mul) ? mul[i] ?? 1 : mul);
   // 区間ごとの拍の長さと拍数（倍率を掛けた後）
   const segs = r.segments.map((s, i) => ({ bpm: Number((s.bpm * m(i)).toFixed(3)), beats: (s.endBeat - s.startBeat) * m(i), start: s.startBeat }));
-  // 小節の頭の拍（最初の区間の中で数える。倍率を掛けた拍の番号）
+  // 拍の番号（測ったときの数え方）→ 倍率を掛けた後の拍の番号
+  const sStart: number[] = [];
+  {
+    let acc = segs[0].start * m(0);
+    segs.forEach((s) => { sStart.push(acc); acc += s.beats; });
+  }
+  const segOf = (b: number) => {
+    let i = 0;
+    while (i + 1 < r.segments.length && b >= r.segments[i + 1].startBeat - 1e-9) i++;
+    return i;
+  };
+  const scaled = (b: number) => { const i = segOf(b); return sStart[i] + (b - r.segments[i].startBeat) * m(i); };
   const P1 = 60 / segs[0].bpm;
-  const firstBeat = segs[0].start * m(0);
-  let d = r.downbeat * m(0); // 最初の区間の拍の番号での 1 拍目
+  const firstBeat = sStart[0];
+  const meters = r.meters?.length ? r.meters : [{ beat: r.downbeat, num: 4, den: 4 }];
+  const L0 = meterLen(meters[0]) * m(segOf(meters[0].beat));
   const t0 = r.t0 + fine;
   // 測った 1 拍目は、音源の頭以降でいちばん早い小節の頭に合わせる
-  const bar = 4 * P1;
-  d -= Math.floor((t0 + (d - firstBeat) * P1) / bar) * 4;
+  let d0 = scaled(r.downbeat);
+  d0 -= Math.floor((t0 + (d0 - firstBeat) * P1) / (L0 * P1)) * L0;
   // そこから手で動かした拍数（音源の頭より前にも、何小節後ろにも動かせる。最初の BPM の区間の中まで）
-  d = Math.min(d + shift, firstBeat + segs[0].beats - 1);
+  const d = Math.min(d0 + shift, firstBeat + segs[0].beats - 1);
   const down = t0 + (d - firstBeat) * P1;
   const changes: { tick: number; bpm: number }[] = [];
   let beatPos = segs[0].beats + firstBeat - d; // 2 つ目の区間の頭までの、1 拍目からの拍数
@@ -1453,28 +1761,68 @@ export function tempoPlan(r: TempoResult, tpb: number, mul: number | number[] = 
     if (tick > (changes[changes.length - 1]?.tick ?? 0)) changes.push({ tick, bpm: segs[i].bpm });
     beatPos += segs[i].beats;
   }
-  return { bpm: segs[0].bpm, offset: Number((-down).toFixed(3)), changes };
+  // 拍子: 小節の並びは 1 拍目からの位置で決まる（1 拍目を動かすと小節の並びごと動く）
+  const measures: { tick: number; num: number; den: number }[] = [];
+  let prev: Meter = { num: 4, den: 4 };
+  meters.forEach((e, i) => {
+    const mi = m(segOf(e.beat));
+    const met = mi === 1 ? { num: e.num, den: e.den } : meterOfLen(meterLen(e) * mi);
+    const tick = i === 0 ? 0 : Math.round((scaled(e.beat) - d0) * tpb);
+    if (tick < 0 || sameMeter(met, prev)) return;
+    if (measures.length && measures[measures.length - 1].tick === tick) measures.pop();
+    measures.push({ tick, ...met });
+    prev = met;
+  });
+  return { bpm: segs[0].bpm, offset: Number((-down).toFixed(3)), changes, measures };
 }
 
-/** 案の拍の時刻（確認画面の波形に線を引く用）。tick 0 からの拍の番号 → 時刻 */
-export function planBeatTimes(plan: TempoPlan, tpb: number, untilSec: number): { t: number; bar: boolean }[] {
-  const out: { t: number; bar: boolean }[] = [];
-  // BPM は拍の途中で変わることもあるので、tick ごとの時刻を区間ごとに足していく
+/** その tick の時刻（秒） */
+export function planTimeAt(plan: TempoPlan, tpb: number, tick: number): number {
   let t = -plan.offset;
-  let tick = 0;
+  let tk = 0;
   let bpm = plan.bpm;
-  let ci = 0;
-  for (let k = 0; t <= untilSec && k < 100000; k++) {
-    const target = k * tpb;
-    while (ci < plan.changes.length && plan.changes[ci].tick <= target) {
-      t += ((plan.changes[ci].tick - tick) / tpb) * (60 / bpm);
-      tick = plan.changes[ci].tick;
-      bpm = plan.changes[ci++].bpm;
+  for (const c of plan.changes) {
+    if (c.tick >= tick) break;
+    t += ((c.tick - tk) / tpb) * (60 / bpm);
+    tk = c.tick;
+    bpm = c.bpm;
+  }
+  return t + ((tick - tk) / tpb) * (60 / bpm);
+}
+
+/** 小節の頭の tick の一覧（untilTick まで）。n は小節の番号（1 から） */
+export function planBars(plan: TempoPlan, tpb: number, untilTick: number): { tick: number; n: number }[] {
+  const out: { tick: number; n: number }[] = [];
+  let tick = 0;
+  let len = 4 * tpb;
+  let mi = 0;
+  for (let n = 1; tick <= untilTick && n < 100000; n++) {
+    while (mi < plan.measures.length && plan.measures[mi].tick <= tick) {
+      len = Math.max(1, Math.round((plan.measures[mi].num * 4 * tpb) / plan.measures[mi].den));
+      mi++;
     }
-    t += ((target - tick) / tpb) * (60 / bpm);
-    tick = target;
+    out.push({ tick, n });
+    // 拍子の変わり目が小節の途中にあるときは、そこで小節を区切る
+    const nextM = plan.measures[mi]?.tick ?? Infinity;
+    tick = Math.min(tick + len, nextM);
+  }
+  return out;
+}
+
+/** 案の拍の時刻（確認画面の波形に線を引く用）。小節の頭は bar、n は小節の番号 */
+export function planBeatTimes(plan: TempoPlan, tpb: number, untilSec: number): { t: number; bar: boolean; n: number }[] {
+  const out: { t: number; bar: boolean; n: number }[] = [];
+  // untilSec までの tick を大まかに求める（BPM がいちばん遅い所でも届くように）
+  let untilTick = 0;
+  while (planTimeAt(plan, tpb, untilTick) <= untilSec && untilTick < tpb * 200000) untilTick += tpb * 16;
+  const bars = planBars(plan, tpb, untilTick);
+  const barAt = new Map(bars.map((b) => [b.tick, b.n]));
+  const ticks = new Set<number>(bars.map((b) => b.tick));
+  for (let k = 0; k * tpb <= untilTick; k++) ticks.add(k * tpb);
+  for (const tick of [...ticks].sort((x, y) => x - y)) {
+    const t = planTimeAt(plan, tpb, tick);
     if (t > untilSec) break;
-    out.push({ t, bar: k % 4 === 0 });
+    out.push({ t, bar: barAt.has(tick), n: barAt.get(tick) ?? 0 });
   }
   return out;
 }

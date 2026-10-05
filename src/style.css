@@ -618,3 +618,5 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .fly-menu h4 { margin: 6px 12px 2px; font-size: 11px; font-weight: 600; color: var(--sub); letter-spacing: 0.05em; }
 .fly-menu h4:first-child { margin-top: 2px; }
 .side .open { background: #26252c; }
+.tempo-table select { background: #26252c; color: #f4f4f4; border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; font-size: 13px; max-width: 120px; }
+.tempo-wave-bar button[disabled] { opacity: 0.4; }
