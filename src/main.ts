@@ -3,6 +3,7 @@ import { AudioEngine, type HitSound } from './audio/audio';
 import { COURSE_NAMES, contentEnd, newChart, toPlayable, TPB, type EEvent } from './chart/model';
 import { parseTJA } from './chart/tja';
 import { writeTJA } from './chart/tjaWrite';
+import { tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { DIVISORS, Editor, type Tool } from './editor/editor';
@@ -410,9 +411,15 @@ function renderSheet() {
     const text = writeTJA(ed.chart);
     body.innerHTML = `
       <p class="tja-status" id="tjaStatus"></p>
-      <textarea id="tjaText" class="tja-text" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>`;
+      <div class="tja-wrap">
+        <pre class="tja-hl" aria-hidden="true"><div id="tjaHl"></div></pre>
+        <textarea id="tjaText" class="tja-text" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>
+      </div>`;
     const ta = body.querySelector<HTMLTextAreaElement>('#tjaText')!;
     ta.value = text;
+    ta.addEventListener('scroll', scheduleTjaHl, { passive: true });
+    tjaHl.text = '';
+    tjaHl.lh = 0;
     tjaSync.last = text;
     tjaSync.session = false;
     // 今いる小節の行が見えるところまでスクロールする
@@ -420,6 +427,7 @@ function renderSheet() {
     requestAnimationFrame(() => {
       const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
       ta.scrollTop = Math.max(0, (line - 3) * lh);
+      renderTjaHl();
     });
   }
 }
@@ -452,6 +460,7 @@ $('sheet').addEventListener('focusout', (e) => {
   el.style.top = el.style.height = el.style.bottom = '';
 });
 window.visualViewport?.addEventListener('resize', fitSheetToKeyboard);
+window.visualViewport?.addEventListener('resize', scheduleTjaHl);
 window.visualViewport?.addEventListener('scroll', fitSheetToKeyboard);
 
 /** TJA のテキストで、その難易度の n 小節目（0 から）がある行 */
@@ -513,8 +522,40 @@ function syncTja() {
   setTjaStatus('反映済み');
 }
 
+/**
+ * 色分けの表示（入力欄の後ろに重ねた pre に、見えている行だけ色付きで描く）。
+ * 入力・スクロールのたびに、次の描画のタイミングで 1 回だけ描き直す
+ */
+const tjaHl = { raf: 0, text: '', marks: null as ReturnType<typeof tjaMarks> | null, lh: 0 };
+
+function scheduleTjaHl() {
+  if (tjaHl.raf) return;
+  tjaHl.raf = requestAnimationFrame(() => {
+    tjaHl.raf = 0;
+    renderTjaHl();
+  });
+}
+
+function renderTjaHl() {
+  const ta = document.getElementById('tjaText') as HTMLTextAreaElement | null;
+  const inner = document.getElementById('tjaHl');
+  if (!ta || !inner) return;
+  const text = ta.value;
+  if (text !== tjaHl.text || !tjaHl.marks) {
+    tjaHl.text = text;
+    tjaHl.marks = tjaMarks(text);
+  }
+  if (!tjaHl.lh) tjaHl.lh = parseFloat(getComputedStyle(ta).lineHeight) || 23;
+  const lh = tjaHl.lh;
+  const first = Math.max(0, Math.floor(ta.scrollTop / lh) - 4);
+  const count = Math.ceil(ta.clientHeight / lh) + 8;
+  inner.innerHTML = tjaLinesHtml(text, tjaHl.marks, first, first + count);
+  inner.style.transform = `translate(${-ta.scrollLeft}px, ${first * lh - ta.scrollTop}px)`;
+}
+
 $('sheetBody').addEventListener('input', (e) => {
   if ((e.target as HTMLElement).id !== 'tjaText') return;
+  scheduleTjaHl();
   clearTimeout(tjaSync.timer);
   setTjaStatus('入力中…');
   tjaSync.timer = window.setTimeout(syncTja, 350);
