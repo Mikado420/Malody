@@ -943,10 +943,10 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
  * 戻り値は A と Z の間の区間（A.end・Z.start も直す）。見つからないときは null
  */
 const KERN = [0.5, 0.85, 1, 0.85, 0.5];
-/** 短い区間（16 拍以下）の BPM は細かく測れないので、5 の倍数まで 1% 以内なら 5 の倍数にする */
+/** 短い区間（16 拍以下）の BPM は細かく測れないので、5 の倍数まで 1.5% 以内なら 5 の倍数にする */
 function snap5(bpm: number, beats: number) {
   const r = Math.round(bpm / 5) * 5;
-  return beats <= 16 && Math.abs(bpm / r - 1) <= 0.01 ? r : bpm;
+  return beats <= 16 && Math.abs(bpm / r - 1) <= 0.015 ? r : bpm;
 }
 function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   const { fr, t0, all } = env;
@@ -993,7 +993,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   for (let b = Math.ceil(bl); b <= bh; b++) if (!cand.slice(2).includes(b)) cand.push(b);
   const nT = cand.length;
   // きりのいい BPM（5 の倍数）を少し優先する
-  const odd = (k: number) => (k >= nAnchor && cand[k] % 5 !== 0 ? LAMBDA * 0.5 : 0);
+  const odd = (k: number) => (k >= nAnchor && cand[k] % 5 !== 0 ? LAMBDA : 0);
   // 途中の区間の中ほどは、その区間の BPM のままでいて、拍は数えない。
   // 途中の区間の拍の位置は、区間の中の音の強さ（裏拍が強い曲などで迷う）ではなく、前後の BPM の変わり目からのつながりで決める。
   // 中ほど = 4 秒の窓で見て、その区間の BPM がほかの候補の BPM よりよく合う所が続く範囲（両端を少し内側に）
@@ -1296,7 +1296,7 @@ function coarseToResult(c: { segs: CoarseSeg[]; downbeat: number }, duration: nu
 }
 
 /** 案の拍が、曲の音の立ち上がりにどれだけ乗っているか（高いほどよい）。2 つの測り方のどちらを使うか決めるのに使う */
-function alignScore(env: Envelope, r: TempoResult): number {
+function alignScore(env: Envelope, r: TempoResult, phaseFree = false): number {
   if (!r.segments.length) return -Infinity;
   let sum = 0;
   let n = 0;
@@ -1304,14 +1304,22 @@ function alignScore(env: Envelope, r: TempoResult): number {
   for (const s of r.segments) {
     const P = 60 / s.bpm;
     const nb = s.endBeat - s.startBeat;
-    for (let j = 0; j < nb; j++) {
-      // 立ち上がりの山は少し早めに出るので、少し前を広めに見る（-35ms〜+12ms）
-      const i = Math.round((ts + j * P - env.t0) * env.fr);
-      let v = 0;
-      for (let d = -3; d <= 1; d++) v = Math.max(v, env.all[i + d] ?? 0);
-      sum += v;
-      n++;
+    // phaseFree: 区間ごとに、拍を 1/4 拍ずつずらした中でいちばん合う所で数える（BPM が合っているかだけを見る。
+    // 裏拍が強い曲では、正しい拍の位置より 1/4 拍ずれた所のほうが音が強いことがあるため）
+    let best = -Infinity;
+    for (const q of phaseFree ? [0, 0.25, 0.5, 0.75] : [0]) {
+      let sq = 0;
+      for (let j = 0; j < nb; j++) {
+        // 立ち上がりの山は少し早めに出るので、少し前を広めに見る（-35ms〜+12ms）
+        const i = Math.round((ts + (j + q) * P - env.t0) * env.fr);
+        let v = 0;
+        for (let d = -3; d <= 1; d++) v = Math.max(v, env.all[i + d] ?? 0);
+        sq += v;
+      }
+      best = Math.max(best, sq);
     }
+    sum += best;
+    n += Math.max(0, Math.ceil(nb));
     ts += nb * P;
   }
   return n ? sum / n : -Infinity;
@@ -1392,7 +1400,8 @@ export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: numb
   // 区間が多い案ほど、はっきりよいときだけ使う
   let best = single;
   let bs = ss;
-  if (coarse.segments.length > 1 && sc > bs * 1.04) {
+  // 1 つの BPM と区間ごとのどちらにするかは、拍の位置（1/4 拍のずれ）を問わずに、BPM が合っているかで比べる
+  if (coarse.segments.length > 1 && alignScore(env, coarse, true) > alignScore(env, single, true) * 1.04) {
     best = coarse;
     bs = sc;
   }
