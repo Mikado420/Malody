@@ -1438,15 +1438,14 @@ export function tempoPlan(r: TempoResult, tpb: number, mul: number | number[] = 
   // 小節の頭の拍（最初の区間の中で数える。倍率を掛けた拍の番号）
   const P1 = 60 / segs[0].bpm;
   const firstBeat = segs[0].start * m(0);
-  let d = r.downbeat * m(0) + shift; // 最初の区間の拍の番号での 1 拍目
-  // 拍 b（倍率を掛けた後の番号、最初の区間の中）の時刻
-  const t0 = r.t0 + fine + (firstBeat - firstBeat) * P1;
-  let down = t0 + (d - firstBeat) * P1;
-  // 音源の頭以降で、いちばん早い小節の頭まで、1 小節ずつ戻す・進める
+  let d = r.downbeat * m(0); // 最初の区間の拍の番号での 1 拍目
+  const t0 = r.t0 + fine;
+  // 測った 1 拍目は、音源の頭以降でいちばん早い小節の頭に合わせる
   const bar = 4 * P1;
-  const nb = Math.floor(down / bar);
-  down -= nb * bar;
-  d -= nb * 4;
+  d -= Math.floor((t0 + (d - firstBeat) * P1) / bar) * 4;
+  // そこから手で動かした拍数（音源の頭より前にも、何小節後ろにも動かせる。最初の BPM の区間の中まで）
+  d = Math.min(d + shift, firstBeat + segs[0].beats - 1);
+  const down = t0 + (d - firstBeat) * P1;
   const changes: { tick: number; bpm: number }[] = [];
   let beatPos = segs[0].beats + firstBeat - d; // 2 つ目の区間の頭までの、1 拍目からの拍数
   for (let i = 1; i < segs.length; i++) {

@@ -242,6 +242,7 @@ function tickPlayback() {
 
 function loop() {
   if (playing && !play.isActive) tickPlayback();
+  if (tempoPreview.on) tickTempoPreview();
   // プレイ画面を出している間は、隠れているエディタを描き直さない
   if (!document.body.classList.contains('playing')) view.frame();
   requestAnimationFrame(loop);
@@ -470,6 +471,7 @@ let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
   stopPlayback();
+  stopTempoPreview();
   sheet = kind;
   $('sheet').classList.remove('hidden');
   // TJA の画面は縦いっぱいに使う
@@ -481,6 +483,7 @@ function openSheet(kind: SheetKind) {
   if (kind === 'events') requestAnimationFrame(showTjaDiag);
 }
 function closeSheet() {
+  stopTempoPreview();
   sheet = null;
   document.body.classList.remove('tja-open');
   $('sheet').classList.add('hidden');
@@ -1368,6 +1371,43 @@ const tempoState: {
   running: false, progress: 0, result: null, error: '', mul: [], shift: 0, fine: 0, viewAt: 0, span: 2,
 };
 
+/** 測定画面の確認再生: 区間の少し前から音源を流し、案の拍でメトロノームを鳴らす（調整するとすぐ反映） */
+const tempoPreview = { on: false, row: -1, scheduled: 0 };
+async function startTempoPreview(row: number, from: number) {
+  stopPlayback();
+  Object.assign(tempoPreview, { on: false, row, scheduled: from - 0.001 });
+  tempoState.viewAt = from + tempoState.span * 0.3;
+  await audio.startAt(from, 1);
+  if (tempoPreview.row === row) tempoPreview.on = true;
+}
+function stopTempoPreview() {
+  if (tempoPreview.row === -1) return;
+  tempoPreview.on = false;
+  tempoPreview.row = -1;
+  audio.stop();
+}
+function tickTempoPreview() {
+  const st = tempoState;
+  if (sheet !== 'tempo' || !st.result) { stopTempoPreview(); return; }
+  const p = tempoPlan(st.result, TPB, st.mul, st.shift, st.fine);
+  if (!p) return;
+  const now = audio.now();
+  if (now > st.result.duration + 0.5) {
+    stopTempoPreview();
+    renderSheet();
+    return;
+  }
+  // これから 0.25 秒以内に鳴る拍を予約する
+  const horizon = now + 0.25;
+  for (const b of planBeatTimes(p, TPB, horizon)) {
+    if (b.t > tempoPreview.scheduled && b.t >= now - 0.02) audio.scheduleMetro(b.bar, b.t);
+  }
+  tempoPreview.scheduled = Math.max(tempoPreview.scheduled, horizon);
+  // 波形は今の位置を追いかける
+  st.viewAt = now + st.span * 0.3;
+  drawTempoWave(p, now);
+}
+
 /** 音源を 1 ch にまとめて、別のスレッドで測る（使えないときはこの画面で測る） */
 function startTempo() {
   const buf = audio.buffer;
@@ -1376,6 +1416,7 @@ function startTempo() {
     return;
   }
   stopPlayback();
+  stopTempoPreview();
   const mono = new Float32Array(buf.length);
   for (let c = 0; c < buf.numberOfChannels; c++) {
     const d = buf.getChannelData(c);
@@ -1459,12 +1500,10 @@ function renderTempoSheet(body: HTMLElement) {
     const rate = Math.round((s.matched / Math.max(1, s.beats)) * 100);
     return `<tr data-tgo="${s.start}"><td>${fmtSec(s.start)}〜${fmtSec(s.end)}</td><td class="tempo-bpm">${bpm}<small>測定 ${Number((s.rawBpm * st.mul[i]).toFixed(3))}</small></td>
       <td>${rate}%<small>ずれ ${s.jitterMs.toFixed(1)}ms</small></td>
-      <td class="tempo-mul"><button data-tmul="${i}" data-v="0.5">÷2</button><button data-tmul="${i}" data-v="2">×2</button></td></tr>`;
+      <td class="tempo-mul"><button data-tplay="${i}" class="tempo-play" aria-label="この区間をメトロノームと再生">${tempoPreview.row === i ? '■' : '▶'}</button><button data-tmul="${i}" data-v="0.5">÷2</button><button data-tmul="${i}" data-v="2">×2</button></td></tr>`;
   }).join('');
   body.innerHTML = `
-    <p class="note">曲全体の拍を 1 つずつ確かめ、曲全体でつながるように BPM を合わせました（1 小節ごとに変わる BPM も拾います）。区間の行をタップすると、下の波形がその場所へ移ります。</p>
-    <table class="tempo-table"><tr><th>区間</th><th>BPM</th><th>合った拍</th><th>速さ</th></tr>${rows}</table>
-    <p class="note tempo-info">音源 ${audio.buffer?.sampleRate ?? '?'} Hz・${fmtSec(r.duration)}／${esc(r.info ?? '')}</p>
+    <table class="tempo-table"><tr><th>区間</th><th>BPM</th><th>合った拍</th><th>確認・速さ</th></tr>${rows}</table>
     ${weak ? '<p class="note bad">合い方が弱い区間があります。下の波形で拍の線と音を見比べてください。</p>' : ''}
     <div class="tempo-wave-wrap">
       <canvas id="tempoWave" class="tempo-wave"></canvas>
@@ -1473,11 +1512,12 @@ function renderTempoSheet(body: HTMLElement) {
         <button data-tzoom="0.5" aria-label="拡大">＋</button>
         <button data-tzoom="2" aria-label="縮小">－</button>
         <button data-tview="1" aria-label="後ろへ">▶</button>
+        <button data-tplayhere class="tempo-play">${tempoPreview.row !== -1 ? '■ 停止' : '▶ ここから再生'}</button>
         <span class="tempo-fine-label">線を左右にドラッグして音に合わせる</span>
       </div>
     </div>
     <div class="field grad-pos"><span>微調整</span><button data-tfine="-0.01">-10</button><button data-tfine="-0.001">-1</button><b id="tempoFine"></b><button data-tfine="0.001">+1</button><button data-tfine="0.01">+10</button></div>
-    <div class="field grad-pos"><span>1 拍目</span><button data-tshift="-1" aria-label="1 拍前へ">◀</button><b id="tempoOffset"></b><button data-tshift="1" aria-label="1 拍後ろへ">▶</button></div>
+    <div class="field grad-pos"><span>1 拍目</span><button data-tshift="-4" aria-label="1 小節前へ">◀◀</button><button data-tshift="-1" aria-label="1 拍前へ">◀</button><b id="tempoOffset"></b><button data-tshift="1" aria-label="1 拍後ろへ">▶</button><button data-tshift="4" aria-label="1 小節後ろへ">▶▶</button></div>
     <p class="note" id="tempoSummary"></p>
     ${hasNotes ? '<p class="note">今の #BPMCHANGE は置き換えます。音符の拍の位置はそのままで、時刻が変わります。</p>' : ''}
     <div class="btns"><button data-tact="cancel">やめる</button><button data-tact="ok" class="primary">入れる</button></div>`;
@@ -1530,6 +1570,20 @@ function renderTempoSheet(body: HTMLElement) {
   }));
   body.querySelectorAll<HTMLButtonElement>('[data-tshift]').forEach((b) => b.addEventListener('click', () => {
     st.shift += Number(b.dataset.tshift);
+    // 動かした 1 拍目（赤い線）が見えるところへ
+    const p = plan();
+    if (!tempoPreview.on) st.viewAt = -p.offset + st.span * 0.3;
+    renderTempoSheet(body);
+  }));
+  body.querySelector<HTMLButtonElement>('[data-tplayhere]')?.addEventListener('click', () => {
+    if (tempoPreview.row !== -1) stopTempoPreview();
+    else void startTempoPreview(-2, Math.max(0, st.viewAt - st.span / 2));
+    renderTempoSheet(body);
+  });
+  body.querySelectorAll<HTMLButtonElement>('[data-tplay]').forEach((b) => b.addEventListener('click', () => {
+    const i = Number(b.dataset.tplay);
+    if (tempoPreview.row === i) stopTempoPreview();
+    else void startTempoPreview(i, Math.max(0, r.segments[i].start - 1));
     renderTempoSheet(body);
   }));
   body.querySelectorAll<HTMLButtonElement>('[data-tact]').forEach((b) => b.addEventListener('click', () => {
@@ -1543,7 +1597,7 @@ function renderTempoSheet(body: HTMLElement) {
 }
 
 /** 確認画面の波形: 音の波形の上に、案の拍の線（小節の頭は太い線、最初の 1 拍目は赤）を引く */
-function drawTempoWave(plan: TempoPlan) {
+function drawTempoWave(plan: TempoPlan, playhead = -1) {
   const cv = document.getElementById('tempoWave') as HTMLCanvasElement | null;
   const buf = audio.buffer;
   if (!cv || !buf) return;
@@ -1599,6 +1653,11 @@ function drawTempoWave(plan: TempoPlan) {
   if (t0 < 0) {
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, xOf(0), H);
+  }
+  // 確認再生中の今の位置
+  if (playhead >= t0 && playhead <= t1) {
+    ctx.fillStyle = '#4fc3ff';
+    ctx.fillRect(xOf(playhead) - 1, 0, 2, H);
   }
   ctx.fillStyle = '#9a9aa2';
   ctx.font = '11px ui-monospace, monospace';

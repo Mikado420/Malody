@@ -215,7 +215,6 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .sheet-body .btns { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
 .sheet-body .btns.three { grid-template-columns: repeat(3, 1fr); }
 .sheet-body .note { color: var(--sub); font-size: 12px; line-height: 1.6; margin: 0; }
-.sheet-body .note.tempo-info { font-size: 10px; opacity: 0.8; word-break: break-all; }
 .field { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .field > span { width: 92px; flex: none; color: var(--sub); font-size: 13px; }
 .field input[type='text'], .field input[type='number'] {
@@ -576,6 +575,7 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .tempo-bpm { font-weight: 800; font-size: 17px; }
 .tempo-mul { white-space: nowrap; }
 .tempo-mul button { padding: 4px 8px; font-size: 13px; margin-left: 4px; }
+.tempo-mul .tempo-play { color: #4fc3ff; }
 .note.bad { color: #ff8a7a; }
 
 .tempo-wave-wrap { display: flex; flex-direction: column; gap: 4px; }
