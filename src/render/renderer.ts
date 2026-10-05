@@ -861,7 +861,8 @@ export class Renderer {
 
   private paintTitle(info: { title: string; genre?: string }) {
     const ctx = this.ctx;
-    const right = this.vis.x1 - 120;
+    // 右上の × をなくした（ポーズは左上）ので、曲名を右へ寄せる
+    const right = this.vis.x1 - 40;
     const genre = info.genre?.trim();
     const col = (genre && GENRE_COLOR.find(([re]) => re.test(genre))?.[1]) || '#3fc1c9';
     ctx.font = `900 56px ${FONT}`;
@@ -872,10 +873,10 @@ export class Renderer {
       ctx.font = `900 26px ${FONT}`;
       const gw = Math.max(240, ctx.measureText(genre).width + 60);
       ctx.fillStyle = col;
-      roundRect(ctx, right + 70 - gw, 108, gw, 34, 17);
+      roundRect(ctx, right + 10 - gw, 108, gw, 34, 17);
       ctx.fill();
       ctx.textAlign = 'center';
-      outlinedText(ctx, genre, right + 70 - gw / 2, 126, '#fff', '#1a1a1a', 6);
+      outlinedText(ctx, genre, right + 10 - gw / 2, 126, '#fff', '#1a1a1a', 6);
     }
   }
 

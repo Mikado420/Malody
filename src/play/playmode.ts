@@ -91,7 +91,14 @@ export class PlayMode {
       () => !!this.settings.passiveTouch,
     );
     window.addEventListener('keydown', (e) => {
-      if (this.active && e.code === 'Escape') this.finish();
+      if (this.active && e.code === 'Escape') {
+        if (this.paused) void this.resume();
+        else this.pause();
+      }
+    });
+    // 別のタブ・アプリへ移ったら、裏で流し続けずにポーズする
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.pause();
     });
   }
 
@@ -128,7 +135,10 @@ export class PlayMode {
   /** fromTime 秒の位置から（2秒前から助走して）開始。clicks を渡すとその時刻にクリック音を鳴らす */
   async start(course: Course, fromTime: number, info: { title: string; course: string; level: number; genre?: string }, clicks?: number[]) {
     if (!clicks) this.calibrating = false;
-    const from = Math.max(fromTime, (course.notes[0]?.time ?? 0) - 1);
+    this.hidePause();
+    // fromTime が 0 以下なら曲の最初から（最初の音符が 1 秒より前なら、その 1 秒前から）
+    const first = (course.notes[0]?.time ?? 0) - 1;
+    const from = fromTime <= 0 ? Math.min(0, first) : Math.max(fromTime, first);
     const notes = course.notes.filter((n) => (n.endTime ?? n.time) >= from - 0.05);
     // 判定・点数・ゲージは譜面全体で数える。途中から始めたときは、そこまでをオートで叩いた状態にしておく
     // （最初から通したときと、最後のコンボ数・点数・ゲージが一致する）
@@ -174,10 +184,25 @@ export class PlayMode {
     this.autoEvents = allAuto.filter((e) => e.t >= split);
     this.autoIdx = 0;
     this.soundIdx = 0;
-    cancelAnimationFrame(this.raf);
     this.perf = { frames: 0, work: 0, workMax: 0, gapMax: 0, slow: 0, last: 0 };
+    this.cur = { course, info, endAt, clicks: clicks ?? [] };
+    this.timeFloor = -Infinity;
+    this.runLoop();
+  }
+
+  /** 今のプレイの内容（ポーズから続けるときに使う） */
+  private cur: { course: Course; info: { title: string; course: string; level: number; genre?: string }; endAt: number; clicks: number[] } | null = null;
+  private paused = false;
+  private pausedAt = 0;
+  private timeFloor = -Infinity;
+
+  private runLoop() {
+    const game = this.game!;
+    const { course, info, endAt } = this.cur!;
+    cancelAnimationFrame(this.raf);
+    this.perf.last = 0;
     const loop = () => {
-      if (!this.active) return;
+      if (!this.active || this.paused) return;
       const t0 = performance.now();
       const P = this.perf;
       if (P.last) {
@@ -186,7 +211,8 @@ export class PlayMode {
         if (gap > 34) P.slow++;
       }
       P.last = t0;
-      const now = this.time();
+      // 続けた直後は音が出るまで時計が少し戻ることがあるので、止めた時刻より前には戻さない
+      const now = Math.max(this.time(), this.timeFloor);
       if (this.settings.auto && !this.calibrating) {
         this.scheduleSounds(now);
         this.autoPlay(game, now);
@@ -204,6 +230,35 @@ export class PlayMode {
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
+  }
+
+  /** ポーズ（曲を止めて、ポーズのメニューを出す） */
+  pause() {
+    if (!this.active || this.paused) return;
+    this.paused = true;
+    this.pausedAt = this.audio.now();
+    this.timeFloor = this.time();
+    cancelAnimationFrame(this.raf);
+    this.audio.stop();
+    this.root.querySelector('#pauseMenu')?.classList.remove('hidden');
+  }
+
+  /** 止めた所から続ける */
+  async resume() {
+    if (!this.active || !this.paused || !this.cur) return;
+    this.hidePause();
+    const at = this.pausedAt;
+    await this.audio.startAt(at, 1);
+    for (const t of this.cur.clicks) if (t > at) this.audio.scheduleTick(t);
+    // 止めたときに予約して鳴らなかった打音を、もう一度予約し直す
+    this.soundIdx = this.autoEvents.findIndex((e) => e.t >= at);
+    if (this.soundIdx < 0) this.soundIdx = this.autoEvents.length;
+    this.runLoop();
+  }
+
+  private hidePause() {
+    this.paused = false;
+    this.root.querySelector('#pauseMenu')?.classList.add('hidden');
   }
 
   /** 描画の重さの記録（結果画面の診断用） */
@@ -240,6 +295,7 @@ export class PlayMode {
 
   finish() {
     if (!this.active) return;
+    this.hidePause();
     this.active = false;
     postNative({ type: 'play', active: false });
     cancelAnimationFrame(this.raf);

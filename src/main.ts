@@ -254,8 +254,8 @@ requestAnimationFrame(loop);
 function updateHeader() {
   $<HTMLButtonElement>('btnUndo').disabled = !ed.canUndo;
   $<HTMLButtonElement>('btnRedo').disabled = !ed.canRedo;
-  $('btnRate').querySelector('small')!.textContent = `${settings.rate.toFixed(settings.rate === 1 ? 1 : 2)}x`;
-  $('btnMetro').classList.toggle('on', settings.metronome);
+  $('rateLabel').textContent = `${settings.rate.toFixed(settings.rate === 1 ? 1 : 2)}x`;
+  $('btnSound').classList.toggle('on', settings.metronome);
   $('divLabel').textContent = `1/${ed.divisor}`;
   view.invalidate();
 }
@@ -331,7 +331,7 @@ const openDivMenu = () => {
   const preset = DIVISORS.filter((d) => d >= 2);
   const custom = !preset.includes(ed.divisor);
   divMenu.innerHTML = preset.map((d) => `<button data-div="${d}" class="${d === ed.divisor ? 'on' : ''}">1/${d}</button>`).join('')
-    + `<hr><button data-div="free" class="${custom ? 'on' : ''}">自由グリッド${custom ? `（1/${ed.divisor}）` : '…'}</button>`;
+    + `<hr><button data-div="free" class="${custom ? 'on' : ''}">${custom ? `自由 1/${ed.divisor}` : '自由…'}</button>`;
   divMenu.classList.remove('hidden');
   // グリッドのボタンの下端にメニューの下端をそろえる（はみ出すときは上にそろえる）
   const btn = $('btnDiv');
@@ -341,6 +341,7 @@ const openDivMenu = () => {
 };
 $('btnDiv').addEventListener('click', (e) => {
   e.stopPropagation();
+  closeFlyMenu();
   if (divMenu.classList.contains('hidden')) openDivMenu();
   else closeDivMenu();
 });
@@ -370,28 +371,114 @@ document.addEventListener('pointerdown', (e) => {
   if (!divMenu.contains(t) && !$('btnDiv').contains(t)) closeDivMenu();
 });
 
+// ---------- 2 段のメニュー（右のアイコンを押すと、その少し左に項目の一覧を出す） ----------
+
+type FlyItem = { label: string; on?: boolean; primary?: boolean; run: () => void } | { head: string } | 'sep';
+const flyMenu = $('flyMenu');
+let flyKind = '';
+const closeFlyMenu = () => {
+  flyMenu.classList.add('hidden');
+  document.querySelectorAll('.side .open').forEach((b) => b.classList.remove('open'));
+  flyKind = '';
+};
+function flyItems(kind: string): FlyItem[] {
+  const rates = [1, 0.75, 0.5, 0.25];
+  if (kind === 'edit') {
+    return [
+      { label: '曲・難易度の情報', run: () => openSheet('info') },
+      { label: 'TJA テキスト', run: () => openSheet('events') },
+      { label: 'BPM・OFFSET 自動測定', run: () => startTempo() },
+    ];
+  }
+  if (kind === 'file') {
+    return [
+      { head: '読み込み' },
+      { label: '.tja / .zip を開く', primary: true, run: () => void fileAction('open') },
+      { label: '音源を読み込む', run: () => void fileAction('audio') },
+      { label: '新規作成', run: () => void fileAction('new') },
+      { label: 'サンプル譜面', run: () => void fileAction('sample') },
+      { head: '書き出し' },
+      { label: '.tja を保存', run: () => void fileAction('saveTja') },
+      { label: '.zip（譜面＋音源）を保存', run: () => void fileAction('saveZip') },
+      { label: 'TJA をコピー', run: () => void fileAction('copy') },
+    ];
+  }
+  if (kind === 'sound') {
+    return [
+      { label: `メトロノーム ${settings.metronome ? 'ON' : 'OFF'}`, on: settings.metronome, run: () => {
+        settings.metronome = !settings.metronome;
+        saveSettings();
+        updateHeader();
+      } },
+      { head: '再生速度' },
+      ...rates.map((r) => ({ label: `${r.toFixed(r === 1 ? 1 : 2)}x`, on: settings.rate === r, run: () => {
+        settings.rate = r;
+        saveSettings();
+        updateHeader();
+        if (playing) { stopPlayback(); void startPlayback(); }
+      } })),
+    ];
+  }
+  if (kind === 'test') {
+    return [
+      { label: '最初から', primary: true, run: () => void startTest(true) },
+      { label: '今の位置から', run: () => void startTest(false) },
+    ];
+  }
+  return [];
+}
+function openFlyMenu(btn: HTMLElement) {
+  const kind = btn.dataset.fly!;
+  const items = flyItems(kind);
+  flyMenu.innerHTML = items.map((it, i) => (it === 'sep' ? '<hr>'
+    : 'head' in it ? `<h4>${esc(it.head)}</h4>`
+    : `<button data-fi="${i}" class="${it.on ? 'on' : ''} ${it.primary ? 'primary' : ''}">${esc(it.label)}</button>`)).join('');
+  flyMenu.classList.remove('hidden');
+  document.querySelectorAll('.side .open').forEach((b) => b.classList.remove('open'));
+  btn.classList.add('open');
+  flyKind = kind;
+  // 押したボタンの上端にメニューの上端をそろえる（はみ出すときは下にそろえる）
+  const app = $('app');
+  const top = btn.offsetTop - (btn.parentElement as HTMLElement).scrollTop;
+  flyMenu.style.top = `${Math.max(8, Math.min(top, app.offsetHeight - flyMenu.offsetHeight - 8))}px`;
+  flyMenu.onclick = (e) => {
+    e.stopPropagation();
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-fi]');
+    if (!b) return;
+    const it = items[Number(b.dataset.fi)];
+    if (typeof it === 'object' && 'run' in it) {
+      // メトロノーム・再生速度は、続けて選べるようにメニューを開いたまま作り直す
+      if (kind === 'sound') {
+        it.run();
+        openFlyMenu(btn);
+        return;
+      }
+      closeFlyMenu();
+      it.run();
+    }
+  };
+}
+document.querySelectorAll<HTMLButtonElement>('.side [data-fly]').forEach((btn) => btn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeDivMenu();
+  if (flyKind === btn.dataset.fly) closeFlyMenu();
+  else openFlyMenu(btn);
+}));
+document.addEventListener('pointerdown', (e) => {
+  if (!flyKind) return;
+  const t = e.target as HTMLElement;
+  if (!flyMenu.contains(t) && !t.closest('.side [data-fly]')) closeFlyMenu();
+});
+
 view.onZoomChange = (z) => {
   if (Math.abs(z - view.defaultZoom) < 0.5 && !settings.zoomSet) return; // 自動調整のとき
   settings.zoom = z;
   settings.zoomSet = true;
   saveSettings();
 };
-$('btnMetro').addEventListener('click', () => {
-  settings.metronome = !settings.metronome;
-  saveSettings();
-  updateHeader();
-  toast(settings.metronome ? 'メトロノーム ON' : 'メトロノーム OFF');
-});
 $('btnUndo').addEventListener('click', () => ed.undo());
 $('btnRedo').addEventListener('click', () => ed.redo());
 view.onPlayToggle = () => (playing ? stopPlayback() : void startPlayback());
-$('btnRate').addEventListener('click', () => {
-  const rates = [1, 0.75, 0.5, 0.25];
-  settings.rate = rates[(rates.indexOf(settings.rate) + 1) % rates.length] ?? 1;
-  saveSettings();
-  updateHeader();
-  if (playing) { stopPlayback(); void startPlayback(); }
-});
 
 // ---------- 編集 ----------
 
@@ -466,7 +553,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'file' | 'info' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo';
+type SheetKind = 'info' | 'settings' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -531,34 +618,12 @@ $('sheetBold').addEventListener('click', () => {
   scheduleTjaHl();
 });
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
-$('btnFile').addEventListener('click', () => openSheet('file'));
-$('btnInfo').addEventListener('click', () => openSheet('info'));
-$('btnEvents').addEventListener('click', () => openSheet('events'));
+$('btnSettings').addEventListener('click', () => { closeFlyMenu(); openSheet('settings'); });
 
 function renderSheet() {
   const body = $('sheetBody');
-  if (sheet === 'file') {
-    $('sheetTitle').textContent = 'ファイル';
-    body.innerHTML = `
-      <h3>開く</h3>
-      <div class="btns">
-        <button data-act="open" class="primary">.tja / .zip を開く</button>
-        <button data-act="audio">音源を差し替え</button>
-        <button data-act="tempo">BPM・OFFSET を自動で測る</button>
-        <button data-act="new">新規作成</button>
-        <button data-act="sample">サンプル譜面</button>
-      </div>
-      <p class="note">.tja と音源を一緒に選ぶか、まとめた .zip を選んでください。</p>
-      <h3>書き出し</h3>
-      <div class="btns">
-        <button data-act="saveTja">.tja を保存</button>
-        <button data-act="saveZip">.zip（譜面＋音源）</button>
-        <button data-act="copy">TJA をコピー</button>
-      </div>
-      <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja は UTF-8（BOM付き）です。</p>
-      <p class="note">バージョン: ${esc(BUILD_ID.slice(0, 7))}</p>`;
-  } else if (sheet === 'info') {
-    $('sheetTitle').textContent = '譜面情報';
+  if (sheet === 'info') {
+    $('sheetTitle').textContent = '曲・難易度の情報';
     const c = ed.chart;
     const courses = c.courses
       .map(
@@ -590,8 +655,10 @@ function renderSheet() {
         <button data-act="addCourse">追加</button>
         <button data-act="dupCourse">複製</button>
         <button data-act="delCourse" class="danger" ${c.courses.length <= 1 ? 'disabled' : ''}>削除</button>
-      </div>
-
+      </div>`;
+  } else if (sheet === 'settings') {
+    $('sheetTitle').textContent = '設定';
+    body.innerHTML = `
       <h3>レーンの下に出すイベント</h3>
       <div class="ev-show">${(Object.keys(EV_NAMES) as (keyof EventShow)[]).map((k) => `<label><input type="checkbox" data-evshow="${k}" ${settings.evShow[k] ? 'checked' : ''}><span style="color:${EVENT_COLOR[k]}">${EV_NAMES[k]}</span></label>`).join('')}</div>
       <h3>テストプレイ・再生</h3>
@@ -610,7 +677,9 @@ function renderSheet() {
         <button data-act="hitReset" ${hitNames.don || hitNames.ka || hitNames.balloon ? '' : 'disabled'}>内蔵の音に戻す</button>
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（プレイ画面と同じ間隔）に戻す</button>
-      <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
+      <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>
+      <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja は UTF-8（BOM付き）です。</p>
+      <p class="note">バージョン: ${esc(BUILD_ID.slice(0, 7))}</p>`;
   } else if (sheet === 'tempo') {
     renderTempoSheet(body);
   } else if (sheet === 'evlist' && evList) {
@@ -915,7 +984,7 @@ async function fileAction(act: string) {
     view.pos = 0;
     await setAudio(null);
     closeSheet();
-    toast('「音源を差し替え」で曲を設定してください');
+    toast('「読み込み・書き出し → 音源を読み込む」で曲を設定してください');
   } else if (act === 'sample') {
     if (!confirm('サンプル譜面を開きますか？（今の譜面は置き換わります）')) return;
     ed.load(parseTJA(DEMO_TJA), null);
@@ -1011,7 +1080,11 @@ $<HTMLInputElement>('fileHit').addEventListener('change', async () => {
 
 // ---------- テストプレイ ----------
 
-async function startTest() {
+/** 最後に「最初から」で始めたか（結果画面の「もう一度」で同じ所から始める） */
+let lastTestFromStart = true;
+
+async function startTest(fromStart = lastTestFromStart) {
+  lastTestFromStart = fromStart;
   stopPlayback();
   closeSheet();
   const course = toPlayable(ed.chart, ed.course);
@@ -1019,7 +1092,7 @@ async function startTest() {
     toast('ノーツがありません');
     return;
   }
-  const from = ed.timing.tickToTime(ed.snap(Math.max(0, view.pos)));
+  const from = fromStart ? -Infinity : ed.timing.tickToTime(ed.snap(Math.max(0, view.pos)));
   await play.start(course, from, {
     title: ed.chart.title,
     course: ed.course.name,
@@ -1028,7 +1101,6 @@ async function startTest() {
   });
 }
 
-$('btnTest').addEventListener('click', () => void startTest());
 $('growFace').addEventListener('click', () => {
   if (play.suggestedDonWidth == null) return;
   settings.donWidth = play.suggestedDonWidth;
@@ -1057,8 +1129,12 @@ $('applyCalib').addEventListener('click', () => {
   $('applyCalib').closest('.calib')!.classList.add('hidden');
   toast(`判定調整を ${settings.offset}ms にしました`);
 });
-$('playExit').addEventListener('click', () => play.close());
 $('back').addEventListener('click', () => play.close());
+// ポーズ: 左上のボタン。つづける／はじめから（曲の最初から）／エディタへ
+$('playPause').addEventListener('click', () => play.pause());
+$('pauseResume').addEventListener('click', () => void play.resume());
+$('pauseRestart').addEventListener('click', () => void (play.lastWasCalibration ? play.startCalibration() : startTest(true)));
+$('pauseBack').addEventListener('click', () => play.close());
 $('retry').addEventListener('click', () => void (play.lastWasCalibration ? play.startCalibration() : startTest()));
 play.onExit = () => view.invalidate();
 
@@ -1093,7 +1169,7 @@ async function boot() {
     await setAudio(await loadAudio(), false);
   } else {
     ed.load(parseTJA(DEMO_TJA), null);
-    toast('サンプル譜面を開きました。☰ から .tja / .zip を開けます');
+    toast('サンプル譜面を開きました。右の ⇅（読み込み・書き出し）から .tja / .zip を開けます');
   }
   view.pos = 0;
   updateHeader();
@@ -1287,8 +1363,8 @@ function renderPointSheet(body: HTMLElement) {
 
 // ---------- レーンの下のイベント（タップしたとき） ----------
 
-const EV_NAMES: Record<keyof EventShow, string> = {
-  bpm: 'BPM', scroll: 'SCROLL', measure: '拍子', gogo: 'GOGO', delay: 'DELAY', barline: '小節線の表示',
+const EV_NAMES: Partial<Record<keyof EventShow, string>> = {
+  bpm: 'BPM', scroll: 'SCROLL', measure: '拍子', delay: 'DELAY', barline: '小節線の表示',
 };
 
 /** 一覧に出しているイベント */

@@ -537,7 +537,8 @@ export class EditorView {
     const grads = course.grads ?? [];
     const evItems: EventItem[] = [];
     for (const e of course.events) {
-      if (!this.evShow[e.kind]) continue;
+      // GOGO はレーンの色で分かるので、イベントとしては出さない
+      if (e.kind === 'gogo' || !this.evShow[e.kind]) continue;
       if (e.tick > rightTick) continue;
       const x = this.xOf(e.tick);
       if (x >= L.colW && x <= this.w) {
@@ -716,15 +717,20 @@ export class EditorView {
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillStyle = '#55555c';
-      ctx.fillText('音源なし（ファイル → 音源を差し替え）', (L.waveX + this.w) / 2, mid);
+      ctx.fillText('音源なし（読み込み・書き出し → 音源を読み込む）', (L.waveX + this.w) / 2, mid);
       return;
     }
     const t = this.ed.timing;
+    // 波形の棒は曲の中の位置（tick）に固定した区切りで作る。画面の位置で区切ると、スクロールのたびに
+    // 区切りが曲に対してずれて、波形が揺れて見えるため
     const step = 2;
-    let prevT = t.tickToTime(this.tickOf(L.waveX));
+    const binTicks = (step / this.zoom) * TPB;
+    const k0 = Math.floor(this.tickOf(L.waveX) / binTicks);
+    const k1 = Math.ceil(this.tickOf(this.w) / binTicks);
     ctx.fillStyle = C.wave;
-    for (let x = L.waveX; x < this.w; x += step) {
-      const nextT = t.tickToTime(this.tickOf(x + step));
+    let prevT = t.tickToTime(k0 * binTicks);
+    for (let k = k0; k < k1; k++) {
+      const nextT = t.tickToTime((k + 1) * binTicks);
       let i0 = Math.floor(Math.min(prevT, nextT) * wv.rate);
       let i1 = Math.ceil(Math.max(prevT, nextT) * wv.rate);
       prevT = nextT;
@@ -734,7 +740,10 @@ export class EditorView {
       let peak = 0;
       for (let i = i0; i <= i1; i++) if (wv.peaks[i] > peak) peak = wv.peaks[i];
       const hh = Math.max(0.5, peak * (L.waveH / 2 - 3));
-      ctx.fillRect(x, mid - hh, step - 0.5, hh * 2);
+      const x = this.xOf(k * binTicks);
+      const x0 = Math.max(L.waveX, x);
+      const x1 = Math.min(this.w, x + step - 0.5);
+      if (x1 > x0) ctx.fillRect(x0, mid - hh, x1 - x0, hh * 2);
     }
   }
 

@@ -53,15 +53,16 @@
       </div>
       <!-- グリッドのメニュー（右のアイコンバーの少し左に出す） -->
       <div id="divMenu" class="div-menu hidden" role="menu"></div>
+      <div id="flyMenu" class="div-menu fly-menu hidden" role="menu"></div>
       <nav class="side">
         <button id="btnUndo" title="元に戻す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
         <button id="btnRedo" title="やり直し"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
-        <button id="btnMetro" title="メトロノーム"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l4 18H5z"/><path d="M12 16 18 6"/><path d="M7.5 15h9"/></svg></button>
-        <button id="btnTest" title="テストプレイ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10h18v10H3z"/><path d="m3 10 1.5-5.5 16 0L19 10"/><path d="m8 4.5 2 5.5M13.5 4.5l2 5.5"/></svg></button>
-        <button id="btnFile" title="ファイル・保存"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v5h7V3"/><path d="M8 21v-7h8v7"/></svg></button>
-        <button id="btnInfo" title="譜面情報"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h14v18H5z"/><path d="M8.5 8h7M8.5 12h7M8.5 16h4.5"/></svg></button>
-        <button id="btnEvents" title="TJA テキスト"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v4h4"/><path d="m10 11-2.5 2.5L10 16M14 11l2.5 2.5L14 16"/></svg></button>
-        <button id="btnRate" title="再生速度"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3.5 17a8.5 8.5 0 1 1 17 0"/><path d="m12 17 4.5-5"/></svg><small>1.0x</small></button>
+        <!-- 2 段のメニュー: アイコンを押すと、左に項目の一覧が出る -->
+        <button id="btnEdit" data-fly="edit" title="編集（譜面情報・TJA・BPM 測定）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button>
+        <button id="btnFile" data-fly="file" title="読み込み・書き出し"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v12"/><path d="m4.5 11.5 3.5 3.5 3.5-3.5"/><path d="M16 21V9"/><path d="m12.5 12.5 3.5-3.5 3.5 3.5"/></svg></button>
+        <button id="btnSound" data-fly="sound" title="メトロノーム・再生速度"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l4 18H5z"/><path d="M12 16 18 6"/><path d="M7.5 15h9"/></svg><small id="rateLabel">1.0x</small></button>
+        <button id="btnTest" data-fly="test" title="テストプレイ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg></button>
+        <button id="btnSettings" title="設定"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
         <button class="divbtn" id="btnDiv" title="グリッド（分割）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8v20H8z"/><path d="M8 6h4M8 10h5M8 14h4M8 18h5"/></svg><small id="divLabel">1/4</small></button>
       </nav>
     </div>
@@ -89,7 +90,15 @@
 
     <div id="play" class="play hidden">
       <canvas id="game"></canvas>
-      <button id="playExit" class="icon exit" aria-label="テストプレイを終了">×</button>
+      <button id="playPause" class="icon pause" aria-label="ポーズ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button>
+      <div id="pauseMenu" class="pause-menu hidden">
+        <div class="panel">
+          <h2>ポーズ</h2>
+          <button id="pauseResume" class="primary">つづける</button>
+          <button id="pauseRestart">はじめから</button>
+          <button id="pauseBack">エディタへ</button>
+        </div>
+      </div>
     </div>
 
     <div id="result" class="overlay hidden">

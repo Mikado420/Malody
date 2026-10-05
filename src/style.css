@@ -275,18 +275,43 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .play { position: absolute; inset: 0; z-index: 20; background: #000; }
 .play { touch-action: none; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .play * { touch-action: none; }
-.play .exit { touch-action: manipulation; }
+.play .pause, .play .pause-menu, .play .pause-menu * { touch-action: manipulation; }
 .play canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; -webkit-touch-callout: none; }
 /* 背景用の canvas（手前の canvas の後ろ） */
 .play canvas.game-bg { pointer-events: none; }
-.play .exit {
-  /* 親指が当たりやすい下側を避けて右上に置く */
+.play .pause {
+  /* 左上に置く（右上は曲名） */
   position: absolute;
-  right: calc(8px + var(--safe-r));
+  left: calc(8px + var(--safe-l));
   top: calc(8px + var(--safe-t));
+  z-index: 2;
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
 }
+.play .pause svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; }
+.pause-menu {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+}
+.pause-menu.hidden { display: none; }
+.pause-menu .panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 220px;
+  padding: 18px 20px 20px;
+  background: #1c1b21;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  text-align: center;
+}
+.pause-menu h2 { margin: 0 0 4px; font-size: 18px; }
+.pause-menu button { padding: 12px 16px; font-size: 16px; }
 
 .overlay {
   position: fixed;
@@ -541,8 +566,8 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 6px;
-  min-width: 132px;
+  padding: 4px;
+  min-width: 0;
   max-height: calc(100% - 16px);
   overflow-y: auto;
   background: rgba(28, 27, 33, 0.97);
@@ -552,7 +577,7 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
   touch-action: pan-y;
 }
 .div-menu.hidden { display: none; }
-.div-menu button { text-align: left; padding: 6px 12px; font-size: 15px; background: transparent; font-variant-numeric: tabular-nums; }
+.div-menu button { text-align: center; padding: 6px 8px; font-size: 15px; background: transparent; font-variant-numeric: tabular-nums; }
 .div-menu button.on { background: var(--accent); color: #1a1405; font-weight: 700; }
 .div-menu hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 3px 0; }
 
@@ -584,3 +609,12 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .tempo-wave-bar button { padding: 4px 10px; min-width: 36px; }
 .tempo-fine-label { color: var(--sub); font-size: 12px; margin-left: 4px; }
 .tempo-table tr[data-tgo] { cursor: pointer; }
+
+/* 2 段のメニュー（右のアイコンの少し左に出す項目の一覧） */
+.fly-menu { min-width: 180px; padding: 6px; }
+.fly-menu button { text-align: left; padding: 9px 12px; font-size: 15px; white-space: nowrap; }
+.fly-menu button.primary:not(.on) { background: transparent; color: var(--accent); font-weight: 700; }
+.fly-menu button.on { background: #3a2f1c; color: var(--accent); font-weight: 700; }
+.fly-menu h4 { margin: 6px 12px 2px; font-size: 11px; font-weight: 600; color: var(--sub); letter-spacing: 0.05em; }
+.fly-menu h4:first-child { margin-top: 2px; }
+.side .open { background: #26252c; }
