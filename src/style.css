@@ -357,6 +357,8 @@ body.playing #app { visibility: hidden; }
 .tja-hl, .tja-text {
   margin: 0;
   padding: 10px;
+  /* 左端の行番号・小節番号の列のぶん空ける */
+  padding-left: calc(9ch + 22px);
   border: 0;
   /* 入力時の自動拡大は viewport の maximum-scale=1 で止めているので、小さめの文字で多くの行を見せる */
   font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
@@ -373,6 +375,26 @@ body.playing #app { visibility: hidden; }
   color: #f4f4f4;
 }
 .tja-hl > div { will-change: transform; }
+/* 左端の行番号（灰色）と小節番号（金色） */
+.tja-gutter {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(9ch + 12px);
+  padding: 10px 0 10px 6px;
+  overflow: hidden;
+  pointer-events: none;
+  background: #18181c;
+  border-right: 1px solid var(--line);
+  font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre;
+  box-sizing: border-box;
+  z-index: 1;
+}
+.tja-gutter > div { will-change: transform; }
+.tja-gutter .ln { display: inline-block; width: 5ch; text-align: right; color: #5a5a62; }
+.tja-gutter .ms { display: inline-block; width: 4ch; text-align: right; color: #e0a400; }
 .tja-text {
   position: relative;
   flex: 1;
@@ -395,12 +417,6 @@ body.playing #app { visibility: hidden; }
 }
 .tja-text::selection { background: rgba(120, 160, 255, 0.35); }
 
-/* TJA の入力中: キーボードに隠れない部分いっぱいにテキストを広げる（説明・見出しは隠す） */
-.sheet.kb { align-items: stretch; bottom: auto; }
-.sheet.kb .sheet-panel { width: 100%; max-height: none; height: 100%; border-radius: 0; padding-bottom: 0; }
-.sheet.kb .sheet-head, .sheet.kb .sheet-body > .note { display: none; }
-.sheet.kb .sheet-body { flex: 1; min-height: 0; padding: 6px 8px; gap: 6px; overflow: hidden; }
-.sheet.kb .tja-wrap { min-height: 0; flex: 1; }
 
 .sheet.tja .sheet-body { position: relative; }
 /* 状態（入力中… / 反映済み）はテキストの右上に重ねて出す（場所を取らず、出ても位置がずれない） */
@@ -422,7 +438,7 @@ body.playing #app { visibility: hidden; }
 
 /* TJA の画面（入力していないとき）: 縦いっぱいに使う */
 .sheet.tja { align-items: stretch; }
-.sheet.tja .sheet-panel { max-height: none; height: 100%; border-radius: 0; }
+.sheet.tja .sheet-panel { max-height: none; height: 100%; border-radius: 0; padding-top: var(--safe-t); padding-left: var(--safe-l); padding-right: var(--safe-r); }
 .sheet.tja .sheet-body { flex: 1; min-height: 0; overflow: hidden; padding: 8px 12px 10px; gap: 6px; }
 .sheet.tja .tja-wrap { min-height: 0; flex: 1; }
 .sheet.tja, .sheet.tja .sheet-panel, .sheet.tja .sheet-body { overscroll-behavior: none; }
@@ -437,3 +453,4 @@ html, body { overscroll-behavior: none; }
     transform: translateZ(0);
   }
 }
+.sheet.tja #sheetClose { min-width: 48px; height: 48px; font-size: 22px; }

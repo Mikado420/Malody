@@ -32,3 +32,11 @@ describe('TJA の色分け', () => {
     expect(h).toContain(`<span style="color:${TJA_COLOR.command}">#BPMCHANGE</span>`);
   });
 });
+
+describe('TJA の小節番号', () => {
+  it('小節の始まりの行に番号が付く（行をまたぐ小節は最初の行だけ）', () => {
+    const m = tjaMarks(tja);
+    // 0 TITLE, 1 #START, 2 "1203,", 3 "5000", 4 "008,", 5 "70,", 6 "5,", 7 #BPM, 8 #END
+    expect(Array.from(m.measure)).toEqual([0, 0, 1, 2, 0, 3, 4, 0, 0]);
+  });
+});

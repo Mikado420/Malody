@@ -28,6 +28,8 @@ export interface TjaMarks {
   inside: Uint8Array;
   /** 連打・風船の範囲 [始まり, 終わり(8 の位置), 色]。8 で閉じたものだけ */
   ranges: [number, number, string][];
+  /** その行から始まる小節の番号（1 から。小節の途中の行や譜面の外は 0） */
+  measure: Uint32Array;
 }
 
 /** テキスト全体を 1 回なぞって、色分けに必要な情報を集める */
@@ -36,6 +38,9 @@ export function tjaMarks(text: string): TjaMarks {
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) lineStarts.push(i + 1);
   const inside = new Uint8Array(lineStarts.length);
   const ranges: [number, number, string][] = [];
+  const measure = new Uint32Array(lineStarts.length);
+  let measureNo = 1;
+  let atMeasureStart = true;
   let inChart = false;
   let open: { at: number; color: string } | null = null;
   for (let li = 0; li < lineStarts.length; li++) {
@@ -49,6 +54,8 @@ export function tjaMarks(text: string): TjaMarks {
         inChart = true;
         inside[li] = 1;
         open = null;
+        measureNo = 1;
+        atMeasureStart = true;
       }
       continue;
     }
@@ -61,8 +68,25 @@ export function tjaMarks(text: string): TjaMarks {
     if (t.startsWith('#')) continue;
     const cut = line.indexOf('//');
     const end = cut >= 0 ? a + cut : b;
+    // 小節の番号: 音符かカンマがある行で、前の行がカンマで終わっていたらここから新しい小節
+    let hasBody = false;
     for (let i = a; i < end; i++) {
       const c = text.charCodeAt(i);
+      if ((c >= 48 && c <= 57) || c === 44) {
+        hasBody = true;
+        break;
+      }
+    }
+    if (hasBody && atMeasureStart) {
+      measure[li] = measureNo;
+      atMeasureStart = false;
+    }
+    for (let i = a; i < end; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 44) {
+        measureNo++;
+        atMeasureStart = true;
+      }
       if (c === 53 || c === 54) {
         // 5, 6
         if (!open) open = { at: i, color: TJA_COLOR.roll };
@@ -78,7 +102,7 @@ export function tjaMarks(text: string): TjaMarks {
       }
     }
   }
-  return { lineStarts, inside, ranges };
+  return { lineStarts, inside, ranges, measure };
 }
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -151,6 +175,16 @@ export function tjaLinesHtml(text: string, m: TjaMarks, from: number, to: number
     if (run) html += `<span style="color:${runColor}">${esc(run)}</span>`;
     if (cut >= 0) html += `<span style="color:${TJA_COLOR.comment}">${esc(line.slice(cut))}</span>`;
     out.push(html);
+  }
+  return out.join('\n');
+}
+
+/** 左端の行番号と小節番号（行 from〜to） */
+export function tjaGutterHtml(m: TjaMarks, from: number, to: number): string {
+  const out: string[] = [];
+  for (let li = from; li < to && li < m.lineStarts.length; li++) {
+    const mm = m.measure[li];
+    out.push(`<span class="ln">${li + 1}</span><span class="ms">${mm ? mm : ''}</span>`);
   }
   return out.join('\n');
 }

@@ -3,7 +3,7 @@ import { AudioEngine, type HitSound } from './audio/audio';
 import { COURSE_NAMES, contentEnd, newChart, toPlayable, TPB, type EEvent } from './chart/model';
 import { parseTJA } from './chart/tja';
 import { writeTJA } from './chart/tjaWrite';
-import { tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
+import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { DIVISORS, Editor, type Tool } from './editor/editor';
@@ -415,6 +415,7 @@ function renderSheet() {
       <p class="tja-status" id="tjaStatus"></p>
       <div class="tja-wrap">
         <pre class="tja-hl" aria-hidden="true"><div id="tjaHl"></div></pre>
+        <div class="tja-gutter" aria-hidden="true"><div id="tjaGut"></div></div>
         <textarea id="tjaText" class="tja-text" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>
       </div>`;
     const ta = body.querySelector<HTMLTextAreaElement>('#tjaText')!;
@@ -434,36 +435,11 @@ function renderSheet() {
   }
 }
 
-/**
- * TJA のテキストを入力している間は、キーボードに隠れない部分（visualViewport）いっぱいに
- * テキストを広げる（横向きだとキーボードが画面の半分以上を占めるため）
- */
-function fitSheetToKeyboard() {
-  const el = $('sheet');
-  const vv = window.visualViewport;
-  if (!el.classList.contains('kb') || !vv) return;
-  el.style.top = `${vv.offsetTop}px`;
-  el.style.height = `${vv.height}px`;
-  el.style.bottom = 'auto';
-}
-$('sheet').addEventListener('focusin', (e) => {
-  if ((e.target as HTMLElement).id !== 'tjaText') return;
-  $('sheet').classList.add('kb');
-  fitSheetToKeyboard();
-  // キーボードが出きるまで何回か合わせ直す
-  for (const ms of [100, 300, 600]) setTimeout(fitSheetToKeyboard, ms);
-});
+// キーボードを出しても TJA の画面の大きさは変えない。入力を終えたら（フォーカスが外れたら）待たずに反映する
 $('sheet').addEventListener('focusout', (e) => {
-  if ((e.target as HTMLElement).id !== 'tjaText') return;
-  // 入力を終えたら待たずに反映する
-  syncTja();
-  const el = $('sheet');
-  el.classList.remove('kb');
-  el.style.top = el.style.height = el.style.bottom = '';
+  if ((e.target as HTMLElement).id === 'tjaText') syncTja();
 });
-window.visualViewport?.addEventListener('resize', fitSheetToKeyboard);
 window.visualViewport?.addEventListener('resize', scheduleTjaHl);
-window.visualViewport?.addEventListener('scroll', fitSheetToKeyboard);
 
 /** TJA のテキストで、その難易度の n 小節目（0 から）がある行 */
 function tjaLineOf(text: string, course: string, measure: number): number {
@@ -553,6 +529,12 @@ function renderTjaHl() {
   const count = Math.ceil(ta.clientHeight / lh) + 8;
   inner.innerHTML = tjaLinesHtml(text, tjaHl.marks, first, first + count);
   inner.style.transform = `translate(${-ta.scrollLeft}px, ${first * lh - ta.scrollTop}px)`;
+  // 左端の行番号・小節番号（横にはスクロールしない）
+  const gut = document.getElementById('tjaGut');
+  if (gut) {
+    gut.innerHTML = tjaGutterHtml(tjaHl.marks, first, first + count);
+    gut.style.transform = `translateY(${first * lh - ta.scrollTop}px)`;
+  }
 }
 
 $('sheetBody').addEventListener('input', (e) => {
