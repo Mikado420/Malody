@@ -21,14 +21,12 @@
       <div class="stage">
         <canvas id="editor"></canvas>
         <div id="tools" class="tools">
-          <button data-tool="don" class="tool don"><i></i>ドン</button>
-          <button data-tool="ka" class="tool ka"><i></i>カッ</button>
-          <button data-tool="bigDon" class="tool don big"><i></i>大ドン</button>
-          <button data-tool="bigKa" class="tool ka big"><i></i>大カッ</button>
-          <button data-tool="roll" class="tool roll"><i></i>連打</button>
-          <button data-tool="bigRoll" class="tool roll big"><i></i>大連打</button>
-          <button data-tool="balloon" class="tool balloon"><i></i>風船</button>
-          <button data-tool="erase" class="tool erase"><i></i>消去</button>
+          <!-- 選んでいるボタンをもう一度タップすると、ドン⇔カッ・大ドン⇔大カッ・連打⇔大連打 が切り替わる -->
+          <button data-group="small" class="tool"><i></i><span></span></button>
+          <button data-group="big" class="tool"><i></i><span></span></button>
+          <button data-group="roll" class="tool"><i></i><span></span></button>
+          <button data-group="balloon" class="tool"><i></i><span></span></button>
+          <button data-group="erase" class="tool erase"><i></i><span>消去</span></button>
         </div>
       </div>
       <nav class="side">

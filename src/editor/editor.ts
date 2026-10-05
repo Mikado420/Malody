@@ -187,36 +187,23 @@ export class Editor {
     const exact = this.noteAt(tick);
     const covering = this.longCovering(tick);
 
-    if (tool === 'erase') {
-      const target = exact ?? covering;
-      if (target) this.mutate(() => this.remove(target));
+    // 置いてあるノーツ（連打・風船はその範囲のどこでも）をタップしたら、選んでいる音符に関係なく消す。
+    // ただし風船を選んでいて風船の始点をタップしたときは、打数を変える
+    const target = exact ?? covering;
+    if (this.pendingLong === null && target) {
+      if (tool === 'balloon' && target === exact && exact.type === 'balloon') return { editBalloon: exact };
+      this.mutate(() => this.remove(target));
       return {};
     }
+    if (tool === 'erase') return {};
 
     if (!isLong(tool)) {
-      if (covering) return { message: '連打・風船の途中には置けません' };
-      if (exact && exact.type === tool) {
-        this.mutate(() => this.remove(exact));
-      } else if (exact) {
-        this.mutate(() => {
-          exact.type = tool;
-          delete exact.endTick;
-          delete exact.hits;
-        });
-      } else {
-        this.mutate(() => this.course.notes.push({ tick, type: tool }));
-      }
+      this.mutate(() => this.course.notes.push({ tick, type: tool }));
       return {};
     }
 
     // 連打・風船
     if (this.pendingLong === null) {
-      if (exact && exact.type === tool) {
-        if (tool === 'balloon') return { editBalloon: exact };
-        this.mutate(() => this.remove(exact));
-        return {};
-      }
-      if (covering) return { message: '連打・風船の途中には置けません' };
       this.pendingLong = tick;
       this.emit();
       return { message: '終点をタップしてください（始点をもう一度タップで取り消し）' };

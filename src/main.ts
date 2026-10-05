@@ -202,17 +202,49 @@ function updateHeader() {
   view.invalidate();
 }
 
+// ノーツのボタンは 4 つ（＋消去）。選んでいるボタンをもう一度タップすると、組になっている音符に切り替わる
+const TOOL_GROUPS: Record<string, Tool[]> = {
+  small: ['don', 'ka'],
+  big: ['bigDon', 'bigKa'],
+  roll: ['roll', 'bigRoll'],
+  balloon: ['balloon'],
+  erase: ['erase'],
+};
+const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
+  don: { label: 'ドン', cls: 'don' },
+  ka: { label: 'カッ', cls: 'ka' },
+  bigDon: { label: '大ドン', cls: 'don big' },
+  bigKa: { label: '大カッ', cls: 'ka big' },
+  roll: { label: '連打', cls: 'roll' },
+  bigRoll: { label: '大連打', cls: 'roll big' },
+  balloon: { label: '風船', cls: 'balloon' },
+  erase: { label: '消去', cls: 'erase' },
+};
+/** 各ボタンが今どちらの音符になっているか */
+const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', erase: 'erase' };
+const groupOf = (t: Tool) => Object.keys(TOOL_GROUPS).find((g) => TOOL_GROUPS[g].includes(t))!;
+
 function setTool(t: Tool) {
   ed.tool = t;
+  groupTool[groupOf(t)] = t;
   if (ed.pendingLong !== null && t !== 'roll' && t !== 'bigRoll' && t !== 'balloon') ed.pendingLong = null;
   document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
-    b.classList.toggle('active', b.dataset.tool === t);
+    const g = b.dataset.group!;
+    const look = TOOL_LOOK[groupTool[g]];
+    b.className = `tool ${look.cls}`;
+    b.classList.toggle('active', g === groupOf(t));
+    b.querySelector('span')!.textContent = look.label;
   });
   view.invalidate();
 }
 
 document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
-  b.addEventListener('click', () => setTool(b.dataset.tool as Tool));
+  b.addEventListener('click', () => {
+    const list = TOOL_GROUPS[b.dataset.group!];
+    const cur = groupTool[b.dataset.group!];
+    // もう選んでいるなら組のもう一方へ、選んでいなければ前に使っていた方で選ぶ
+    setTool(ed.tool === cur ? list[(list.indexOf(cur) + 1) % list.length] : cur);
+  });
 });
 setTool('don');
 

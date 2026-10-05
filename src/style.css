@@ -80,7 +80,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   bottom: calc(44px * var(--es, 0.45));
   height: max(36px, calc(112px * var(--es, 0.45)));
   display: grid;
-  grid-template-columns: repeat(8, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   gap: calc(10px * var(--es, 0.45));
 }
 .tool {
