@@ -690,8 +690,8 @@ export class EditorView {
       ctx.fillRect(x1 - w, y, w - wd, bh);
     }
     // 今の位置
-    const now = timing.tickToTime(Math.max(0, this.pos));
-    const y = g.bottom - (Math.min(1, now / len)) * (g.bottom - g.top);
+    const now = timing.tickToTime(this.pos);
+    const y = g.bottom - Math.min(1, Math.max(0, now / len)) * (g.bottom - g.top);
     ctx.fillStyle = '#ffb02e';
     ctx.fillRect(L.colLine1, y - Math.max(1, 1.5 * s), R.densW * s, Math.max(2, 3 * s));
   }
@@ -750,7 +750,8 @@ export class EditorView {
     hex(L.play, this.playing ? 'pause' : 'play');
 
     // 曲の長さ（上）と現在時刻（下）を縦書きで（Malody と同じ位置）
-    const time = this.ed.timing.tickToTime(Math.max(0, this.pos));
+    // 曲の頭より前（1 小節ぶん）にいるときは、音源の頭より前ならマイナスの時刻になる
+    const time = this.ed.timing.tickToTime(this.pos);
     ctx.font = `700 ${Math.round(34 * s)}px ui-monospace, Menlo, monospace`;
     ctx.fillStyle = '#fff';
     ctx.textBaseline = 'middle';
