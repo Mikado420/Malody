@@ -315,10 +315,12 @@ function openSheet(kind: SheetKind) {
   $('sheet').classList.remove('hidden');
   // TJA の画面は縦いっぱいに使う
   $('sheet').classList.toggle('tja', kind === 'events');
+  document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
 }
 function closeSheet() {
   sheet = null;
+  document.body.classList.remove('tja-open');
   $('sheet').classList.add('hidden');
 }
 function refreshSheet() {

@@ -358,8 +358,8 @@ body.playing #app { visibility: hidden; }
   margin: 0;
   padding: 10px;
   border: 0;
-  /* 16px 未満だと iPhone が入力時に拡大してしまう */
-  font: 16px/1.45 ui-monospace, Menlo, Consolas, monospace;
+  /* 入力時の自動拡大は viewport の maximum-scale=1 で止めているので、小さめの文字で多くの行を見せる */
+  font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0;
   tab-size: 4;
   white-space: pre;
@@ -428,3 +428,12 @@ body.playing #app { visibility: hidden; }
 .sheet.tja, .sheet.tja .sheet-panel, .sheet.tja .sheet-body { overscroll-behavior: none; }
 
 html, body { overscroll-behavior: none; }
+
+/* TJA の画面を開いている間は、縦向きでも回転させない */
+@media (orientation: portrait) {
+  body.tja-open #root {
+    width: var(--vw, 100vw);
+    height: var(--vh, 100vh);
+    transform: translateZ(0);
+  }
+}

@@ -7,7 +7,8 @@
 
 const portrait = matchMedia('(orientation: portrait)');
 
-export const isRotated = () => portrait.matches;
+/** TJA の画面を開いている間は、縦向きでも回さない（キーボードが占める割合が小さく、多くの行が見える） */
+export const isRotated = () => portrait.matches && !document.body.classList.contains('tja-open');
 
 export function onRotateChange(fn: () => void) {
   portrait.addEventListener('change', fn);
