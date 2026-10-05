@@ -2,6 +2,7 @@ import { TPB, type EEvent } from '../chart/model';
 import { drawAny, drawRoll, hexPath } from '../render/notes';
 import { localPoint } from '../orient';
 import type { Editor } from './editor';
+import type { Grad } from './grad';
 
 /**
  * Malody 風の横スクロール作譜画面。
@@ -70,6 +71,38 @@ const DOT_COLORS: Record<number, string> = {
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 
+/** レーンの下に出す短い文字（種類は色で見分ける） */
+export function eventShort(e: EEvent): string {
+  switch (e.kind) {
+    case 'bpm': return `♩${Number(e.value.toFixed(3))}`;
+    case 'scroll': return `×${Number(e.value.toFixed(3))}`;
+    case 'measure': return `${e.num}/${e.den}`;
+    case 'gogo': return e.on ? 'GOGO▶' : 'GOGO■';
+    case 'barline': return e.on ? '|ON' : '|OFF';
+    case 'delay': return `⏱${e.value}s`;
+  }
+}
+
+/** 種類ごとの色（ツールのアイコンと同じ） */
+export const EVENT_COLOR: Record<EEvent['kind'], string> = {
+  scroll: '#c792ea',
+  bpm: '#5cc8f0',
+  measure: '#ffd21f',
+  gogo: '#ff8a3a',
+  barline: '#a8a8b0',
+  delay: '#8fd18f',
+};
+
+/** レーンの下に出す種類（設定で切り替える） */
+export type EventShow = Record<EEvent['kind'], boolean>;
+
+/** レーンの下の 1 つの表示（グラデはまとめて 1 つ） */
+export interface EventItem {
+  tick: number;
+  events: EEvent[];
+  grad?: Grad;
+}
+
 export function eventText(e: EEvent): string {
   switch (e.kind) {
     case 'bpm': return `BPM ${Number(e.value.toFixed(3))}`;
@@ -107,6 +140,12 @@ export class EditorView {
   private wave: { peaks: Float32Array; rate: number } | null = null;
 
   onTap: (tick: number) => void = () => {};
+  /** レーンの下のイベントの文字をタップしたとき（重なってまとめたものは全部） */
+  onEventTap: (items: EventItem[]) => void = () => {};
+  /** レーンの下に出す種類 */
+  evShow: EventShow = { bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true };
+  /** 最後に描いたイベントの文字の位置（タップの判定用） */
+  private evBoxes: { x1: number; x2: number; items: EventItem[] }[] = [];
   onUserScroll: () => void = () => {};
   onPlayToggle: () => void = () => {};
   onZoomChange: (z: number) => void = () => {};
@@ -375,6 +414,11 @@ export class EditorView {
       this.invalidate();
       return;
     }
+    // レーンの下のイベントの文字をタップ → そのイベント（まとめたものは一覧）
+    if (y >= L.evTop && y <= L.evTop + L.evH) {
+      const b = this.evBoxes.find((bx) => x >= bx.x1 && x <= bx.x2);
+      if (b) return this.onEventTap(b.items);
+    }
     // 曲の頭より前には置けない
     if (y >= L.laneY - L.r * 0.5 && y <= L.evTop + L.evH && this.tickOf(x) > -this.ed.step / 2) this.onTap(this.tickOf(x));
   }
@@ -486,37 +530,80 @@ export class EditorView {
       }
     }
 
-    // イベント（レーンの下）
+    // イベント（レーンの下）: 短い文字を種類ごとの色で。文字が重なるときは先頭だけ出して「+N」にまとめる
     ctx.font = `600 ${Math.round(22 * s)}px system-ui, sans-serif`;
     ctx.textBaseline = 'middle';
     ctx.textAlign = 'left';
-    let lastTick = NaN;
-    let stack = 0;
     const grads = course.grads ?? [];
+    const evItems: EventItem[] = [];
     for (const e of course.events) {
-      if (e.tick < leftTick || e.tick > rightTick) continue;
-      stack = e.tick === lastTick ? stack + 1 : 0;
-      lastTick = e.tick;
+      if (!this.evShow[e.kind]) continue;
+      if (e.tick > rightTick) continue;
       const x = this.xOf(e.tick);
-      if (x < L.colW) continue;
-      ctx.fillStyle = C.event;
-      ctx.beginPath();
-      ctx.moveTo(x, L.evY + 2);
-      ctx.lineTo(x - 10 * s, L.evTop + 4 * s);
-      ctx.lineTo(x + 10 * s, L.evTop + 4 * s);
-      ctx.closePath();
-      ctx.fill();
-      // グラデの中の #SCROLL は三角の印だけ。始点には「グラデ 開始値→終了値」を出す
+      if (x >= L.colW && x <= this.w) {
+        // 三角の印はすべてに出す
+        ctx.fillStyle = EVENT_COLOR[e.kind];
+        ctx.beginPath();
+        ctx.moveTo(x, L.evY + 2);
+        ctx.lineTo(x - 9 * s, L.evTop + 4 * s);
+        ctx.lineTo(x + 9 * s, L.evTop + 4 * s);
+        ctx.closePath();
+        ctx.fill();
+      }
+      // グラデの中の #SCROLL は、グラデの始点の 1 つにまとめる
       const g = e.kind === 'scroll' ? grads.find((x) => e.tick >= x.start && e.tick < x.end) : undefined;
-      if (g && e.tick !== g.start) { lastTick = NaN; continue; }
-      const t = g ? `グラデ ${g.from}→${g.to} ${g.mode === 'linear' ? '等差' : '等比'}` : eventText(e);
-      const tw = ctx.measureText(t).width;
-      const ex = x + 6 * s + stack * (tw + 26 * s);
-      ctx.fillStyle = 'rgba(194,125,255,0.2)';
-      ctx.fillRect(ex, L.evTop + 8 * s, tw + 16 * s, 30 * s);
-      ctx.fillStyle = '#e6cfff';
-      ctx.fillText(t, ex + 8 * s, L.evTop + 23 * s);
+      if (g) {
+        const it = evItems.find((x) => x.grad === g);
+        if (it) it.events.push(e);
+        else evItems.push({ tick: g.start, events: [e], grad: g });
+        continue;
+      }
+      evItems.push({ tick: e.tick, events: [e] });
     }
+    evItems.sort((a, b) => a.tick - b.tick);
+    const label = (it: EventItem) => (it.grad ? `×${it.grad.from}→${it.grad.to}` : eventShort(it.events[0]));
+    const color = (it: EventItem) => EVENT_COLOR[it.events[0].kind];
+    const pad = 7 * s;
+    const boxH = 30 * s;
+    const y0 = L.evTop + 8 * s;
+    this.evBoxes = [];
+    let cur: { x1: number; x2: number; items: EventItem[] } | null = null;
+    const flush = () => {
+      if (!cur) return;
+      const first = cur.items[0];
+      const t = label(first);
+      const tw = ctx.measureText(t).width;
+      const more = cur.items.length - 1;
+      ctx.fillStyle = 'rgba(30,30,36,0.92)';
+      ctx.fillRect(cur.x1, y0, cur.x2 - cur.x1, boxH);
+      ctx.fillStyle = color(first);
+      ctx.fillRect(cur.x1, y0, Math.max(2, 3 * s), boxH);
+      ctx.fillText(t, cur.x1 + pad, y0 + boxH / 2);
+      if (more > 0) {
+        const bx = cur.x1 + pad + tw + 6 * s;
+        ctx.fillStyle = '#4a4a55';
+        ctx.fillRect(bx, y0 + 4 * s, cur.x2 - bx - 4 * s, boxH - 8 * s);
+        ctx.fillStyle = '#fff';
+        ctx.fillText(`+${more}`, bx + 5 * s, y0 + boxH / 2);
+      }
+      this.evBoxes.push(cur);
+    };
+    for (const it of evItems) {
+      const x = this.xOf(it.tick);
+      if (x < L.colW || x > this.w) continue;
+      const w = ctx.measureText(label(it)).width + pad * 2;
+      if (cur && x < cur.x2 + 4 * s) {
+        // 前の文字に重なる → まとめる（幅は「+N」の分だけ広げる）
+        cur.items.push(it);
+        const base = ctx.measureText(label(cur.items[0])).width + pad * 2;
+        const badge = ctx.measureText(`+${cur.items.length - 1}`).width + 16 * s;
+        cur.x2 = Math.max(cur.x2, cur.x1 + base + badge);
+        continue;
+      }
+      flush();
+      cur = { x1: x + 2 * s, x2: x + 2 * s + w, items: [it] };
+    }
+    flush();
 
     // 判定枠（Malody と同じ金色の二重の輪。ここが再生位置）
     ctx.lineWidth = Math.max(1.5, 4 * s);

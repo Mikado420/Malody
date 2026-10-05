@@ -11,7 +11,7 @@ import { applyGrad, gradValid, type Grad } from './editor/grad';
 import { writeCourseBody } from './chart/tjaWrite';
 
 import { DIVISORS, Editor, type Tool } from './editor/editor';
-import { EditorView, eventText } from './editor/view';
+import { EditorView, eventText, EVENT_COLOR, type EventItem, type EventShow } from './editor/view';
 import { loadFiles, type AudioFile } from './io/load';
 import { loadAudio, loadChart, loadHitSound, saveAudio, saveChart, saveHitSound } from './io/storage';
 import { writeZip } from './io/zip';
@@ -53,6 +53,8 @@ const settings = {
   volMetro: 1.2,
   /** 拡大率の決め方の版（2 = プレイ画面と同じ間隔） */
   zoomVer: 0,
+  /** レーンの下に出すイベントの種類 */
+  evShow: { bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true } as EventShow,
   /** 打音の比率の初期値を 0.8 にした版 */
   hitVolVer: 0,
 };
@@ -82,6 +84,9 @@ if (settings.zoomVer !== 2) {
   settings.zoomVer = 2;
 }
 view.playSpeed = settings.speed;
+settings.evShow = Object.assign({ bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true }, settings.evShow);
+view.evShow = settings.evShow;
+view.onEventTap = (items) => openEvents(items);
 const applyMix = () => audio.setMix({ music: settings.volMusic, hit: settings.volHit, metro: settings.volMetro });
 /** ハイスピードを変えたら、自分で拡大率を変えていない限りエディタの間隔も合わせる */
 const applyPlayZoom = () => {
@@ -459,7 +464,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'file' | 'info' | 'events' | 'grad' | 'point';
+type SheetKind = 'file' | 'info' | 'events' | 'grad' | 'point' | 'evlist';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -486,6 +491,7 @@ function refreshSheet() {
   // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
   if (sheet === 'events' && document.getElementById('tjaText')) return;
   if (sheet === 'grad' || sheet === 'point') return;
+  if (sheet === 'evlist') { renderSheet(); return; }
   renderSheet();
 }
 
@@ -581,6 +587,8 @@ function renderSheet() {
         <button data-act="delCourse" class="danger" ${c.courses.length <= 1 ? 'disabled' : ''}>削除</button>
       </div>
 
+      <h3>レーンの下に出すイベント</h3>
+      <div class="ev-show">${(Object.keys(EV_NAMES) as (keyof EventShow)[]).map((k) => `<label><input type="checkbox" data-evshow="${k}" ${settings.evShow[k] ? 'checked' : ''}><span style="color:${EVENT_COLOR[k]}">${EV_NAMES[k]}</span></label>`).join('')}</div>
       <h3>テストプレイ・再生</h3>
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
       <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
@@ -598,6 +606,8 @@ function renderSheet() {
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（プレイ画面と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>`;
+  } else if (sheet === 'evlist' && evList) {
+    renderEvListSheet(body);
   } else if (sheet === 'point' && pointEdit) {
     renderPointSheet(body);
   } else if (sheet === 'grad' && gradEdit) {
@@ -1265,4 +1275,78 @@ function renderPointSheet(body: HTMLElement) {
       closeSheet();
     });
   });
+}
+
+// ---------- レーンの下のイベント（タップしたとき） ----------
+
+const EV_NAMES: Record<keyof EventShow, string> = {
+  bpm: 'BPM', scroll: 'SCROLL', measure: '拍子', gogo: 'GOGO', delay: 'DELAY', barline: '小節線の表示',
+};
+
+/** 一覧に出しているイベント */
+let evList: EventItem[] | null = null;
+
+/** 1 つだけならそのまま変更の画面、重なってまとめたものは一覧を出す */
+function openEvents(items: EventItem[]) {
+  if (items.length === 1) {
+    const it = items[0];
+    const e = it.events[0];
+    if (it.grad) {
+      gradEdit = { grad: { ...it.grad }, old: it.grad };
+      openSheet('grad');
+      return;
+    }
+    if (e.kind === 'scroll' || e.kind === 'bpm' || e.kind === 'measure') {
+      openPoint(e.kind, e.tick);
+      return;
+    }
+  }
+  evList = items;
+  openSheet('evlist');
+}
+
+function renderEvListSheet(body: HTMLElement) {
+  const items = (evList ?? []).filter((it) => it.events.some((e) => ed.course.events.includes(e)));
+  $('sheetTitle').textContent = 'イベント';
+  if (!items.length) {
+    body.innerHTML = '<p class="note">イベントはありません</p>';
+    return;
+  }
+  body.innerHTML = `<div class="ev-list">${items.map((it, i) => {
+    const e = it.events[0];
+    const name = it.grad ? `グラデ ${it.grad.from}→${it.grad.to}（${it.grad.mode === 'linear' ? '等差' : '等比'}）` : eventText(e);
+    const editable = !!it.grad || e.kind === 'scroll' || e.kind === 'bpm' || e.kind === 'measure';
+    return `<div class="ev-row"><i style="background:${EVENT_COLOR[e.kind]}"></i><div class="ev-name">${name}<small>${posText(it.tick)}</small></div>
+      ${editable ? `<button data-evi="${i}" data-evact="edit">変更</button>` : ''}<button data-evi="${i}" data-evact="del">消す</button></div>`;
+  }).join('')}</div>`;
+  body.querySelectorAll<HTMLButtonElement>('[data-evact]').forEach((b) => {
+    b.addEventListener('click', () => {
+      const it = items[Number(b.dataset.evi)];
+      if (b.dataset.evact === 'edit') {
+        openEvents([it]);
+        return;
+      }
+      if (it.grad) ed.removeGrad(it.grad);
+      else ed.removeEvent(it.events[0]);
+      toast('消しました');
+      // 一覧を描き直す（refreshSheet から）
+    });
+  });
+}
+
+$('sheetBody').addEventListener('change', (e) => {
+  const el = e.target as HTMLInputElement;
+  const k = el.dataset.evshow as keyof EventShow | undefined;
+  if (!k) return;
+  settings.evShow[k] = el.checked;
+  saveSettings();
+  view.evShow = settings.evShow;
+  view.invalidate();
+});
+
+/** 位置の表示（小節・拍） */
+function posText(tick: number) {
+  const m = ed.measureOf(tick);
+  const beat = (tick - m.start) / ((TPB * 4) / m.den) + 1;
+  return `小節 ${m.index + 1}・${Number(beat.toFixed(3))} 拍目`;
 }
