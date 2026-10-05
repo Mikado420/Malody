@@ -1044,13 +1044,6 @@ startAutoUpdate({
 
 // ---------- グラデ ----------
 
-/** 位置の表示（小節・拍） */
-function posText(tick: number) {
-  const m = ed.measureOf(tick);
-  const beat = (tick - m.start) / ((TPB * 4) / m.den) + 1;
-  return `小節 ${m.index + 1}・${Number(beat.toFixed(3))} 拍目`;
-}
-
 function renderGradSheet(body: HTMLElement) {
   const st = gradEdit!;
   const g = st.grad;
@@ -1064,8 +1057,6 @@ function renderGradSheet(body: HTMLElement) {
   body.innerHTML = `
     <div class="grad-layout">
       <div class="grad-form">
-        <div class="field grad-pos"><span>始点</span><button data-gpos="start" data-d="-1" aria-label="始点を前へ">◀</button><b>${posText(g.start)}</b><button data-gpos="start" data-d="1" aria-label="始点を後ろへ">▶</button></div>
-        <div class="field grad-pos"><span>終点</span><button data-gpos="end" data-d="-1" aria-label="終点を前へ">◀</button><b>${posText(g.end)}</b><button data-gpos="end" data-d="1" aria-label="終点を後ろへ">▶</button></div>
         <label class="field"><span>開始値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="from" value="${g.from}"></label>
         <label class="field"><span>終了値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="to" value="${g.to}"></label>
         ${seg('mode', [['linear', '等差'], ['geometric', '等比']], g.mode)}
@@ -1098,16 +1089,6 @@ function renderGradSheet(body: HTMLElement) {
       const v = Number(inp.value);
       g[k] = k === 'digits' ? Math.max(0, Math.min(6, Math.round(v))) : v;
       preview();
-    });
-  });
-  // 始点・終点を 1 グリッド（今の分割）ずつ動かす
-  body.querySelectorAll<HTMLButtonElement>('[data-gpos]').forEach((b) => {
-    b.addEventListener('click', () => {
-      const key = b.dataset.gpos as 'start' | 'end';
-      const v = Math.max(0, g[key] + Number(b.dataset.d) * ed.step);
-      if (key === 'start' ? v >= g.end : v <= g.start) return;
-      g[key] = v;
-      renderGradSheet(body);
     });
   });
   body.querySelectorAll<HTMLButtonElement>('[data-gset]').forEach((b) => {
