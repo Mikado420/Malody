@@ -212,6 +212,38 @@ export class EditorView {
     this.invalidate();
   }
 
+  /**
+   * 判定枠（再生位置）は自由に動かせるが、手を離したら一番近いグリッドへ寄せる（短くなめらかに動かす）
+   */
+  private settleAnim = 0;
+  private settleTimer = 0;
+
+  settle() {
+    cancelAnimationFrame(this.settleAnim);
+    if (this.playing) return;
+    const from = this.pos;
+    const to = this.ed.snap(Math.max(0, from));
+    if (Math.abs(to - from) < 1) {
+      this.pos = to;
+      this.invalidate();
+      return;
+    }
+    const t0 = performance.now();
+    const step = () => {
+      const p = Math.min(1, (performance.now() - t0) / 120);
+      const k = 1 - (1 - p) * (1 - p);
+      this.pos = from + (to - from) * k;
+      this.invalidate();
+      if (p < 1) this.settleAnim = requestAnimationFrame(step);
+    };
+    this.settleAnim = requestAnimationFrame(step);
+  }
+
+  private stopSettle() {
+    cancelAnimationFrame(this.settleAnim);
+    clearTimeout(this.settleTimer);
+  }
+
   scrollBy(ticks: number) {
     this.pos = Math.max(-TPB * 2, this.pos + ticks);
     this.invalidate();
@@ -233,6 +265,7 @@ export class EditorView {
   private bind() {
     const c = this.canvas;
     c.addEventListener('pointerdown', (e) => {
+      this.stopSettle();
       c.setPointerCapture(e.pointerId);
       const pt = localPoint(e, c);
       this.pointers.set(e.pointerId, pt);
@@ -293,6 +326,8 @@ export class EditorView {
         const pt = localPoint(e, c);
         this.tap(pt.x, pt.y);
       }
+      // 横にスクロールして離したら、一番近いグリッドへ寄せる
+      if (this.drag?.moved && !this.drag.scrub) this.settle();
       this.drag = null;
     };
     c.addEventListener('pointerup', end);
@@ -310,8 +345,11 @@ export class EditorView {
           this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.002));
         } else {
           this.onUserScroll();
+          this.stopSettle();
           const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
           this.scrollBy((d / this.zoom) * TPB);
+          // ホイールが止まったらグリッドへ寄せる
+          this.settleTimer = window.setTimeout(() => this.settle(), 160);
         }
       },
       { passive: false },
