@@ -106,7 +106,7 @@ export class Editor {
     for (const c of this.chart.courses) {
       if (!c.grads?.length) continue;
       sortCourse(c);
-      for (const g of c.grads) applyGrad(c, g);
+      for (const g of c.grads) applyGrad(c, g, this.chart.bpm);
     }
   }
 
@@ -122,7 +122,7 @@ export class Editor {
         const old = this.chart.courses.find((o) => o.name === c.name);
         if (!old?.grads?.length) continue;
         sortCourse(c);
-        const keep = old.grads.filter((g) => gradMatches(c, g, !old.grads!.some((o) => o !== g && o.start === g.end)));
+        const keep = old.grads.filter((g) => gradMatches(c, g, chart.bpm, !old.grads!.some((o) => o !== g && o.start === g.end)));
         if (keep.length) c.grads = keep.map((g) => ({ ...g }));
       }
       this.chart = chart;

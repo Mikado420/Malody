@@ -1,13 +1,14 @@
 import './style.css';
 import { AudioEngine, type HitSound } from './audio/audio';
-import { COURSE_NAMES, contentEnd, newChart, toPlayable, TPB, type EEvent } from './chart/model';
+import { COURSE_NAMES, contentEnd, newChart, sortCourse, toPlayable, TPB, type ECourse, type EEvent } from './chart/model';
 import { parseTJA } from './chart/tja';
 import { writeTJA } from './chart/tjaWrite';
 import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { buildAutoEvents, type AutoEvent } from './play/auto';
-import { gradScrolls, gradValid, type Grad } from './editor/grad';
+import { applyGrad, gradValid, type Grad } from './editor/grad';
+import { writeCourseBody } from './chart/tjaWrite';
 
 import { DIVISORS, Editor, type Tool } from './editor/editor';
 import { EditorView, eventText } from './editor/view';
@@ -311,7 +312,7 @@ view.onTap = (tick) => {
   if (r.newGrad || r.editGrad) $('toast').classList.remove('show');
   if (r.newGrad) {
     const from = ed.timing.scrollAt(r.newGrad.start);
-    gradEdit = { grad: { ...r.newGrad, from, to: from * 2, mode: 'linear', digits: 3 } };
+    gradEdit = { grad: { ...r.newGrad, from, to: from * 2, mode: 'linear', digits: 3, speed: 'visual', barlines: true } };
     openSheet('grad');
   }
   if (r.editGrad) {
@@ -379,6 +380,8 @@ function openSheet(kind: SheetKind) {
   $('sheet').classList.remove('hidden');
   // TJA の画面は縦いっぱいに使う
   $('sheet').classList.toggle('tja', kind === 'events');
+  // グラデの設定は縦いっぱい・横広めで、左に設定、右に .tja の書き方
+  $('sheet').classList.toggle('grad', kind === 'grad');
   document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
   if (kind === 'events') requestAnimationFrame(showTjaDiag);
@@ -1004,47 +1007,60 @@ function renderGradSheet(body: HTMLElement) {
   const g = st.grad;
   const m1 = ed.measureOf(g.start);
   const m2 = ed.measureOf(g.end);
+  const hasBpm = ed.course.events.some((e) => e.kind === 'bpm' && e.tick > g.start && e.tick < g.end)
+    || ed.timing.bpmAt(g.start) !== ed.timing.bpmAt(g.end);
+  const seg = (key: string, items: [string, string][], cur: string) =>
+    `<div class="btns grad-seg">${items.map(([v, label]) => `<button data-gset="${key}" data-v="${v}" class="${v === cur ? 'primary' : ''}">${label}</button>`).join('')}</div>`;
   $('sheetTitle').textContent = st.old ? 'グラデを変更' : 'グラデ';
   body.innerHTML = `
-    <p class="note">小節 ${m1.index + 1} 〜 ${m2.index + 1}。範囲の中の音符（1〜7）と小節線の位置に #SCROLL を置き、終点に終了値を置きます。</p>
-    <label class="field"><span>開始値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="from" value="${g.from}"></label>
-    <label class="field"><span>終了値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="to" value="${g.to}"></label>
-    <div class="btns">
-      <button data-gmode="linear" class="${g.mode === 'linear' ? 'primary' : ''}">等差</button>
-      <button data-gmode="geometric" class="${g.mode === 'geometric' ? 'primary' : ''}">等比</button>
-    </div>
-    <label class="field"><span>小数の桁数</span><input type="number" min="0" max="6" step="1" inputmode="numeric" data-g="digits" value="${g.digits}"></label>
-    <pre class="grad-preview" id="gradPreview"></pre>
-    <div class="btns${st.old ? ' three' : ''}">
-      ${st.old ? '<button data-gact="del">グラデを消す</button>' : ''}
-      <button data-gact="cancel">やめる</button>
-      <button data-gact="ok" class="primary">${st.old ? '変更' : '置く'}</button>
+    <div class="grad-layout">
+      <div class="grad-form">
+        <p class="note">小節 ${m1.index + 1} 〜 ${m2.index + 1}。範囲の中の音符（1〜7）と小節線の位置に #SCROLL を置き、終点に終了値を置きます。</p>
+        <label class="field"><span>開始値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="from" value="${g.from}"></label>
+        <label class="field"><span>終了値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="to" value="${g.to}"></label>
+        ${seg('mode', [['linear', '等差'], ['geometric', '等比']], g.mode)}
+        <label class="field"><span>小数の桁数</span><input type="number" min="0" max="6" step="1" inputmode="numeric" data-g="digits" value="${g.digits}"></label>
+        <h3>#BPMCHANGE があるとき${hasBpm ? '' : '（この範囲にはありません）'}</h3>
+        ${seg('speed', [['visual', '見た目の速さで'], ['scroll', 'SCROLL の値で']], g.speed ?? 'scroll')}
+        <p class="note">「見た目の速さで」は BPM × SCROLL が滑らかに変わるように、BPM に合わせて #SCROLL を割り戻します（#BPMCHANGE の位置にも #SCROLL を置きます）。「SCROLL の値で」は #SCROLL の値だけを変えるので、BPM が変わる所で速さが跳ねます。</p>
+        <h3>小節線（#MEASURE で長さが変わる小節も同じ）</h3>
+        ${seg('barlines', [['on', '対象に入れる'], ['off', '入れない']], g.barlines === false ? 'off' : 'on')}
+        <p class="grad-err" id="gradErr"></p>
+        <div class="btns${st.old ? ' three' : ''}">
+          ${st.old ? '<button data-gact="del">グラデを消す</button>' : ''}
+          <button data-gact="cancel">やめる</button>
+          <button data-gact="ok" class="primary">${st.old ? '変更' : '置く'}</button>
+        </div>
+      </div>
+      <div class="grad-tja">
+        <div class="grad-tja-head">.tja での書き方（小節 ${m1.index + 1} 〜 ${m2.index + 1}）</div>
+        <pre id="gradTja"></pre>
+      </div>
     </div>`;
   const preview = () => {
     const err = gradValid(g);
-    const out = body.querySelector('#gradPreview')!;
-    if (err) { out.textContent = err; out.classList.add('bad'); return; }
-    out.classList.remove('bad');
-    const list = gradScrolls(ed.course, g);
-    out.textContent = list.map((s) => {
-      const m = ed.measureOf(s.tick);
-      const beat = ((s.tick - m.start) / (TPB * 4 / m.den)) + 1;
-      return `小節 ${m.index + 1}  ${Number(beat.toFixed(2))} 拍目   #SCROLL ${s.value}`;
-    }).join('\n');
+    body.querySelector('#gradErr')!.textContent = err ?? '';
+    const pre = body.querySelector<HTMLElement>('#gradTja')!;
+    if (err) { pre.textContent = ''; return; }
+    pre.innerHTML = gradTjaPreview(g, st.old);
   };
   body.querySelectorAll<HTMLInputElement>('input[data-g]').forEach((inp) => {
     inp.addEventListener('input', () => {
       const k = inp.dataset.g as 'from' | 'to' | 'digits';
-      const v = Number(inp.value);
       if (inp.value.trim() === '') return;
+      const v = Number(inp.value);
       g[k] = k === 'digits' ? Math.max(0, Math.min(6, Math.round(v))) : v;
       preview();
     });
   });
-  body.querySelectorAll<HTMLButtonElement>('[data-gmode]').forEach((b) => {
+  body.querySelectorAll<HTMLButtonElement>('[data-gset]').forEach((b) => {
     b.addEventListener('click', () => {
-      g.mode = b.dataset.gmode as Grad['mode'];
-      body.querySelectorAll<HTMLButtonElement>('[data-gmode]').forEach((x) => x.classList.toggle('primary', x === b));
+      const key = b.dataset.gset!;
+      const v = b.dataset.v!;
+      if (key === 'mode') g.mode = v as Grad['mode'];
+      else if (key === 'speed') g.speed = v as Grad['speed'];
+      else if (key === 'barlines') g.barlines = v === 'on';
+      body.querySelectorAll<HTMLButtonElement>(`[data-gset="${key}"]`).forEach((x) => x.classList.toggle('primary', x === b));
       preview();
     });
   });
@@ -1065,4 +1081,31 @@ function renderGradSheet(body: HTMLElement) {
     });
   });
   preview();
+}
+
+/** グラデを置いた後の .tja のうち、範囲の小節の部分を色付きの HTML で返す */
+function gradTjaPreview(g: Grad, old?: Grad): string {
+  const c = JSON.parse(JSON.stringify(ed.course)) as ECourse;
+  if (old) c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= old.start && e.tick <= old.end));
+  sortCourse(c);
+  applyGrad(c, g, ed.chart.bpm);
+  sortCourse(c);
+  const text = ['#START', ...writeCourseBody(c), '#END'].join('\n');
+  const marks = tjaMarks(text);
+  const a = ed.measureOf(g.start).index + 1;
+  const b = ed.measureOf(g.end).index + 1;
+  const n = marks.lineStarts.length;
+  const lineText = (li: number) => text.slice(marks.lineStarts[li], li + 1 < n ? marks.lineStarts[li + 1] - 1 : text.length).trim();
+  // 小節の最初の行と、その前に並ぶ命令の行（#SCROLL など）から
+  const head = (mNo: number) => {
+    let li = -1;
+    for (let i = 0; i < n; i++) if (marks.measure[i] === mNo) { li = i; break; }
+    if (li < 0) return -1;
+    while (li > 1 && lineText(li - 1).startsWith('#')) li--;
+    return li;
+  };
+  const from = Math.max(1, head(a));
+  let to = head(b + 1);
+  if (to < 0) to = n - 1;
+  return tjaLinesHtml(text, marks, from, to);
 }

@@ -494,17 +494,47 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 /* グラデのボタンと設定画面 */
 .tool.grad b { font-size: max(10px, calc(24px * var(--es, 0.45))); font-weight: 900; color: #c792ea; }
 .tool.grad.active b { color: #e3c8f5; }
-.grad-preview {
-  margin: 0;
-  max-height: 34vh;
-  overflow: auto;
-  padding: 8px 10px;
-  background: #111114;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  font: 12px/1.6 ui-monospace, Menlo, Consolas, monospace;
-  color: #e3c8f5;
-  white-space: pre;
-  touch-action: pan-x pan-y;
+.sheet.grad { align-items: stretch; }
+.sheet.grad .sheet-panel {
+  width: min(1200px, 100%);
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);
 }
-.grad-preview.bad { color: #ff8a7a; white-space: pre-wrap; }
+.sheet.grad .sheet-body { flex: 1; min-height: 0; overflow: hidden; padding: 10px 12px; }
+.grad-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 42%) 1fr;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+}
+.grad-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  min-height: 0;
+  touch-action: pan-y;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+}
+.grad-form h3 { margin: 6px 0 0; }
+.grad-seg { grid-template-columns: repeat(2, 1fr); }
+.grad-err { margin: 0; color: #ff8a7a; font-size: 12px; }
+.grad-err:empty { display: none; }
+.grad-tja { display: flex; flex-direction: column; min-height: 0; background: #111114; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.grad-tja-head { padding: 6px 10px; font-size: 12px; color: var(--sub); border-bottom: 1px solid var(--line); }
+.grad-tja pre {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  font: 13px/18px ui-monospace, Menlo, Consolas, monospace;
+  white-space: pre;
+  color: #f4f4f4;
+  touch-action: pan-x pan-y;
+  overscroll-behavior: contain;
+}

@@ -34,4 +34,13 @@ describe('グラデ', () => {
     ed.replaceChart(parseTJA(text.replace('#SCROLL 1.25', '#SCROLL 1.3')));
     expect(ed.course.grads?.length ?? 0).toBe(0);
   });
+
+  it('見た目の速さで: BPM が倍になる所では SCROLL を半分にして、BPM × SCROLL を滑らかにする', () => {
+    const t = 'TITLE:t\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n1111,\n#BPMCHANGE 240\n1111,\n#END\n';
+    const ed = new Editor(parseTJA(t));
+    ed.setGrad({ start: 0, end: M * 2, from: 1, to: 0.5, mode: 'linear', digits: 3, speed: 'visual' });
+    const s = ed.course.events.filter((e) => e.kind === 'scroll').map((e) => (e as { value: number }).value);
+    // 見た目の速さは 120 → 120 で一定なので、BPM 120 の間は 1、BPM 240 の間は 0.5
+    expect(s).toEqual([1, 1, 1, 1, 0.5, 0.5, 0.5, 0.5, 0.5]);
+  });
 });
