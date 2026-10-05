@@ -38,6 +38,8 @@ export interface TempoResult {
   downbeat: number;
   /** 曲の長さ（秒） */
   duration: number;
+  /** 測り方の途中経過（うまく測れないときの確認用） */
+  info?: string;
 }
 
 // ---------- FFT ----------
@@ -1037,21 +1039,24 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   const bp0 = ((Math.round((tStart - aDown) / PA) % 4) + 4) % 4;
   const OFFBAR = LAMBDA;
   const NB = 4;
-  const nF = Math.ceil((hi - tStart) * fr) + 2;
+  // 状態は時刻を 2 フレームごとにまとめて持つ（メモリを減らすため。時刻そのものは別に細かく覚える）
+  const BK = fr / 2;
+  const nF = Math.ceil((hi - tStart) * BK) + 2;
   // 同じ BPM は 4 拍以上続ける（c = 今の BPM になってからの拍数。4 で止める）
   const MINLEN = 4;
   const S = nF * nT * NB * MINLEN * nSt;
-  const val = new Float64Array(S).fill(-Infinity);
-  const tim = new Float64Array(S);
+  const val = new Float32Array(S).fill(-Infinity);
+  // 時刻は tStart からの秒数
+  const tim = new Float32Array(S);
   const back = new Int32Array(S).fill(-1);
   const key = (f: number, k: number, bp: number, c: number, st: number) => (((f * nT + k) * NB + bp) * MINLEN + (c - 1)) * nSt + st;
   const s0 = key(0, 0, bp0, MINLEN, 0);
   val[s0] = 0;
-  tim[s0] = tStart;
+  tim[s0] = 0;
   const relax = (s2: number, v2: number, t2: number, from: number) => {
     if (v2 > val[s2]) {
       val[s2] = v2;
-      tim[s2] = t2;
+      tim[s2] = t2 - tStart;
       back[s2] = from;
     }
   };
@@ -1062,13 +1067,13 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
           const s = key(f, k, bp, c, st);
           const v = val[s];
           if (v === -Infinity) continue;
-          const t = tim[s];
+          const t = tStart + tim[s];
           const bp2 = (bp + 1) % NB;
           // 同じ BPM で次の拍へ
           {
             const t2 = t + 60 / cand[k];
             const j = innerAt(t2);
-            if (t2 < hi && (j < 0 || ord[j + 1] === k)) relax(key(Math.round((t2 - tStart) * fr), k, bp2, Math.min(MINLEN, c + 1), st), v + score(k, t2), t2, s);
+            if (t2 < hi && (j < 0 || ord[j + 1] === k)) relax(key(Math.round((t2 - tStart) * BK), k, bp2, Math.min(MINLEN, c + 1), st), v + score(k, t2), t2, s);
           }
           if (k === 1 || c < MINLEN) continue;
           // ここ（拍 t）から BPM を変える
@@ -1082,7 +1087,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
             const pen = LAMBDA + odd(k2) + (bp === 0 ? 0 : OFFBAR);
             const t2 = t + 60 / cand[k2];
             const j = innerAt(t2);
-            if (t2 < hi && (j < 0 || ord[j + 1] === k2)) relax(key(Math.round((t2 - tStart) * fr), k2, bp2, 1, st2), v + score(k2, t2) - pen, t2, s);
+            if (t2 < hi && (j < 0 || ord[j + 1] === k2)) relax(key(Math.round((t2 - tStart) * BK), k2, bp2, 1, st2), v + score(k2, t2) - pen, t2, s);
           }
         }
       }
@@ -1092,11 +1097,11 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   // 16 分が続く曲では Z の拍が 1/4 拍ずれて測られていることがあるので、1/4 拍ずれた所も（少し減点して）認める
   let end = -1;
   let ev = -Infinity;
-  for (let f = Math.max(0, nF - Math.ceil(PZ * fr) - 2); f < nF; f++) {
+  for (let f = Math.max(0, nF - Math.ceil(PZ * BK) - 2); f < nF; f++) {
     for (let bp = 0; bp < NB; bp++) for (let c = 1; c <= MINLEN; c++) {
       const s = key(f, 1, bp, c, nSt - 1);
       if (val[s] === -Infinity) continue;
-      const t = tim[s];
+      const t = tStart + tim[s];
       const x = (t - Z.phase) / PZ;
       const q4 = Math.round(x * 4);
       const d = Math.abs(x * 4 - q4) * (PZ / 4);
@@ -1108,7 +1113,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   if (end < 0) return null;
   // たどって、BPM ごとの区間にする（拍 i から i+1 までは、拍 i+1 の状態の BPM）
   const path: { t: number; k: number }[] = [];
-  for (let s = end; s >= 0; s = back[s]) path.push({ t: tim[s], k: Math.floor(s / (NB * MINLEN * nSt)) % nT });
+  for (let s = end; s >= 0; s = back[s]) path.push({ t: tStart + tim[s], k: Math.floor(s / (NB * MINLEN * nSt)) % nT });
   path.reverse();
   const endBp = Math.floor(end / (MINLEN * nSt)) % NB;
   const pieces: { k: number; start: number; end: number; beats: number }[] = [];
@@ -1145,8 +1150,8 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   A.end = aEnd;
   Z.start = zStart;
   // Z の拍の位置は、つながった所に合わせる（次の境目を探すときに使う）
-  Z.phase = tim[end];
-  Z.down = tim[end] - endBp * PZ;
+  Z.phase = tStart + tim[end];
+  Z.down = Z.phase - endBp * PZ;
   return out;
 }
 
@@ -1322,6 +1327,8 @@ export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: numb
   const tg = tempogram(env.all, env.fr, progress);
   const path = tempoPath(tg);
   const craw = analyzeCoarse(env, tg, path, duration);
+  const rawInfo = craw.segs.map((x) => Math.round(x.bpm)).join('→');
+  let bridgeFail = 0;
   // 大まかな測り方の区間の整理: 8 秒未満の短い区間（裏拍や 3 連のリズムが目立つだけのことが多い）は隣につなぎ、
   // BPM の差が 1.5% 未満の隣どうしもつなぐ（つないだ所は、つないだ範囲全体で合わせ直す）
   {
@@ -1362,6 +1369,7 @@ export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: numb
         let j = i + 1;
         while (j < segs.length - 1 && segs[j].end - segs[j].start < 40) j++;
         const mid = bridge(env, segs.slice(i, j + 1));
+        if (!mid) bridgeFail++;
         out.push(...(mid ?? segs.slice(i + 1, j)), segs[j]);
         i = j;
       }
@@ -1393,6 +1401,9 @@ export function analyzeTempo(mono: Float32Array, sr: number, progress?: (p: numb
   for (let i = 1; i < fine.segments.length; i++) if (Math.abs(fine.segments[i].bpm / fine.segments[i - 1].bpm - 1) > 0.08) jumps++;
   const fineOk = jumps <= Math.max(2, fine.segments.length / 10);
   if (fineOk && sf > bs * 1.03 && sf > ss * 1.04) best = fine;
+  const name = best === single ? '1 つの BPM' : best === coarse ? '区間ごと' : '1 拍ずつ';
+  const bpms = (r: TempoResult) => r.segments.map((x) => x.bpm).join('→');
+  best.info = `大まかな区間 ${rawInfo}／区間ごと ${bpms(coarse)}${bridgeFail ? `（つなぎ失敗 ${bridgeFail}）` : ''}／合い方 1 つ ${ss.toFixed(3)}・区間 ${sc.toFixed(3)}・1 拍ずつ ${sf.toFixed(3)}／採用 ${name}`;
   return best;
 }
 

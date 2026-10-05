@@ -1464,6 +1464,7 @@ function renderTempoSheet(body: HTMLElement) {
   body.innerHTML = `
     <p class="note">曲全体の拍を 1 つずつ確かめ、曲全体でつながるように BPM を合わせました（1 小節ごとに変わる BPM も拾います）。区間の行をタップすると、下の波形がその場所へ移ります。</p>
     <table class="tempo-table"><tr><th>区間</th><th>BPM</th><th>合った拍</th><th>速さ</th></tr>${rows}</table>
+    <p class="note tempo-info">音源 ${audio.buffer?.sampleRate ?? '?'} Hz・${fmtSec(r.duration)}／${esc(r.info ?? '')}</p>
     ${weak ? '<p class="note bad">合い方が弱い区間があります。下の波形で拍の線と音を見比べてください。</p>' : ''}
     <div class="tempo-wave-wrap">
       <canvas id="tempoWave" class="tempo-wave"></canvas>
