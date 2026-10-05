@@ -6,6 +6,7 @@ import { writeTJA } from './chart/tjaWrite';
 import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
+import { buildAutoEvents, type AutoEvent } from './play/auto';
 
 import { DIVISORS, Editor, type Tool } from './editor/editor';
 import { EditorView, eventText } from './editor/view';
@@ -136,10 +137,17 @@ function endTime() {
   return Math.max(contentT, audio.musicDuration);
 }
 
+let hitEvents: AutoEvent[] = [];
+let hitIdx = 0;
+
 async function startPlayback() {
   if (playing) return;
   const from = ed.timing.tickToTime(Math.max(0, view.pos));
   playable = toPlayable(ed.chart, ed.course).notes;
+  // 打音はプレイ画面のオートと同じ予定（音符・連打・風船）を、その時刻ちょうどに予約して鳴らす。
+  // 判定枠にちょうど乗っている音符（再生を始めた位置の音符）も鳴らす
+  hitEvents = buildAutoEvents(playable, from).filter((e) => e.t >= from - 0.001);
+  hitIdx = 0;
   await audio.startAt(from, settings.rate);
   lastTime = from;
   playing = true;
@@ -160,12 +168,12 @@ function tickPlayback() {
   if (t < lastTime) return; // 再生開始直後
   view.pos = ed.timing.timeToTick(t);
 
-  if (settings.hitSound) {
-    for (const n of playable) {
-      if (n.time > lastTime && n.time <= t) {
-        audio.playHit(n.type === 'ka' || n.type === 'bigKa' ? 'ka' : 'don');
-      }
-    }
+  // これから 0.3 秒以内に鳴る打音を予約する
+  while (hitIdx < hitEvents.length && hitEvents[hitIdx].t <= t + 0.3 * settings.rate) {
+    const e = hitEvents[hitIdx++];
+    if (!settings.hitSound) continue;
+    audio.scheduleHit(e.kind, e.t);
+    if (e.pop) audio.scheduleHit('balloon', e.t);
   }
   if (settings.metronome) {
     const a = ed.timing.timeToTick(lastTime);
@@ -202,13 +210,12 @@ function updateHeader() {
   view.invalidate();
 }
 
-// ノーツのボタンは 4 つ（＋消去）。選んでいるボタンをもう一度タップすると、組になっている音符に切り替わる
+// ノーツのボタンは 4 つ。置いてあるノーツはタップで消える。選んでいるボタンをもう一度タップすると、組になっている音符に切り替わる
 const TOOL_GROUPS: Record<string, Tool[]> = {
   small: ['don', 'ka'],
   big: ['bigDon', 'bigKa'],
   roll: ['roll', 'bigRoll'],
   balloon: ['balloon'],
-  erase: ['erase'],
 };
 const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   don: { label: 'ドン', cls: 'don' },
@@ -221,7 +228,7 @@ const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   erase: { label: '消去', cls: 'erase' },
 };
 /** 各ボタンが今どちらの音符になっているか */
-const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', erase: 'erase' };
+const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon' };
 const groupOf = (t: Tool) => Object.keys(TOOL_GROUPS).find((g) => TOOL_GROUPS[g].includes(t))!;
 
 function setTool(t: Tool) {
@@ -311,7 +318,7 @@ ed.onChange((structural) => {
 
 const KEY_TOOLS: Record<string, Tool> = {
   Digit1: 'don', Digit2: 'ka', Digit3: 'bigDon', Digit4: 'bigKa',
-  Digit5: 'roll', Digit6: 'bigRoll', Digit7: 'balloon', Digit0: 'erase', KeyE: 'erase',
+  Digit5: 'roll', Digit6: 'bigRoll', Digit7: 'balloon',
 };
 
 window.addEventListener('keydown', (e) => {

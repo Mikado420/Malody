@@ -1,5 +1,5 @@
 import { TPB, type EEvent } from '../chart/model';
-import { drawAny, hexPath } from '../render/notes';
+import { drawAny, drawRoll, hexPath } from '../render/notes';
 import { localPoint } from '../orient';
 import type { Editor } from './editor';
 
@@ -525,7 +525,15 @@ export class EditorView {
       const big = n.type === 'bigDon' || n.type === 'bigKa' || n.type === 'bigRoll';
       const x = this.xOf(n.tick);
       const ex = n.endTick !== undefined ? this.xOf(n.endTick) : undefined;
-      drawAny(ctx, n.type, x, L.cy, big ? L.bigR : L.r, ex, n.type === 'balloon' ? n.hits ?? 5 : null);
+      if (n.type === 'balloon' && ex !== undefined) {
+        // 風船は、受け付けている範囲を半透明のオレンジの連打で示す
+        ctx.globalAlpha = 0.45;
+        drawRoll(ctx, x, ex, L.cy, L.r, 'balloon');
+        ctx.globalAlpha = 1;
+        drawAny(ctx, n.type, x, L.cy, L.r, undefined, n.hits ?? 5);
+      } else {
+        drawAny(ctx, n.type, x, L.cy, big ? L.bigR : L.r, ex, n.type === 'balloon' ? n.hits ?? 5 : null);
+      }
     }
 
     // 連打の始点（終点待ち）
