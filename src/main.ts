@@ -7,7 +7,7 @@ import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { buildAutoEvents, type AutoEvent } from './play/auto';
-import { analyzeTempo, tempoPlan, type TempoResult } from './audio/tempo';
+import { analyzeTempo, planBeatTimes, tempoPlan, type TempoPlan, type TempoResult } from './audio/tempo';
 import { applyGrad, gradValid, type Grad } from './editor/grad';
 import { writeCourseBody } from './chart/tjaWrite';
 
@@ -17,7 +17,7 @@ import { loadFiles, type AudioFile } from './io/load';
 import { loadAudio, loadChart, loadHitSound, saveAudio, saveChart, saveHitSound } from './io/storage';
 import { writeZip } from './io/zip';
 import { PlayMode } from './play/playmode';
-import { fitRoot } from './orient';
+import { fitRoot, localPoint } from './orient';
 import { BUILD_ID, startAutoUpdate } from './update';
 
 fitRoot();
@@ -1358,8 +1358,14 @@ function posText(tick: number) {
 
 // ---------- BPM・OFFSET の自動測定 ----------
 
-const tempoState: { running: boolean; progress: number; result: TempoResult | null; error: string; mul: number[]; shift: number } = {
-  running: false, progress: 0, result: null, error: '', mul: [], shift: 0,
+const tempoState: {
+  running: boolean; progress: number; result: TempoResult | null; error: string; mul: number[]; shift: number;
+  /** OFFSET の手での微調整（秒、＋で拍の線が後ろへ） */
+  fine: number;
+  /** 波形の表示: 真ん中の時刻と、表示する長さ（秒） */
+  viewAt: number; span: number;
+} = {
+  running: false, progress: 0, result: null, error: '', mul: [], shift: 0, fine: 0, viewAt: 0, span: 2,
 };
 
 /** 音源を 1 ch にまとめて、別のスレッドで測る（使えないときはこの画面で測る） */
@@ -1375,7 +1381,7 @@ function startTempo() {
     const d = buf.getChannelData(c);
     for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels;
   }
-  Object.assign(tempoState, { running: true, progress: 0, result: null, error: '', mul: [], shift: 0 });
+  Object.assign(tempoState, { running: true, progress: 0, result: null, error: '', mul: [], shift: 0, fine: 0, viewAt: -1, span: 2 });
   openSheet('tempo');
   const done = (r: TempoResult) => {
     tempoState.running = false;
@@ -1439,28 +1445,83 @@ function renderTempoSheet(body: HTMLElement) {
     return;
   }
   const r = st.result;
-  const plan = tempoPlan(r, TPB, st.mul, st.shift);
-  if (!plan) {
+  const plan0 = tempoPlan(r, TPB, st.mul, st.shift, st.fine);
+  if (!plan0) {
     body.innerHTML = '<p class="note">拍が見つかりませんでした</p>';
     return;
   }
+  // 波形の最初の表示: 最初の 1 拍目のあたり
+  if (st.viewAt < 0) st.viewAt = Math.max(0, -plan0.offset + st.span * 0.3);
   const weak = r.segments.some((s) => s.matched / Math.max(1, s.beats) < 0.6 || s.jitterMs > 8);
   const hasNotes = ed.chart.courses.some((c) => c.notes.length);
   const rows = r.segments.map((s, i) => {
     const bpm = Number((s.bpm * st.mul[i]).toFixed(3));
     const rate = Math.round((s.matched / Math.max(1, s.beats)) * 100);
-    return `<tr><td>${fmtSec(s.start)}〜${fmtSec(s.end)}</td><td class="tempo-bpm">${bpm}<small>測定 ${Number((s.rawBpm * st.mul[i]).toFixed(3))}</small></td>
+    return `<tr data-tgo="${s.start}"><td>${fmtSec(s.start)}〜${fmtSec(s.end)}</td><td class="tempo-bpm">${bpm}<small>測定 ${Number((s.rawBpm * st.mul[i]).toFixed(3))}</small></td>
       <td>${rate}%<small>ずれ ${s.jitterMs.toFixed(1)}ms</small></td>
       <td class="tempo-mul"><button data-tmul="${i}" data-v="0.5">÷2</button><button data-tmul="${i}" data-v="2">×2</button></td></tr>`;
   }).join('');
   body.innerHTML = `
-    <p class="note">曲全体（${fmtSec(r.duration)}）の拍を 1 つずつ確かめて、区間ごとに BPM を合わせました。「合った拍」は実際の音と拍が合った割合、「ずれ」はその平均のずれです。</p>
+    <p class="note">曲全体の拍を 1 つずつ確かめ、曲全体でつながるように BPM を合わせました（1 小節ごとに変わる BPM も拾います）。区間の行をタップすると、下の波形がその場所へ移ります。</p>
     <table class="tempo-table"><tr><th>区間</th><th>BPM</th><th>合った拍</th><th>速さ</th></tr>${rows}</table>
-    ${weak ? '<p class="note bad">合い方が弱い区間があります。入れた後にメトロノームで確かめてください。</p>' : ''}
-    <div class="field grad-pos"><span>1 拍目</span><button data-tshift="-1" aria-label="1 拍前へ">◀</button><b>OFFSET ${plan.offset.toFixed(3)}</b><button data-tshift="1" aria-label="1 拍後ろへ">▶</button></div>
-    <p class="note">入れる内容: BPM ${plan.bpm} ／ OFFSET ${plan.offset.toFixed(3)}${plan.changes.length ? ` ／ #BPMCHANGE ${plan.changes.length} か所（${plan.changes.map((c) => `小節 ${Math.floor(c.tick / (TPB * 4)) + 1} で ${c.bpm}`).join('、')}）` : ''}</p>
+    ${weak ? '<p class="note bad">合い方が弱い区間があります。下の波形で拍の線と音を見比べてください。</p>' : ''}
+    <div class="tempo-wave-wrap">
+      <canvas id="tempoWave" class="tempo-wave"></canvas>
+      <div class="tempo-wave-bar">
+        <button data-tview="-1" aria-label="前へ">◀</button>
+        <button data-tzoom="0.5" aria-label="拡大">＋</button>
+        <button data-tzoom="2" aria-label="縮小">－</button>
+        <button data-tview="1" aria-label="後ろへ">▶</button>
+        <span class="tempo-fine-label">線を左右にドラッグして音に合わせる</span>
+      </div>
+    </div>
+    <div class="field grad-pos"><span>微調整</span><button data-tfine="-0.01">-10</button><button data-tfine="-0.001">-1</button><b id="tempoFine"></b><button data-tfine="0.001">+1</button><button data-tfine="0.01">+10</button></div>
+    <div class="field grad-pos"><span>1 拍目</span><button data-tshift="-1" aria-label="1 拍前へ">◀</button><b id="tempoOffset"></b><button data-tshift="1" aria-label="1 拍後ろへ">▶</button></div>
+    <p class="note" id="tempoSummary"></p>
     ${hasNotes ? '<p class="note">今の #BPMCHANGE は置き換えます。音符の拍の位置はそのままで、時刻が変わります。</p>' : ''}
     <div class="btns"><button data-tact="cancel">やめる</button><button data-tact="ok" class="primary">入れる</button></div>`;
+  const plan = () => tempoPlan(r, TPB, st.mul, st.shift, st.fine)!;
+  const update = () => {
+    const p = plan();
+    $('tempoFine').textContent = `${st.fine >= 0 ? '+' : ''}${Math.round(st.fine * 1000)} ms`;
+    $('tempoOffset').textContent = `OFFSET ${p.offset.toFixed(3)}`;
+    $('tempoSummary').textContent = `入れる内容: BPM ${p.bpm} ／ OFFSET ${p.offset.toFixed(3)}${p.changes.length ? ` ／ #BPMCHANGE ${p.changes.length} か所（${p.changes.slice(0, 6).map((c) => `${Math.floor(c.tick / (TPB * 4)) + 1} 小節目で ${c.bpm}`).join('、')}${p.changes.length > 6 ? ' …' : ''}）` : ''}`;
+    drawTempoWave(p);
+  };
+  update();
+  // 波形の上をドラッグ → 拍の線（OFFSET）を動かす
+  const cv = body.querySelector<HTMLCanvasElement>('#tempoWave')!;
+  let drag: { x: number; fine: number } | null = null;
+  cv.addEventListener('pointerdown', (e) => {
+    cv.setPointerCapture(e.pointerId);
+    drag = { x: localPoint(e, cv).x, fine: st.fine };
+  });
+  cv.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const spp = st.span / Math.max(1, cv.clientWidth);
+    st.fine = Math.round((drag.fine + (localPoint(e, cv).x - drag.x) * spp) * 1000) / 1000;
+    update();
+  });
+  const end = () => { drag = null; };
+  cv.addEventListener('pointerup', end);
+  cv.addEventListener('pointercancel', end);
+  body.querySelectorAll<HTMLButtonElement>('[data-tfine]').forEach((b) => b.addEventListener('click', () => {
+    st.fine = Math.round((st.fine + Number(b.dataset.tfine)) * 1000) / 1000;
+    update();
+  }));
+  body.querySelectorAll<HTMLButtonElement>('[data-tzoom]').forEach((b) => b.addEventListener('click', () => {
+    st.span = Math.min(16, Math.max(0.5, st.span * Number(b.dataset.tzoom)));
+    update();
+  }));
+  body.querySelectorAll<HTMLButtonElement>('[data-tview]').forEach((b) => b.addEventListener('click', () => {
+    st.viewAt = Math.max(0, Math.min(r.duration, st.viewAt + Number(b.dataset.tview) * st.span * 0.8));
+    update();
+  }));
+  body.querySelectorAll<HTMLElement>('[data-tgo]').forEach((row) => row.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('button')) return;
+    st.viewAt = Math.max(0, Number(row.dataset.tgo) + st.span * 0.3);
+    update();
+  }));
   body.querySelectorAll<HTMLButtonElement>('[data-tmul]').forEach((b) => b.addEventListener('click', () => {
     const i = Number(b.dataset.tmul);
     st.mul[i] = Math.min(4, Math.max(0.25, st.mul[i] * Number(b.dataset.v)));
@@ -1472,9 +1533,73 @@ function renderTempoSheet(body: HTMLElement) {
   }));
   body.querySelectorAll<HTMLButtonElement>('[data-tact]').forEach((b) => b.addEventListener('click', () => {
     if (b.dataset.tact === 'ok') {
-      ed.applyTempo(plan);
-      toast(`BPM ${plan.bpm}・OFFSET ${plan.offset.toFixed(3)} を入れました`);
+      const p = plan();
+      ed.applyTempo(p);
+      toast(`BPM ${p.bpm}・OFFSET ${p.offset.toFixed(3)} を入れました`);
     }
     closeSheet();
   }));
+}
+
+/** 確認画面の波形: 音の波形の上に、案の拍の線（小節の頭は太い線、最初の 1 拍目は赤）を引く */
+function drawTempoWave(plan: TempoPlan) {
+  const cv = document.getElementById('tempoWave') as HTMLCanvasElement | null;
+  const buf = audio.buffer;
+  if (!cv || !buf) return;
+  const st = tempoState;
+  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  const W = Math.max(1, cv.clientWidth);
+  const H = Math.max(1, cv.clientHeight);
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
+    cv.width = Math.round(W * dpr);
+    cv.height = Math.round(H * dpr);
+  }
+  const ctx = cv.getContext('2d')!;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = '#111114';
+  ctx.fillRect(0, 0, W, H);
+  const t0 = st.viewAt - st.span / 2;
+  const t1 = st.viewAt + st.span / 2;
+  const xOf = (t: number) => ((t - t0) / st.span) * W;
+  // 波形（1 px ごとの最大・最小）
+  const sr = buf.sampleRate;
+  const chs = Array.from({ length: buf.numberOfChannels }, (_, i) => buf.getChannelData(i));
+  ctx.fillStyle = '#5e6a78';
+  const mid = H / 2;
+  for (let x = 0; x < W; x++) {
+    const a = Math.floor((t0 + (x / W) * st.span) * sr);
+    const b = Math.floor((t0 + ((x + 1) / W) * st.span) * sr);
+    if (b <= 0 || a >= buf.length) continue;
+    let mn = 0;
+    let mx = 0;
+    const step = Math.max(1, Math.floor((b - a) / 200));
+    for (let i = Math.max(0, a); i < Math.min(buf.length, b); i += step) {
+      let v = 0;
+      for (const d of chs) v += d[i];
+      v /= chs.length;
+      if (v < mn) mn = v;
+      if (v > mx) mx = v;
+    }
+    ctx.fillRect(x, mid - mx * mid * 0.95, 1, Math.max(1, (mx - mn) * mid * 0.95));
+  }
+  // 拍の線
+  const beats = planBeatTimes(plan, TPB, t1 + 1);
+  beats.forEach((b, k) => {
+    if (b.t < t0 - 0.01 || b.t > t1 + 0.01) return;
+    const x = xOf(b.t);
+    ctx.fillStyle = k === 0 ? '#ff5a4a' : b.bar ? '#ffd21f' : 'rgba(255,255,255,0.45)';
+    ctx.fillRect(x - (b.bar ? 1 : 0.5), 0, b.bar ? 2 : 1, H);
+    if (b.bar) {
+      ctx.font = '600 11px system-ui, sans-serif';
+      ctx.fillText(String(Math.floor(k / 4) + 1), x + 3, 12);
+    }
+  });
+  // 音源の頭（0 秒）
+  if (t0 < 0) {
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(0, 0, xOf(0), H);
+  }
+  ctx.fillStyle = '#9a9aa2';
+  ctx.font = '11px ui-monospace, monospace';
+  ctx.fillText(fmtSec(Math.max(0, t0)), 4, H - 4);
 }

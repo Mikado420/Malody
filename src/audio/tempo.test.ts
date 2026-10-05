@@ -11,13 +11,13 @@ const rand = () => {
 };
 
 /** テスト用の曲: 区間ごとの BPM で、1 拍目にキック、2・4 拍目にスネア、8 分でハイハット */
-function song(sr: number, first: number, parts: { bpm: number; beats: number }[], tail = 2) {
+function song(sr: number, first: number, parts: { bpm: number; beats: number }[], tail = 2, jitter = 0) {
   let t = first;
   const hits: { t: number; kind: 'kick' | 'snare' | 'hat' }[] = [];
   for (const p of parts) {
     const P = 60 / p.bpm;
     for (let k = 0; k < p.beats; k++) {
-      const bt = t + k * P;
+      const bt = t + k * P + (rand() - 0.5) * 2 * jitter;
       hits.push({ t: bt, kind: k % 4 === 0 ? 'kick' : k % 2 === 1 ? 'snare' : 'hat' });
       hits.push({ t: bt + P / 2, kind: 'hat' });
     }
@@ -75,13 +75,34 @@ describe('BPM・OFFSET の自動測定', () => {
     expect(Math.abs(plan.offset - -1.1)).toBeLessThan(0.006);
   });
 
-  it('短い区間だけ BPM が変わる（200 → 130 → 200）。変わり目は前後の拍の合い方を曲全体で比べて決める', () => {
+  it('短い区間だけ BPM が変わる（200 → 150 → 200）。変わり目は曲全体の拍のつながりで決める', () => {
     const sr = 22050;
-    const x = song(sr, 1.37, [{ bpm: 200, beats: 64 }, { bpm: 130, beats: 32 }, { bpm: 200, beats: 64 }]);
+    const x = song(sr, 1.37, [{ bpm: 200, beats: 64 }, { bpm: 150, beats: 32 }, { bpm: 200, beats: 64 }]);
     const r = analyzeTempo(x, sr);
     const plan = tempoPlan(r, TPB)!;
     // 1 小節 = 1.2 秒なので、最初の 1 拍目は 0.17 秒（音が鳴り始める 1.37 秒の 4 拍前）
     expect(Math.abs(plan.offset - -0.17)).toBeLessThan(0.006);
-    expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual([[68, 130], [100, 200]]);
+    expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual([[68, 150], [100, 200]]);
+  });
+
+  it('1 小節ごとに速くなる曲（160 から 1 小節ごとに +2）も、小節ごとの BPM を整数で出す', () => {
+    const sr = 22050;
+    const parts = [{ bpm: 160, beats: 16 }];
+    for (let m = 1; m <= 15; m++) parts.push({ bpm: 160 + 2 * m, beats: 4 });
+    parts.push({ bpm: 190, beats: 64 });
+    const x = song(sr, 0.9, parts);
+    const plan = tempoPlan(analyzeTempo(x, sr), TPB)!;
+    expect(plan.bpm).toBe(160);
+    expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual(
+      Array.from({ length: 15 }, (_, i) => [16 + i * 4, 162 + 2 * i]),
+    );
+  });
+
+  it('BPM 230 は 229.98 などにせず 230 にする（音が少し揺れていても、曲全体のずれで判断）', () => {
+    const sr = 22050;
+    const x = song(sr, 0.6, [{ bpm: 230, beats: 400 }], 2, 0.004);
+    const plan = tempoPlan(analyzeTempo(x, sr), TPB)!;
+    expect(plan.bpm).toBe(230);
+    expect(plan.changes.length).toBe(0);
   });
 });
