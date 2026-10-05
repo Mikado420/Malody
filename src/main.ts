@@ -7,10 +7,6 @@ import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 
-// iPhone/iPad（iPad は Mac と名乗るのでタッチ対応で見分ける）。入力欄の文字の位置合わせに使う
-if (/iP(hone|ad|od)/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1)) {
-  document.documentElement.classList.add('ios');
-}
 import { DIVISORS, Editor, type Tool } from './editor/editor';
 import { EditorView, eventText } from './editor/view';
 import { loadFiles, type AudioFile } from './io/load';

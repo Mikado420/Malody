@@ -360,7 +360,7 @@ body.playing #app { visibility: hidden; }
   margin: 0;
   padding: 10px;
   /* 左端の行番号・小節番号の列のぶん空ける */
-  padding-left: 88px;
+  padding-left: 62px;
   border: 0;
   /* 入力時の自動拡大は viewport の maximum-scale=1 で止めているので、小さめの文字で多くの行を見せる */
   font: 13px/18px ui-monospace, Menlo, Consolas, monospace;
@@ -381,29 +381,27 @@ body.playing #app { visibility: hidden; }
   color: #f4f4f4;
 }
 .tja-hl > div { will-change: transform; }
-/* iPhone/iPad の入力欄は、文字の左右に 3px の余白を勝手に足すので、色付きの文字も同じだけずらす */
-html.ios .tja-hl { padding-left: 91px; }
 /* 左端の行番号（灰色）と小節番号（金色） */
 .tja-gutter {
   position: absolute;
   left: 0;
   top: 0;
   bottom: 0;
-  width: 78px;
-  padding: 10px 0 10px 4px;
+  width: 56px;
+  padding: 10px 2px 10px 2px;
   overflow: hidden;
   pointer-events: none;
   background: #18181c;
   border-right: 1px solid var(--line);
-  /* 行番号・小節番号は 5 桁でも収まるよう小さめの文字。行の高さは本文と同じ 18px */
-  font: 10px/18px ui-monospace, Menlo, Consolas, monospace;
+  /* 行番号・小節番号は 8px の文字で、5 桁でも収まる最小限の幅。行の高さは本文と同じ 18px */
+  font: 8px/18px ui-monospace, Menlo, Consolas, monospace;
   white-space: pre;
   box-sizing: border-box;
   z-index: 1;
 }
 .tja-gutter > div { will-change: transform; }
-.tja-gutter .ln { display: inline-block; width: 6ch; text-align: right; color: #5a5a62; }
-.tja-gutter .ms { display: inline-block; width: 5ch; text-align: right; color: #e0a400; }
+.tja-gutter .ln { display: inline-block; width: 5ch; text-align: right; color: #5a5a62; }
+.tja-gutter .ms { display: inline-block; width: 5.5ch; text-align: right; color: #e0a400; }
 .tja-text {
   position: relative;
   flex: 1;
@@ -447,19 +445,24 @@ html.ios .tja-hl { padding-left: 91px; }
 
 /* TJA の画面（入力していないとき）: 縦いっぱいに使う */
 .sheet.tja { align-items: stretch; }
-.sheet.tja .sheet-panel { max-height: none; height: 100%; border-radius: 0; padding-top: var(--safe-t); padding-left: var(--safe-l); padding-right: var(--safe-r); }
-.sheet.tja .sheet-body { flex: 1; min-height: 0; overflow: hidden; padding: 8px 12px 10px; gap: 6px; }
-.sheet.tja .tja-wrap { min-height: 0; flex: 1; }
+.sheet.tja .sheet-panel { width: 100%; max-height: none; height: 100%; border-radius: 0; padding: var(--safe-t) var(--safe-r) 0 var(--safe-l); }
+/* 文字の欄は左右・下の余白なしで画面の端まで */
+.sheet.tja .sheet-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; gap: 0; }
+.sheet.tja .tja-wrap { min-height: 0; flex: 1; border: 0; border-radius: 0; }
+.sheet.tja .tja-hl, .sheet.tja .tja-text, .sheet.tja .tja-gutter { padding-bottom: calc(10px + var(--safe-b)); }
 .sheet.tja, .sheet.tja .sheet-panel, .sheet.tja .sheet-body { overscroll-behavior: none; }
 
 html, body { overscroll-behavior: none; }
 
 /* TJA の画面を開いている間は、縦向きでも回転させない */
 @media (orientation: portrait) {
+  /* 画面の下まで使う（保存してある高さは古いことがあり、下に黒い隙間ができていた） */
   body.tja-open #root {
-    width: var(--vw, 100vw);
-    height: var(--vh, 100vh);
-    transform: translateZ(0);
+    position: fixed;
+    inset: 0;
+    width: auto;
+    height: auto;
+    transform: none;
   }
 }
 .sheet.tja #sheetClose { min-width: 48px; height: 48px; font-size: 22px; }
