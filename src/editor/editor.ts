@@ -95,15 +95,23 @@ export class Editor {
     this.emit(true);
   }
 
-  /** 譜面全体を差し替える（TJA のテキストを書き換えて反映したとき）。元に戻すで戻せる */
-  replaceChart(chart: EChart) {
-    this.mutate(() => {
+  /**
+   * 譜面全体を差し替える（TJA のテキストを書き換えたとき）。
+   * pushUndo = false のときは元に戻すの記録を増やさない（入力中の自動反映は、書き始めの 1 回だけ記録する）
+   */
+  replaceChart(chart: EChart, pushUndo = true) {
+    const apply = () => {
       const name = this.chart.courses[this.courseIndex]?.name;
       this.chart = chart;
       const i = chart.courses.findIndex((c) => c.name === name);
       this.courseIndex = i >= 0 ? i : Math.max(0, Math.min(this.courseIndex, chart.courses.length - 1));
       this.pendingLong = null;
-    });
+    };
+    if (pushUndo) this.mutate(apply);
+    else {
+      apply();
+      this.emit(true);
+    }
   }
 
   get canUndo() { return this.undoStack.length > 0; }

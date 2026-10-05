@@ -407,16 +407,13 @@ function renderSheet() {
     $('sheetTitle').textContent = 'TJA';
     const text = writeTJA(ed.chart);
     body.innerHTML = `
-      <p class="note">譜面全体の TJA です。書き換えて「反映」すると譜面に反映されます（元に戻すで戻せます）。#BPMCHANGE や #GOGOSTART などのイベントもここで編集できます。</p>
-      <div class="btns three tja-btns">
-        <button data-tja="apply" class="primary">反映</button>
-        <button data-tja="copy">コピー</button>
-        <button data-tja="reset">書き換えを取り消す</button>
-        <button data-tja="done" class="kb-only">完了</button>
-      </div>
+      <p class="note">譜面全体の TJA です。書き換えると、手を止めたところで自動で譜面に反映されます（元に戻すで、書き始める前に戻せます）。#BPMCHANGE や #GOGOSTART などのイベントもここで編集できます。</p>
+      <p class="tja-status" id="tjaStatus"></p>
       <textarea id="tjaText" class="tja-text" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" wrap="off"></textarea>`;
     const ta = body.querySelector<HTMLTextAreaElement>('#tjaText')!;
     ta.value = text;
+    tjaSync.last = text;
+    tjaSync.session = false;
     // 今いる小節の行が見えるところまでスクロールする
     const line = tjaLineOf(text, ed.course.name, ed.measureOf(Math.max(0, view.pos)).index);
     requestAnimationFrame(() => {
@@ -447,21 +444,12 @@ $('sheet').addEventListener('focusin', (e) => {
 });
 $('sheet').addEventListener('focusout', (e) => {
   if ((e.target as HTMLElement).id !== 'tjaText') return;
+  // 入力を終えたら待たずに反映する
+  syncTja();
   const el = $('sheet');
   el.classList.remove('kb');
   el.style.top = el.style.height = el.style.bottom = '';
 });
-// 入力中にボタンを押してもテキストからフォーカスが外れないようにする（外れると画面が戻り、押す位置がずれる）
-$('sheetBody').addEventListener('mousedown', (e) => {
-  if ((e.target as HTMLElement).closest('.tja-btns button') && $('sheet').classList.contains('kb')) e.preventDefault();
-});
-$('sheetBody').addEventListener('touchstart', (e) => {
-  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('.tja-btns button');
-  if (b && $('sheet').classList.contains('kb')) {
-    e.preventDefault();
-    b.click();
-  }
-}, { passive: false });
 window.visualViewport?.addEventListener('resize', fitSheetToKeyboard);
 window.visualViewport?.addEventListener('scroll', fitSheetToKeyboard);
 
@@ -482,41 +470,66 @@ function tjaLineOf(text: string, course: string, measure: number): number {
   return i;
 }
 
-async function tjaAction(act: string) {
-  const ta = document.getElementById('tjaText') as HTMLTextAreaElement | null;
-  if (!ta) return;
-  if (act === 'apply') {
-    try {
-      const chart = parseTJA(ta.value);
-      if (!chart.courses.length) throw new Error('#START〜#END が見つかりません');
-      ed.replaceChart(chart);
-      toast('TJA を譜面に反映しました');
-    } catch (err) {
-      toast(`反映できませんでした: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  } else if (act === 'copy') {
-    try {
-      await navigator.clipboard.writeText(ta.value);
-      toast('コピーしました');
-    } catch {
-      ta.focus();
-      ta.select();
-      toast('全部選択したので、コピーしてください');
-    }
-  } else if (act === 'reset') {
-    ta.value = writeTJA(ed.chart);
-    toast('書き換えを取り消しました');
-  } else if (act === 'done') {
-    ta.blur();
-  }
+/**
+ * TJA のテキストの自動反映。軽くするための工夫:
+ * - 入力のたびではなく、手を止めて 350ms たってから 1 回だけ読み込む（入力中は何もしない）
+ * - 日本語の変換中（確定前）は読み込まない
+ * - 前回反映したテキストと同じなら何もしない
+ * - 元に戻すの記録（譜面全体の写し）は、書き始めの 1 回だけ作る
+ * - 保存は譜面の変更から 600ms 後にまとめて 1 回（既存の仕組み）
+ */
+const tjaSync = { timer: 0, last: '', session: false, composing: false, status: '' };
+
+function setTjaStatus(text: string, bad = false) {
+  if (tjaSync.status === text) return;
+  tjaSync.status = text;
+  const el = document.getElementById('tjaStatus');
+  if (!el) return;
+  el.textContent = text;
+  el.classList.toggle('bad', bad);
 }
+
+function syncTja() {
+  clearTimeout(tjaSync.timer);
+  const ta = document.getElementById('tjaText') as HTMLTextAreaElement | null;
+  if (!ta || tjaSync.composing) return;
+  const text = ta.value;
+  if (text === tjaSync.last) return;
+  let chart;
+  try {
+    chart = parseTJA(text);
+  } catch (err) {
+    setTjaStatus(`読み込めません: ${err instanceof Error ? err.message : String(err)}`, true);
+    return;
+  }
+  if (!chart.courses.length) {
+    setTjaStatus('#START〜#END が見つかりません（反映していません）', true);
+    return;
+  }
+  tjaSync.last = text;
+  ed.replaceChart(chart, !tjaSync.session);
+  tjaSync.session = true;
+  setTjaStatus('反映済み');
+}
+
+$('sheetBody').addEventListener('input', (e) => {
+  if ((e.target as HTMLElement).id !== 'tjaText') return;
+  clearTimeout(tjaSync.timer);
+  setTjaStatus('入力中…');
+  tjaSync.timer = window.setTimeout(syncTja, 350);
+});
+$('sheetBody').addEventListener('compositionstart', () => { tjaSync.composing = true; });
+$('sheetBody').addEventListener('compositionend', () => {
+  tjaSync.composing = false;
+  clearTimeout(tjaSync.timer);
+  tjaSync.timer = window.setTimeout(syncTja, 350);
+});
 
 $('sheetBody').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest('button');
   if (!b) return;
   const d = b.dataset;
-  if (d.tja) void tjaAction(d.tja);
-  else if (d.act) void fileAction(d.act);
+  if (d.act) void fileAction(d.act);
   else if (d.course) ed.selectCourse(Number(d.course));
   else if (d.off) ed.mutate(() => { ed.chart.offset = Number((ed.chart.offset + Number(d.off)).toFixed(4)); });
   else if (d.ev) addEventAction(d.ev);
