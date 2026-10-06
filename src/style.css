@@ -593,22 +593,13 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 /* BPM・OFFSET の自動測定 */
 .tempo-progress { height: 8px; border-radius: 4px; background: #2a2930; overflow: hidden; }
 .tempo-progress i { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
-.tempo-table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
-.tempo-table th { text-align: left; color: var(--sub); font-weight: 600; font-size: 12px; padding: 4px 6px; }
-.tempo-table td { padding: 6px; border-top: 1px solid var(--line); vertical-align: middle; }
-.tempo-table small { display: block; color: var(--sub); font-size: 11px; }
-.tempo-bpm { font-weight: 800; font-size: 17px; }
-.tempo-mul { white-space: nowrap; }
-.tempo-mul button { padding: 4px 8px; font-size: 13px; margin-left: 4px; }
-.tempo-mul .tempo-play { color: #4fc3ff; }
 .note.bad { color: #ff8a7a; }
 
 .tempo-wave-wrap { display: flex; flex-direction: column; gap: 4px; }
-.tempo-wave { width: 100%; height: 140px; border-radius: 8px; border: 1px solid var(--line); touch-action: none; cursor: ew-resize; }
+.tempo-wave { width: 100%; height: 170px; border-radius: 8px; border: 1px solid var(--line); touch-action: none; cursor: ew-resize; }
 .tempo-wave-bar { display: flex; align-items: center; gap: 6px; }
 .tempo-wave-bar button { padding: 4px 10px; min-width: 36px; }
 .tempo-fine-label { color: var(--sub); font-size: 12px; margin-left: 4px; }
-.tempo-table tr[data-tgo] { cursor: pointer; }
 
 /* 2 段のメニュー（右のアイコンの少し左に出す項目の一覧） */
 .fly-menu { min-width: 180px; padding: 6px; }
@@ -618,5 +609,25 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .fly-menu h4 { margin: 6px 12px 2px; font-size: 11px; font-weight: 600; color: var(--sub); letter-spacing: 0.05em; }
 .fly-menu h4:first-child { margin-top: 2px; }
 .side .open { background: #26252c; }
-.tempo-table select { background: #26252c; color: #f4f4f4; border: 1px solid var(--line); border-radius: 8px; padding: 4px 6px; font-size: 13px; max-width: 120px; }
 .tempo-wave-bar button[disabled] { opacity: 0.4; }
+.tempo-wave-bar { flex-wrap: wrap; }
+/* 曲全体の帯と、選んだ区間の欄 */
+.tempo-tools { display: flex; align-items: center; gap: 6px; }
+.tempo-tools button { min-width: 40px; padding: 4px 10px; font-size: 17px; }
+.tempo-tools button[disabled] { opacity: 0.35; }
+.tempo-hint { flex: 1; color: var(--sub); font-size: 12px; line-height: 1.4; }
+.tempo-tag { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: #3a3020; color: var(--accent); white-space: nowrap; }
+.tempo-ov { width: 100%; height: 66px; border-radius: 10px; touch-action: none; cursor: pointer; display: block; }
+.tempo-ov-axis { display: flex; justify-content: space-between; color: var(--sub); font-size: 11px; font-variant-numeric: tabular-nums; margin-top: -6px; }
+.tempo-insp { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 18px; background: #26252c; border-radius: 12px; padding: 10px 12px; }
+.tempo-insp .k { display: block; font-size: 11px; color: var(--sub); margin-bottom: 4px; }
+.tempo-insp-pos b { display: block; font-size: 15px; }
+.tempo-insp-pos small { display: block; color: var(--sub); font-size: 12px; font-variant-numeric: tabular-nums; }
+.tempo-insp button { padding: 6px 10px; font-size: 14px; background: #34333b; }
+.tempo-insp .tempo-play { color: #4fc3ff; }
+.tempo-insp button.bad { color: #ff7a6a; }
+.tempo-insp button[disabled] { opacity: 0.35; }
+.tempo-insp select { background: #111114; color: #f4f4f4; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 14px; }
+.tempo-bpm-edit { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
+.tempo-bpm-edit button { min-width: 36px; font-size: 18px; padding: 4px 8px; }
+.tempo-bpm-edit input { width: 92px; height: 38px; font-size: 21px; font-weight: 800; text-align: center; background: #111114; color: #fff; border: 1px solid var(--accent); border-radius: 9px; font-variant-numeric: tabular-nums; }
