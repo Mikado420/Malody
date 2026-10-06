@@ -11,7 +11,7 @@
     <link rel="manifest" href="manifest.webmanifest" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=M+PLUS+Rounded+1c:wght@700;800;900&family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet" />
     <title>Malody Web Editor</title>
   </head>
   <body>
@@ -55,6 +55,7 @@
       <div id="divMenu" class="div-menu hidden" role="menu"></div>
       <div id="flyMenu" class="div-menu fly-menu hidden" role="menu"></div>
       <nav class="side">
+        <button id="btnHome" title="曲選択へ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v10H3z"/></svg></button>
         <button id="btnUndo" title="元に戻す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
         <button id="btnRedo" title="やり直し"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
         <!-- 2 段のメニュー: アイコンを押すと、左に項目の一覧が出る -->
@@ -65,6 +66,93 @@
         <button id="btnSettings" title="設定"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
         <button class="divbtn" id="btnDiv" title="グリッド（分割）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8v20H8z"/><path d="M8 6h4M8 10h5M8 14h4M8 18h5"/></svg><small id="divLabel">1/4</small></button>
       </nav>
+    </div>
+
+
+    <!-- 最初の画面（曲選択）: 左にロゴ、右にフォルダと曲の一覧、右下に試聴（src/home/home.ts） -->
+    <div id="home" class="home hidden">
+      <div class="home-bg" aria-hidden="true">
+        <svg class="hb-grid" viewBox="0 0 1600 900" preserveAspectRatio="xMidYMid slice">
+          <defs>
+            <radialGradient id="hbGlow" cx="0.3" cy="0.5" r="0.55">
+              <stop offset="0" stop-color="#0b5fc0" stop-opacity="0.38"/>
+              <stop offset="0.55" stop-color="#06305e" stop-opacity="0.18"/>
+              <stop offset="1" stop-color="#000" stop-opacity="0"/>
+            </radialGradient>
+            <pattern id="hbHex" width="56" height="97" patternUnits="userSpaceOnUse" patternTransform="scale(0.9)">
+              <path d="M28 0 56 16v32L28 64 0 48V16zM28 64v33" fill="none" stroke="#1e88ff" stroke-opacity="0.07" stroke-width="1"/>
+            </pattern>
+          </defs>
+          <rect width="1600" height="900" fill="url(#hbHex)"/>
+          <rect width="1600" height="900" fill="url(#hbGlow)"/>
+          <!-- 斜めの帯 -->
+          <path d="M-100 760 760 -40h120L20 760z" fill="#1e88ff" opacity="0.06"/>
+          <path d="M980 900 1600 260v90L1080 900z" fill="#fff" opacity="0.035"/>
+          <path d="M1180 900 1600 470v40l-380 390z" fill="#1e88ff" opacity="0.08"/>
+          <path d="M0 640h520l40 -40h1040" fill="none" stroke="#1e88ff" stroke-opacity="0.35" stroke-width="1.2"/>
+          <path d="M0 132h420l36 36h1144" fill="none" stroke="#fff" stroke-opacity="0.12" stroke-width="1"/>
+          <circle cx="456" cy="168" r="4" fill="#fff" opacity="0.5"/>
+          <circle cx="560" cy="600" r="4" fill="#1e88ff" opacity="0.9"/>
+        </svg>
+        <svg class="hb-rings" viewBox="0 0 600 600" aria-hidden="true">
+          <circle cx="300" cy="300" r="290" fill="none" stroke="#1e88ff" stroke-opacity="0.18" stroke-width="1"/>
+          <g class="hb-spin1"><circle cx="300" cy="300" r="262" fill="none" stroke="#1e88ff" stroke-opacity="0.45" stroke-width="6" stroke-dasharray="120 40 30 60 200 90" /></g>
+          <g class="hb-spin2"><circle cx="300" cy="300" r="236" fill="none" stroke="#fff" stroke-opacity="0.25" stroke-width="1.5" stroke-dasharray="4 10" /></g>
+          <g class="hb-spin3"><circle cx="300" cy="300" r="212" fill="none" stroke="#fff" stroke-opacity="0.55" stroke-width="3" stroke-dasharray="260 70 40 70 300 80" /></g>
+          <circle cx="300" cy="300" r="190" fill="none" stroke="#1e88ff" stroke-opacity="0.25" stroke-width="1"/>
+        </svg>
+      </div>
+
+      <header class="home-top">
+        <div class="home-tools">
+          <button data-h="import" title="読み込み（.tja / .zip）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 4H5v16h5"/><path d="M9 12h11"/><path d="m16 8 4 4-4 4"/></svg></button>
+          <button data-h="settings" title="設定"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
+          <button data-h="new" title="新しい譜面"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v16M4 12h16"/></svg></button>
+        </div>
+        <div class="home-tab"><span>SONG SELECT</span><b>曲</b></div>
+        <div class="home-tools right">
+          <button data-h="folder" title="フォルダを作る"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v10H3z"/><path d="M12 11v5M9.5 13.5h5"/></svg></button>
+          <button data-h="sort" title="並べ替え"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h11M4 17h6"/></svg><small id="homeSort">更新順</small></button>
+          <button data-h="search" title="検索"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6"/><path d="m15 15 5 5"/></svg></button>
+        </div>
+      </header>
+
+      <section class="home-left">
+        <div class="home-emblem">
+          <svg viewBox="0 0 200 200" aria-hidden="true">
+            <defs>
+              <filter id="heGlowW" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            </defs>
+            <polygon points="100,14 174,57 174,143 100,186 26,143 26,57" fill="none" stroke="#1e88ff" stroke-width="2" opacity="0.6"/>
+            <polygon points="100,30 160,65 160,135 100,170 40,135 40,65" fill="#05101e" stroke="#fff" stroke-opacity="0.25" stroke-width="1"/>
+            <g filter="url(#heGlowW)">
+              <circle cx="100" cy="100" r="44" fill="none" stroke="#fff" stroke-width="9"/>
+              <path d="M100 56a44 44 0 0 1 44 44" fill="none" stroke="#1e88ff" stroke-width="9"/>
+              <circle cx="100" cy="100" r="20" fill="#1e88ff"/>
+              <circle cx="100" cy="100" r="9" fill="#fff"/>
+            </g>
+          </svg>
+        </div>
+        <div class="home-word"><span class="w">MALODY</span><span class="b">WEB</span></div>
+        <div class="home-word-line"><i></i><i></i></div>
+        <div class="home-side">
+          <button data-h="root" title="フォルダの一覧"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v10H3z"/></svg></button>
+          <button data-h="recent" title="最近の曲"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/></svg></button>
+        </div>
+        <div class="home-info"><span>SONGS</span><b id="homeCount">0</b></div>
+      </section>
+
+      <section class="home-list-wrap">
+        <div class="home-path"><i></i><span id="homePath">すべてのフォルダ</span></div>
+        <div id="homeSearch" class="home-search hidden"><input id="homeQuery" type="search" placeholder="曲名・アーティストで探す" autocomplete="off"></div>
+        <div id="homeList" class="home-list"></div>
+      </section>
+
+      <footer class="home-player">
+        <button data-h="prev" aria-label="前の曲"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M19 5 9 12l10 7z"/></svg></button>
+        <button data-h="pp" aria-label="試聴"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg></button>
+        <button data-h="next" aria-label="次の曲"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M5 5l10 7-10 7z"/></svg></button>
+      </footer>
     </div>
 
     <div id="sheet" class="sheet hidden">

@@ -1,6 +1,6 @@
 import './style.css';
 import { AudioEngine, type HitSound } from './audio/audio';
-import { COURSE_NAMES, contentEnd, newChart, sortCourse, toPlayable, TPB, type ECourse, type EEvent } from './chart/model';
+import { COURSE_NAMES, contentEnd, newChart, sortCourse, toPlayable, TPB, type EChart, type ECourse, type EEvent } from './chart/model';
 import { parseTJA } from './chart/tja';
 import { writeTJA } from './chart/tjaWrite';
 import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
@@ -15,7 +15,9 @@ import { writeCourseBody } from './chart/tjaWrite';
 import { DIVISORS, Editor, type Tool } from './editor/editor';
 import { EditorView, eventText, EVENT_COLOR, type EventItem, type EventShow } from './editor/view';
 import { loadFiles, type AudioFile } from './io/load';
-import { loadAudio, loadChart, loadHitSound, saveAudio, saveChart, saveHitSound } from './io/storage';
+import { loadAudio, loadChart, loadHitSound, saveHitSound } from './io/storage';
+import { getCurrentId, listSongs, loadSongAudio, loadSongData, newId, saveSong, setCurrentId } from './io/library';
+import { Home } from './home/home';
 import { writeZip } from './io/zip';
 import { PlayMode } from './play/playmode';
 import { fitRoot, localPoint } from './orient';
@@ -137,7 +139,7 @@ async function setAudio(file: AudioFile | null, save = true) {
     await audio.loadMusic(null);
     toast(`「${file?.name}」はこのブラウザで再生できません（mp3 / m4a なら再生できます）`);
   }
-  if (save) void saveAudio(file);
+  if (save) void persist(file);
   view.setWave(...computePeaks());
   view.duration = audio.musicDuration;
   updateHeader();
@@ -513,14 +515,21 @@ view.onTap = (tick) => {
 let gradEdit: { grad: Grad; old?: Grad } | null = null;
 
 let saveTimer = 0;
+/** 開いている曲（ライブラリの id） */
+let currentSongId: string | null = null;
+/** 開いている曲を保存する（audio を渡したときは音源も） */
+async function persist(audioFile?: AudioFile | null) {
+  clearTimeout(saveTimer);
+  // 曲を開いていないとき（曲選択の画面だけのとき）は保存しない
+  if (!currentSongId) return;
+  await saveSong(currentSongId, { chart: ed.chart, courseIndex: ed.courseIndex }, audioFile, audio.buffer ? audio.musicDuration : 0);
+}
 ed.onChange((structural) => {
   view.invalidate();
   updateHeader();
   if (structural) {
     clearTimeout(saveTimer);
-    saveTimer = window.setTimeout(() => {
-      void saveChart({ chart: ed.chart, courseIndex: ed.courseIndex, savedAt: Date.now() });
-    }, 600);
+    saveTimer = window.setTimeout(() => void persist(), 600);
     refreshSheet();
   }
 });
@@ -535,7 +544,7 @@ const KEY_TOOLS: Record<string, Tool> = {
 window.addEventListener('keydown', (e) => {
   const t = e.target;
   if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement) return;
-  if (play.isActive || !$('sheet').classList.contains('hidden')) return;
+  if (play.isActive || !$('sheet').classList.contains('hidden') || !$('home').classList.contains('hidden')) return;
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? ed.redo() : ed.undo(); return; }
   if (mod && e.code === 'KeyY') { e.preventDefault(); ed.redo(); return; }
@@ -937,11 +946,15 @@ fileOpen.addEventListener('change', async () => {
   try {
     const r = await loadFiles(files);
     if (r.chart) {
-      ed.load(r.chart, null);
-      view.pos = 0;
-      await setAudio(r.audio);
-      void saveChart({ chart: ed.chart, courseIndex: ed.courseIndex, savedAt: Date.now() });
+      // 読み込んだ譜面は、新しい曲として一覧に入れる
+      const id = newId();
+      await saveSong(id, { chart: r.chart, courseIndex: 0 }, r.audio, r.audio ? await audioLength(r.audio) : 0, home.visible ? home.currentFolder : undefined);
+      if (home.visible) await home.select(id);
+      else await openSong(id, 'edit');
       closeSheet();
+    } else if (r.audio && home.visible) {
+      toast('曲選択の画面では .tja / .zip を読み込んでください（音源だけは、編集の画面で読み込めます）');
+      return;
     } else if (r.audio) {
       await applyAudioOnly(r.audio);
       closeSheet();
@@ -987,17 +1000,11 @@ async function fileAction(act: string) {
   else if (act === 'audio') fileAudio.click();
   else if (act === 'tempo') startTempo();
   else if (act === 'new') {
-    if (!confirm('新しい譜面を作りますか？（今の譜面はファイル保存していなければ消えます）')) return;
-    ed.load(newChart(), null, 0);
-    view.pos = 0;
-    await setAudio(null);
+    await createSong(newChart());
     closeSheet();
     toast('「読み込み・書き出し → 音源を読み込む」で曲を設定してください');
   } else if (act === 'sample') {
-    if (!confirm('サンプル譜面を開きますか？（今の譜面は置き換わります）')) return;
-    ed.load(parseTJA(DEMO_TJA), null);
-    view.pos = 0;
-    await setAudio(null);
+    await createSong(parseTJA(DEMO_TJA));
     closeSheet();
   } else if (act === 'saveTja') {
     download(new Blob(['﻿' + writeTJA(ed.chart)], { type: 'text/plain' }), `${safeName(ed.chart.title)}.tja`);
@@ -1171,17 +1178,76 @@ async function boot() {
     const f = (await loadHitSound(k)) ?? (await siteHitSound(k));
     if (f) await applyHitSound(k, f, false);
   }
-  const saved = await loadChart();
-  if (saved?.chart?.courses?.length) {
-    ed.load(saved.chart, null, saved.courseIndex);
-    await setAudio(await loadAudio(), false);
-  } else {
-    ed.load(parseTJA(DEMO_TJA), null);
-    toast('サンプル譜面を開きました。右の ⇅（読み込み・書き出し）から .tja / .zip を開けます');
+  // 前の版で 1 曲だけ保存していた譜面は、曲の一覧に移す。一覧が空ならサンプル譜面を入れておく
+  if (!(await listSongs()).length) {
+    const saved = await loadChart();
+    const id = newId();
+    if (saved?.chart?.courses?.length) {
+      const a = await loadAudio();
+      await saveSong(id, { chart: saved.chart, courseIndex: saved.courseIndex }, a, a ? await audioLength(a) : 0);
+    } else await saveSong(id, { chart: parseTJA(DEMO_TJA), courseIndex: 0 }, null, 0);
+    await setCurrentId(id);
   }
+  ed.load(newChart(), null, 0);
   view.pos = 0;
   updateHeader();
+  await home.show(await getCurrentId());
 }
+
+/** 音源の長さ（秒）。再生できない形式なら 0 */
+function audioLength(a: AudioFile): Promise<number> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(new Blob([a.data]));
+    const el = new Audio();
+    const done = (v: number) => { URL.revokeObjectURL(url); resolve(Number.isFinite(v) ? v : 0); };
+    el.preload = 'metadata';
+    el.onloadedmetadata = () => done(el.duration);
+    el.onerror = () => done(0);
+    setTimeout(() => done(0), 4000);
+    el.src = url;
+  });
+}
+
+/** 一覧の曲をエディタで開く（play ならそのままテストプレイ） */
+async function openSong(id: string, mode: 'edit' | 'play') {
+  const data = await loadSongData(id);
+  if (!data?.chart?.courses) { toast('この曲を開けませんでした'); return; }
+  clearTimeout(saveTimer);
+  stopPlayback();
+  currentSongId = id;
+  void setCurrentId(id);
+  ed.load(data.chart, null, data.courseIndex);
+  view.pos = 0;
+  await setAudio(await loadSongAudio(id), false);
+  // 長さが分からなかった曲は、開いたときに覚える
+  if (audio.buffer) void persist();
+  home.hide();
+  updateHeader();
+  if (mode === 'play') void startTest(true);
+}
+
+/** 新しい曲を一覧に作って開く */
+async function createSong(chart: EChart, folder = '') {
+  const id = newId();
+  await saveSong(id, { chart, courseIndex: 0 }, null, 0, folder);
+  await openSong(id, 'edit');
+  toast('「⇅ → 音源を読み込む」で曲を設定してください');
+}
+
+const home = new Home({
+  open: openSong,
+  importFiles: () => fileOpen.click(),
+  create: (folder) => createSong(newChart(), folder),
+  settings: () => openSheet('settings'),
+  toast,
+});
+
+$('btnHome').addEventListener('click', async () => {
+  closeFlyMenu();
+  stopPlayback();
+  await persist();
+  await home.show(currentSongId);
+});
 void boot();
 
 // 動作確認用（URL に ?debug を付けたときだけ）
@@ -1192,8 +1258,7 @@ if (new URLSearchParams(location.search).has('debug')) {
 startAutoUpdate({
   canReload: () => !play.isActive && !playing,
   beforeReload: async () => {
-    clearTimeout(saveTimer);
-    await saveChart({ chart: ed.chart, courseIndex: ed.courseIndex, savedAt: Date.now() });
+    if (currentSongId) await persist();
   },
   notify: toast,
 });

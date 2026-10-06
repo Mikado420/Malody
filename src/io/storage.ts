@@ -19,7 +19,7 @@ function open(): Promise<IDBDatabase> {
   });
 }
 
-async function put(key: string, value: unknown) {
+export async function dbPut(key: string, value: unknown) {
   try {
     const db = await open();
     await new Promise<void>((resolve, reject) => {
@@ -34,7 +34,7 @@ async function put(key: string, value: unknown) {
   }
 }
 
-async function get<T>(key: string): Promise<T | null> {
+export async function dbGet<T>(key: string): Promise<T | null> {
   try {
     const db = await open();
     const v = await new Promise<T | null>((resolve, reject) => {
@@ -49,17 +49,32 @@ async function get<T>(key: string): Promise<T | null> {
   }
 }
 
+export async function dbDel(key: string) {
+  try {
+    const db = await open();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  } catch {
+    /* 保存できない環境 */
+  }
+}
+
 export interface SavedChart {
   chart: EChart;
   courseIndex: number;
   savedAt: number;
 }
 
-export const saveChart = (v: SavedChart) => put('chart', v);
-export const saveAudio = (v: AudioFile | null) => put('audio', v);
-export const loadChart = () => get<SavedChart>('chart');
-export const loadAudio = () => get<AudioFile>('audio');
+export const saveChart = (v: SavedChart) => dbPut('chart', v);
+export const saveAudio = (v: AudioFile | null) => dbPut('audio', v);
+export const loadChart = () => dbGet<SavedChart>('chart');
+export const loadAudio = () => dbGet<AudioFile>('audio');
 
 /** 自分で読み込んだ打音（ドン / カッ） */
-export const saveHitSound = (kind: 'don' | 'ka' | 'balloon', v: AudioFile | null) => put(`hit-${kind}`, v);
-export const loadHitSound = (kind: 'don' | 'ka' | 'balloon') => get<AudioFile>(`hit-${kind}`);
+export const saveHitSound = (kind: 'don' | 'ka' | 'balloon', v: AudioFile | null) => dbPut(`hit-${kind}`, v);
+export const loadHitSound = (kind: 'don' | 'ka' | 'balloon') => dbGet<AudioFile>(`hit-${kind}`);
