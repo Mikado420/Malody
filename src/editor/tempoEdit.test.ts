@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { planTimeAt, type TempoPlan } from '../audio/tempo';
-import { moveBoundary, removeSection, sections, setBpm, setMeter, shiftDownbeat, splitAt } from './tempoEdit';
+import { moveBoundary, removeSection, sections, setBpm, setEnd, setMeter, setStart, shiftDownbeat, splitAt } from './tempoEdit';
 
 const TPB = 48;
 const base = (): TempoPlan => ({ bpm: 120, offset: -1, changes: [{ tick: 16 * TPB, bpm: 150 }, { tick: 32 * TPB, bpm: 180 }], measures: [] });
@@ -52,5 +52,23 @@ describe('測ったテンポの手直し', () => {
   it('区間の拍子を変えると、区間の後ろは前の拍子に戻る', () => {
     const q = setMeter(base(), 1, { num: 3, den: 4 });
     expect(q.measures).toEqual([{ tick: 16 * TPB, num: 3, den: 4 }, { tick: 32 * TPB, num: 4, den: 4 }]);
+  });
+});
+
+describe('区間の始まり・終わりを決める', () => {
+  it('終わりを後ろの区間の先まで動かすと、またいだ区間は消えて伸びる', () => {
+    const p = base();
+    const q = setEnd(p, TPB, 0, 20 * TPB);
+    expect(q.changes[0].tick).toBe(20 * TPB);
+    expect(q.changes.length).toBe(2);
+    const r = setEnd(p, TPB, 0, 36 * TPB);
+    expect(r.changes.length).toBe(1);
+    expect(r.changes[0]).toEqual({ tick: 36 * TPB, bpm: 180 });
+  });
+  it('始まりを前の区間の先まで動かすと、またいだ区間は消えて前に伸びる', () => {
+    const p = base();
+    const q = setStart(p, TPB, 2, 8 * TPB);
+    expect(q.changes.length).toBe(1);
+    expect(q.changes[0]).toEqual({ tick: 8 * TPB, bpm: 180 });
   });
 });

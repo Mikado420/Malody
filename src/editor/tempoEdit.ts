@@ -190,6 +190,58 @@ export function removeSection(p0: TempoPlan, tpb: number, i: number): TempoPlan 
   return tidy(p);
 }
 
+/** 区間 j を消して、次の区間を区間 j の頭まで前に伸ばす（次の区間の終わりの時刻は変えない） */
+export function mergeIntoNext(p0: TempoPlan, tpb: number, j: number): TempoPlan | null {
+  const secs = sections(p0);
+  const cur = secs[j];
+  const next = secs[j + 1];
+  if (!cur || !next) return null;
+  if (j === 0) return removeSection(p0, tpb, 0);
+  const p = clone(p0);
+  if (next.e !== Infinity) {
+    const D = planTimeAt(p0, tpb, next.e) - planTimeAt(p0, tpb, cur.s);
+    const newLen = quantBeats((D * next.bpm) / 60);
+    shiftFrom(p, next.e, Math.round(cur.s + newLen * tpb) - next.e);
+  }
+  p.changes[j - 1].bpm = next.bpm;
+  p.changes.splice(j, 1);
+  return tidy(p);
+}
+
+/**
+ * 区間 i の始まりを toTick にする（前の区間の拍に合わせる）。前の区間をまたいだら、またいだ区間は消えて区間 i に入る。
+ * 最初の区間の始まりは動かせない（1 拍目で動かす）
+ */
+export function setStart(p0: TempoPlan, tpb: number, i: number, toTick: number): TempoPlan {
+  if (i < 1) return p0;
+  let p = p0;
+  let k = i;
+  // またいだ前の区間を、区間 i に入れる（最初の区間は残す）
+  while (k > 1 && toTick <= sections(p)[k - 1].s) {
+    const q = mergeIntoNext(p, tpb, k - 1);
+    if (!q) break;
+    p = q;
+    k--;
+  }
+  return moveBoundary(p, tpb, k, toTick);
+}
+
+/** 区間 i の終わりを toTick にする（どこまでをこの BPM にするか）。後ろの区間をまたいだら、またいだ区間は消えて区間 i に入る */
+export function setEnd(p0: TempoPlan, tpb: number, i: number, toTick: number): TempoPlan {
+  let p = p0;
+  let secs = sections(p);
+  if (!secs[i + 1]) return p0;
+  // またいだ後ろの区間を、区間 i に入れる
+  while (secs[i + 2] && toTick >= secs[i + 2].s) {
+    const q = removeSection(p, tpb, i + 1);
+    if (!q) break;
+    p = q;
+    secs = sections(p);
+  }
+  if (!secs[i + 1]) return p;
+  return moveBoundary(p, tpb, i + 1, toTick);
+}
+
 /** 1 拍目（tick 0）を最初の区間の n 拍ぶん動かす。音源に対する拍の位置は変えない */
 export function shiftDownbeat(p0: TempoPlan, tpb: number, n: number): TempoPlan {
   const p = clone(p0);

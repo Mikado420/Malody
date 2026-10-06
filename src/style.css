@@ -611,23 +611,53 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .side .open { background: #26252c; }
 .tempo-wave-bar button[disabled] { opacity: 0.4; }
 .tempo-wave-bar { flex-wrap: wrap; }
-/* 曲全体の帯と、選んだ区間の欄 */
-.tempo-tools { display: flex; align-items: center; gap: 6px; }
-.tempo-tools button { min-width: 40px; padding: 4px 10px; font-size: 17px; }
-.tempo-tools button[disabled] { opacity: 0.35; }
-.tempo-hint { flex: 1; color: var(--sub); font-size: 12px; line-height: 1.4; }
+/* BPM・OFFSET の画面（画面いっぱい。上から: 操作のボタン・曲全体の帯・区間のボタン・拡大した波形・操作の行） */
+.sheet.tempo { align-items: stretch; }
+.sheet.tempo .sheet-panel { width: 100%; max-height: none; height: 100%; border-radius: 0; padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l); }
+.sheet.tempo .sheet-head { display: none; }
+.sheet.tempo .sheet-body { flex: 1; min-height: 0; padding: 8px 12px 10px; gap: 6px; overflow-y: auto; }
+.tempo-top { display: flex; align-items: center; gap: 6px; flex: none; }
+.tempo-title { font-size: 16px; margin-right: 6px; }
+.tempo-sp { flex: 1; }
+.tempo-top button { padding: 6px 14px; min-width: 42px; }
+.tempo-top button[disabled] { opacity: 0.35; }
 .tempo-tag { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: #3a3020; color: var(--accent); white-space: nowrap; }
-.tempo-ov { width: 100%; height: 66px; border-radius: 10px; touch-action: none; cursor: pointer; display: block; }
-.tempo-ov-axis { display: flex; justify-content: space-between; color: var(--sub); font-size: 11px; font-variant-numeric: tabular-nums; margin-top: -6px; }
-.tempo-insp { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 18px; background: #26252c; border-radius: 12px; padding: 10px 12px; }
-.tempo-insp .k { display: block; font-size: 11px; color: var(--sub); margin-bottom: 4px; }
-.tempo-insp-pos b { display: block; font-size: 15px; }
-.tempo-insp-pos small { display: block; color: var(--sub); font-size: 12px; font-variant-numeric: tabular-nums; }
-.tempo-insp button { padding: 6px 10px; font-size: 14px; background: #34333b; }
-.tempo-insp .tempo-play { color: #4fc3ff; }
-.tempo-insp button.bad { color: #ff7a6a; }
-.tempo-insp button[disabled] { opacity: 0.35; }
+.tempo-ov { width: 100%; height: 56px; border-radius: 10px; touch-action: none; cursor: pointer; display: block; flex: none; }
+.tempo-chips { display: flex; align-items: center; gap: 6px; flex: none; }
+.tempo-chips > button { padding: 6px 10px; flex: none; }
+.tempo-chip-list { flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
+.tempo-chip-list::-webkit-scrollbar { display: none; }
+.tempo-chip-list button { flex: none; display: flex; flex-direction: column; align-items: center; padding: 3px 9px 4px; min-width: 52px; font-weight: 800; font-size: 15px; line-height: 1.1; background: #26252c; border-left: 4px solid var(--c); }
+.tempo-chip-list button small { font-weight: 500; font-size: 10px; color: var(--sub); }
+.tempo-chip-list button.on { background: #3a2f1c; color: var(--accent); outline: 2px solid var(--accent); outline-offset: -2px; }
+.sheet.tempo .tempo-wave-wrap { flex: 1; min-height: 110px; display: flex; }
+.sheet.tempo .tempo-wave { flex: 1; height: auto; min-height: 110px; }
+.tempo-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 5px; flex: none; }
+.tempo-row button { padding: 6px 9px; min-width: 34px; font-size: 14px; background: #2c2b33; }
+.tempo-row button[disabled] { opacity: 0.35; }
+.tempo-row button.primary { background: var(--accent); }
+.tempo-row .tempo-play { color: #4fc3ff; }
+.tempo-row button.bad { color: #ff7a6a; }
+.tempo-sep { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
+.tempo-lbl { color: var(--sub); font-size: 12px; margin: 0 2px 0 4px; white-space: nowrap; }
+.tempo-val { min-width: 72px; text-align: center; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tempo-grp { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 2px; border-radius: 10px; background: #232228; }
+.tempo-insp { background: #1f1e24; border-radius: 12px; padding: 6px 8px; }
 .tempo-insp select { background: #111114; color: #f4f4f4; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 14px; }
-.tempo-bpm-edit { display: inline-flex; align-items: center; gap: 4px; margin-right: 6px; }
-.tempo-bpm-edit button { min-width: 36px; font-size: 18px; padding: 4px 8px; }
-.tempo-bpm-edit input { width: 92px; height: 38px; font-size: 21px; font-weight: 800; text-align: center; background: #111114; color: #fff; border: 1px solid var(--accent); border-radius: 9px; font-variant-numeric: tabular-nums; }
+.tempo-insp input { width: 84px; height: 36px; font-size: 20px; font-weight: 800; text-align: center; background: #111114; color: #fff; border: 1px solid var(--accent); border-radius: 9px; font-variant-numeric: tabular-nums; }
+/* 背の低い画面（スマホの横向きなど）では、帯やボタンを小さくしてスクロールを減らす */
+@media (max-height: 520px) {
+  .sheet.tempo .sheet-body { gap: 4px; padding: 4px 10px 6px; }
+  .tempo-top button { padding: 3px 10px; }
+  .tempo-title { font-size: 14px; }
+  .tempo-ov { height: 36px; }
+  .tempo-chip-list button { padding: 1px 7px 2px; min-width: 44px; font-size: 13px; }
+  .tempo-chips > button { padding: 3px 8px; }
+  .sheet.tempo .tempo-wave-wrap, .sheet.tempo .tempo-wave { min-height: 70px; }
+  .tempo-row button { padding: 3px 7px; font-size: 13px; }
+  .tempo-insp { padding: 3px 6px; }
+  .tempo-grp { padding: 1px 4px 1px 1px; }
+  .tempo-insp input { height: 28px; width: 70px; font-size: 16px; }
+  .tempo-insp select { padding: 3px 6px; }
+  .tempo-val { min-width: 60px; font-size: 13px; }
+}

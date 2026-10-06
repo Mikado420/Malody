@@ -8,7 +8,7 @@ import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { buildAutoEvents, type AutoEvent } from './play/auto';
 import { analyzeTempo, computeMeters, planBars, planBeatTimes, planTimeAt, tempoPlan, type Meter, type TempoOptions, type TempoPlan, type TempoResult } from './audio/tempo';
-import { meterAt as meterAtTick, moveBoundary, nudge, removeSection, sectionAtTime, sections as editSections, setBpm, setMeter, shiftDownbeat, splitAt } from './editor/tempoEdit';
+import { meterAt as meterAtTick, moveBoundary, nudge, removeSection, sectionAtTime, sections as editSections, setBpm, setEnd, setMeter, setStart, shiftDownbeat, splitAt, tickAtTime } from './editor/tempoEdit';
 import { applyGrad, gradValid, type Grad } from './editor/grad';
 import { writeCourseBody } from './chart/tjaWrite';
 
@@ -571,6 +571,8 @@ function openSheet(kind: SheetKind) {
   $('sheet').classList.toggle('tja', kind === 'events');
   // グラデの設定は縦いっぱい・横広めで、左に設定、右に .tja の書き方
   $('sheet').classList.toggle('grad', kind === 'grad');
+  // BPM・OFFSET の画面は画面いっぱい
+  $('sheet').classList.toggle('tempo', kind === 'tempo');
   document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
   if (kind === 'events') requestAnimationFrame(showTjaDiag);
@@ -1449,8 +1451,10 @@ const tempoState: {
   fine: number;
   /** 波形の表示: 真ん中の時刻と、表示する長さ（秒） */
   viewAt: number; span: number;
-  /** 手で決めた 1 拍目（秒）と、波形をタップして置くモード */
-  anchors: number[]; anchorMode: boolean;
+  /** 測り直すときに小節の頭にする時刻（秒） */
+  anchors: number[];
+  /** 波形をタップして置くカーソル（秒、拍の位置。-1 は無し） */
+  cursor: number;
   /** 区間ごとに手で決めた拍子（null は自動） */
   meterSel: (Meter | null)[];
   /** 手で直した案（区間を分ける・動かす・消す・BPM を書き換えたら、ここに測った案を写して直していく。null は測ったまま） */
@@ -1461,7 +1465,7 @@ const tempoState: {
   sel: number;
 } = {
   running: false, progress: 0, result: null, error: '', mul: [], shift: 0, fine: 0, viewAt: 0, span: 2,
-  anchors: [], anchorMode: false, meterSel: [], plan: null, undo: [], redo: [], sel: 0,
+  anchors: [], cursor: -1, meterSel: [], plan: null, undo: [], redo: [], sel: 0,
 };
 
 /** 今の案（手で直していればその案、まだなら測った結果から作る） */
@@ -1559,8 +1563,8 @@ function startTempo(again = false) {
     for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels;
   }
   // 測り直し（again）のときは、手で決めた 1 拍目・拍子・表示の位置をそのまま使う
-  const keep = again ? { viewAt: tempoState.viewAt, span: tempoState.span } : { viewAt: -1, span: 2, anchors: [], meterSel: [], anchorMode: false };
-  Object.assign(tempoState, { running: true, progress: 0, result: null, error: '', mul: [], shift: 0, fine: 0, plan: null, undo: [], redo: [], sel: 0, ...keep });
+  const keep = again ? { viewAt: tempoState.viewAt, span: tempoState.span } : { viewAt: -1, span: 2, anchors: [], meterSel: [] };
+  Object.assign(tempoState, { running: true, progress: 0, result: null, error: '', mul: [], shift: 0, fine: 0, plan: null, undo: [], redo: [], sel: 0, cursor: -1, ...keep });
   const opts: TempoOptions = { anchors: [...tempoState.anchors], meters: [...tempoState.meterSel] };
   if (again) renderSheet();
   else openSheet('tempo');
@@ -1643,107 +1647,112 @@ function tempoBarLabel(p: TempoPlan, tick: number) {
 /** 波形のダブルタップを見分けるための、前のタップ（描き直しても消えないように外に置く） */
 let tempoLastTap = { at: 0, t: 0 };
 
+/** その時刻にいちばん近い拍の時刻 */
+function nearestBeat(p: TempoPlan, t: number): number {
+  const tick = tickAtTime(p, TPB, t);
+  const sec = editSections(p)[sectionAtTime(p, TPB, t)];
+  return planTimeAt(p, TPB, sec.s + Math.round((tick - sec.s) / TPB) * TPB);
+}
+
+/** その tick の小節の長さ（拍） */
+const barBeatsAt = (p: TempoPlan, tick: number) => { const m = meterAtTick(p, Math.max(0, tick)); return (m.num * 4) / m.den; };
+
 function renderTempoSheet(body: HTMLElement) {
-  $('sheetTitle').textContent = 'BPM・OFFSET の自動測定';
+  $('sheetTitle').textContent = 'BPM・OFFSET';
   const st = tempoState;
-  if (st.running) {
-    body.innerHTML = `<p class="note">曲全体を調べています…</p><div class="tempo-progress"><i id="tempoBar" style="width:${Math.round(st.progress * 100)}%"></i></div>`;
-    return;
-  }
-  if (st.error || !st.result) {
-    body.innerHTML = `<p class="note">測れませんでした: ${st.error}</p>`;
+  const top = (inner: string) => `<div class="tempo-top"><b class="tempo-title">BPM・OFFSET</b>${inner}</div>`;
+  const bindCancel = () => body.querySelectorAll<HTMLButtonElement>('[data-tact]').forEach((b) => b.addEventListener('click', () => {
+    if (b.dataset.tact === 'ok') {
+      const p = curTempoPlan()!;
+      ed.applyTempo(p);
+      toast(`BPM ${p.bpm}・OFFSET ${p.offset.toFixed(3)} を入れました`);
+    }
+    closeSheet();
+  }));
+  if (st.running || st.error || !st.result || !curTempoPlan()) {
+    const msg = st.running ? '曲全体を調べています…' : st.error ? `測れませんでした: ${st.error}` : '拍が見つかりませんでした';
+    body.innerHTML = `${top('<span class="tempo-sp"></span><button data-tact="cancel">閉じる</button>')}
+      <p class="note">${msg}</p>${st.running ? `<div class="tempo-progress"><i id="tempoBar" style="width:${Math.round(st.progress * 100)}%"></i></div>` : ''}`;
+    bindCancel();
     return;
   }
   const r = st.result;
-  const plan0 = curTempoPlan();
-  if (!plan0) {
-    body.innerHTML = '<p class="note">拍が見つかりませんでした</p>';
-    return;
-  }
+  const plan0 = curTempoPlan()!;
   // 波形の最初の表示: 最初の 1 拍目のあたり
   if (st.viewAt < 0) st.viewAt = Math.max(0, -plan0.offset + st.span * 0.3);
   const secs = editSections(plan0);
   st.sel = Math.max(0, Math.min(secs.length - 1, st.sel));
   const raw = tempoRaw();
-  const weak = raw && r.segments.some((s) => s.matched / Math.max(1, s.beats) < 0.6 || s.jitterMs > 8);
-  const hasNotes = ed.chart.courses.some((c) => c.notes.length);
   const sec = secs[st.sel];
-  const tS = st.sel === 0 ? 0 : Math.max(0, planTimeAt(plan0, TPB, sec.s));
-  const tE = sec.e === Infinity ? r.duration : planTimeAt(plan0, TPB, sec.e);
-  const seg = raw ? r.segments[st.sel] : null;
-  const rate = seg ? Math.round((seg.matched / Math.max(1, seg.beats)) * 100) : -1;
+  const fmtB = (b: number) => String(Number(b.toFixed(3)));
   const meterSel = raw
     ? `<select data-tmeter aria-label="拍子">${meterOptions(r.meterAuto?.[st.sel], st.meterSel[st.sel] ?? null)}</select>`
     : `<select data-tmeter aria-label="拍子">${meterOptions(undefined, meterAtTick(plan0, Math.max(0, sec.s)), false)}</select>`;
+  const chips = secs.map((s, i) => `<button data-tsec="${i}" class="${i === st.sel ? 'on' : ''}" style="--c:${tempoColor(s.bpm)}"><small>${s.s < 0 || i === 0 ? '頭' : tempoBarLabel(plan0, s.s).replace('小節 ', '').replace(' 拍 ', '.')}</small>${fmtB(s.bpm)}</button>`).join('');
+  const fineMs = Math.round(st.fine * 1000);
+  const firstBar = (() => {
+    // 音源の頭以降で最初の小節の頭（この拍から測り直す所）
+    const bars = planBars(plan0, TPB, Math.max(0, ...plan0.changes.map((c) => c.tick)) + 64 * TPB);
+    for (const b of bars) { const t = planTimeAt(plan0, TPB, b.tick); if (t >= -0.02) return { t: Math.max(0, t), n: b.n }; }
+    return { t: 0, n: 1 };
+  })();
   body.innerHTML = `
-    <div class="tempo-tools">
-      <button data-tundo aria-label="元に戻す" ${st.undo.length ? '' : 'disabled'}>↶</button>
+    ${top(`<button data-tundo aria-label="元に戻す" ${st.undo.length ? '' : 'disabled'}>↶</button>
       <button data-tredo aria-label="やり直す" ${st.redo.length ? '' : 'disabled'}>↷</button>
-      <span class="tempo-hint">帯をタップで区間を選ぶ・境目をドラッグで動かす・波形をダブルタップでそこから新しい BPM</span>
       ${st.plan ? '<span class="tempo-tag">手で直した案</span>' : ''}
-    </div>
+      <span class="tempo-sp"></span>
+      <button data-tact="cancel">やめる</button><button data-tact="ok" class="primary">入れる</button>`)}
     <canvas id="tempoOverview" class="tempo-ov"></canvas>
-    <div class="tempo-ov-axis"><span>0:00</span><span>${fmtSec(r.duration / 2)}</span><span>${fmtSec(r.duration)}</span></div>
-    ${weak ? '<p class="note bad">合い方が弱い区間があります。下の波形で拍の線と音を見比べてください。</p>' : ''}
-    <div class="tempo-wave-wrap">
-      <canvas id="tempoWave" class="tempo-wave"></canvas>
-      <div class="tempo-wave-bar">
-        <button data-tview="-1" aria-label="前へ">◀</button>
-        <button data-tzoom="0.5" aria-label="拡大">＋</button>
-        <button data-tzoom="2" aria-label="縮小">－</button>
-        <button data-tview="1" aria-label="後ろへ">▶</button>
-        <button data-tplayhere class="tempo-play">${tempoPreview.row === -2 ? '■ 停止' : '▶ ここから再生'}</button>
-        <span class="tempo-fine-label">${st.anchorMode ? 'タップで 1 拍目を置く・消す' : '旗をドラッグ: 変わり目を動かす／ほかをドラッグ: 拍の線を音に合わせる'}</span>
-      </div>
+    <div class="tempo-chips"><button data-tsecmove="-1" aria-label="前の区間">◀</button><div class="tempo-chip-list" id="tempoChips">${chips}</div><button data-tsecmove="1" aria-label="次の区間">▶</button></div>
+    <div class="tempo-wave-wrap"><canvas id="tempoWave" class="tempo-wave"></canvas></div>
+    <div class="tempo-row">
+      <button data-tview="-1" aria-label="前へ">◀</button>
+      <button data-tzoom="0.5" aria-label="拡大">＋</button>
+      <button data-tzoom="2" aria-label="縮小">－</button>
+      <button data-tview="1" aria-label="後ろへ">▶</button>
+      <button data-tplayhere class="tempo-play">${tempoPreview.row === -2 ? '■' : '▶ ここから'}</button>
+      <span class="tempo-sep"></span>
+      <span class="tempo-lbl">カーソル</span><button data-tcur="-1" aria-label="カーソルを 1 拍前へ">◀</button><b class="tempo-val" id="tempoCur">${st.cursor >= 0 ? tempoBarLabel(plan0, Math.round(tickAtTime(plan0, TPB, st.cursor))) : '—'}</b><button data-tcur="1" aria-label="カーソルを 1 拍後ろへ">▶</button>
+      <button data-tsplit ${st.cursor >= 0 ? '' : 'disabled'}>✂ ここで分ける</button>
+      <button data-tfrom ${st.cursor >= 0 && st.sel > 0 ? '' : 'disabled'}>⇤ ここから</button>
+      <button data-tto ${st.cursor >= 0 && st.sel + 1 < secs.length ? '' : 'disabled'}>ここまで ⇥</button>
     </div>
-    <div class="tempo-insp">
-      <div class="tempo-insp-pos"><span class="k">区間 ${st.sel + 1} / ${secs.length}</span><b>${tempoBarLabel(plan0, sec.s)} 〜 ${sec.e === Infinity ? '最後' : tempoBarLabel(plan0, sec.e)}</b><small>${fmtSec(tS)} 〜 ${fmtSec(tE)}${rate >= 0 ? `　合った拍 ${rate}%` : ''}</small></div>
-      <div><span class="k">BPM</span><span class="tempo-bpm-edit"><button data-tbpm="-1" aria-label="BPM を 1 下げる">−</button><input id="tempoBpmIn" inputmode="decimal" value="${Number(sec.bpm.toFixed(3))}" aria-label="BPM"><button data-tbpm="1" aria-label="BPM を 1 上げる">＋</button></span>
-        <button data-tmul="0.5">÷2</button><button data-tmul="2">×2</button></div>
-      <div><span class="k">拍子</span>${meterSel}</div>
-      <div class="tempo-insp-act"><span class="k">&nbsp;</span>
-        <button data-tplay class="tempo-play">${tempoPreview.row === st.sel ? '■ 停止' : '▶ メトロノーム'}</button>
-        <button data-tsplit>✂ 分ける</button>
-        <button data-tdel class="bad" ${secs.length > 1 ? '' : 'disabled'}>🗑 消す</button>
-      </div>
+    <div class="tempo-row tempo-insp">
+      <span class="tempo-lbl">区間 ${st.sel + 1}/${secs.length}</span>
+      <span class="tempo-grp"><span class="tempo-lbl">始まり</span><button data-tstart="-bar" ${st.sel ? '' : 'disabled'} aria-label="1 小節前へ">◀◀</button><button data-tstart="-1" ${st.sel ? '' : 'disabled'} aria-label="1 拍前へ">◀</button><b class="tempo-val">${st.sel === 0 ? '曲の頭' : tempoBarLabel(plan0, sec.s)}</b><button data-tstart="1" ${st.sel ? '' : 'disabled'} aria-label="1 拍後ろへ">▶</button><button data-tstart="bar" ${st.sel ? '' : 'disabled'} aria-label="1 小節後ろへ">▶▶</button></span>
+      <span class="tempo-grp"><span class="tempo-lbl">終わり</span><button data-tend="-bar" ${sec.e !== Infinity ? '' : 'disabled'} aria-label="1 小節前へ">◀◀</button><button data-tend="-1" ${sec.e !== Infinity ? '' : 'disabled'} aria-label="1 拍前へ">◀</button><b class="tempo-val">${sec.e === Infinity ? '最後' : tempoBarLabel(plan0, sec.e)}</b><button data-tend="1" ${sec.e !== Infinity ? '' : 'disabled'} aria-label="1 拍後ろへ">▶</button><button data-tend="bar" ${sec.e !== Infinity ? '' : 'disabled'} aria-label="1 小節後ろへ">▶▶</button></span>
+      <span class="tempo-grp"><span class="tempo-lbl">BPM</span><button data-tbpm="-1" aria-label="BPM を 1 下げる">−</button><input id="tempoBpmIn" inputmode="decimal" value="${fmtB(sec.bpm)}" aria-label="BPM"><button data-tbpm="1" aria-label="BPM を 1 上げる">＋</button><button data-tmul="0.5">÷2</button><button data-tmul="2">×2</button></span>
+      ${meterSel}
+      <button data-tplay class="tempo-play" aria-label="この区間をメトロノームと再生">${tempoPreview.row === st.sel ? '■' : '▶'}</button>
+      <button data-tdel class="bad" ${secs.length > 1 ? '' : 'disabled'}>🗑 消す</button>
     </div>
-    <div class="tempo-wave-bar">
-      <button data-tanchor class="${st.anchorMode ? 'on' : ''}">${st.anchorMode ? '✓ 1 拍目を置く' : '1 拍目を置く'}</button>
-      <button data-tremeasure class="primary" ${st.anchors.length ? '' : 'disabled'}>この 1 拍目で測り直す${st.anchors.length ? `（${st.anchors.length}）` : ''}</button>
-      <button data-tclear ${st.anchors.length ? '' : 'disabled'}>1 拍目を消す</button>
-    </div>
-    <div class="field grad-pos"><span>微調整</span><button data-tfine="-0.01">-10</button><button data-tfine="-0.001">-1</button><b id="tempoFine"></b><button data-tfine="0.001">+1</button><button data-tfine="0.01">+10</button></div>
-    <div class="field grad-pos"><span>1 拍目</span><button data-tshift="-4" aria-label="1 小節前へ">◀◀</button><button data-tshift="-1" aria-label="1 拍前へ">◀</button><b id="tempoOffset"></b><button data-tshift="1" aria-label="1 拍後ろへ">▶</button><button data-tshift="4" aria-label="1 小節後ろへ">▶▶</button></div>
-    <p class="note" id="tempoSummary"></p>
-    ${st.plan && st.anchors.length ? '<p class="note">測り直すと、手で直した所は消えます。</p>' : ''}
-    ${hasNotes ? '<p class="note">今の #BPMCHANGE・#MEASURE は置き換えます。音符の拍の位置はそのままで、時刻が変わります。</p>' : ''}
-    <div class="btns"><button data-tact="cancel">やめる</button><button data-tact="ok" class="primary">入れる</button></div>`;
+    <div class="tempo-row">
+      <span class="tempo-lbl">拍の線</span><button data-tfine="-0.01">-10</button><button data-tfine="-0.001">-1</button><b class="tempo-val" id="tempoFine">${fineMs >= 0 ? '+' : ''}${fineMs}ms</b><button data-tfine="0.001">+1</button><button data-tfine="0.01">+10</button>
+      <span class="tempo-sep"></span>
+      <span class="tempo-lbl">1 拍目</span><button data-tshift="-4" aria-label="1 小節前へ">◀◀</button><button data-tshift="-1" aria-label="1 拍前へ">◀</button><b class="tempo-val" id="tempoOffset">OFFSET ${plan0.offset.toFixed(3)}</b><button data-tshift="1" aria-label="1 拍後ろへ">▶</button><button data-tshift="4" aria-label="1 小節後ろへ">▶▶</button>
+      <button data-tremeasure class="primary">この拍から測り直す</button>
+    </div>`;
+  bindCancel();
+  // 選んでいる区間のボタンが見えるように
+  body.querySelector<HTMLElement>('#tempoChips .on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   const rerender = () => renderTempoSheet(body);
   const update = () => {
     const p = curTempoPlan()!;
-    const fineMs = Math.round(st.fine * 1000);
-    $('tempoFine').textContent = st.plan ? '拍の線' : `${fineMs >= 0 ? '+' : ''}${fineMs} ms`;
+    const fm = Math.round(st.fine * 1000);
+    $('tempoFine').textContent = `${fm >= 0 ? '+' : ''}${fm}ms`;
     $('tempoOffset').textContent = `OFFSET ${p.offset.toFixed(3)}`;
-    // tick → 小節の番号（拍子が変わっても数えられるように）
-    const lastTick = Math.max(0, ...p.changes.map((c) => c.tick), ...p.measures.map((m) => m.tick));
-    const bars = planBars(p, TPB, lastTick);
-    const barNo = (tick: number) => { let n = 1; for (const b of bars) { if (b.tick > tick) break; n = b.n; } return n; };
-    const list = <T,>(xs: T[], f: (x: T) => string) => `${xs.slice(0, 6).map(f).join('、')}${xs.length > 6 ? ' …' : ''}`;
-    $('tempoSummary').textContent = `入れる内容: BPM ${p.bpm} ／ OFFSET ${p.offset.toFixed(3)}`
-      + (p.changes.length ? ` ／ #BPMCHANGE ${p.changes.length} か所（${list(p.changes, (c) => `${barNo(c.tick)} 小節目で ${c.bpm}`)}）` : '')
-      + (p.measures.length ? ` ／ #MEASURE ${p.measures.length} か所（${list(p.measures, (m) => `${barNo(m.tick)} 小節目から ${m.num}/${m.den}`)}）` : '');
     drawTempoWave(p, tempoPreview.on ? audio.now() : -1);
     drawTempoOverview(p, tempoPreview.on ? audio.now() : -1);
   };
   update();
+  const selectAt = (t: number) => { st.sel = sectionAtTime(curTempoPlan()!, TPB, t); };
 
   // ---- 曲全体の帯: タップで区間を選ぶ・境目をドラッグ・帯をドラッグで表示する所を動かす ----
   const ov = body.querySelector<HTMLCanvasElement>('#tempoOverview')!;
   const ovTime = (x: number) => Math.max(0, Math.min(r.duration, (x / Math.max(1, ov.clientWidth)) * r.duration));
   bindTempoDrag(ov, ovTime, () => (r.duration / Math.max(1, ov.clientWidth)) * 10, {
     tap: (t) => {
-      const p = curTempoPlan()!;
-      st.sel = sectionAtTime(p, TPB, t);
+      selectAt(t);
       if (!tempoPreview.on) st.viewAt = t;
       rerender();
     },
@@ -1751,105 +1760,121 @@ function renderTempoSheet(body: HTMLElement) {
     after: rerender,
   });
 
-  // ---- 拡大した波形: 旗をドラッグで変わり目を動かす・ほかをドラッグで拍の線（OFFSET）を動かす・ダブルタップで分ける ----
+  // ---- 拡大した波形: タップでカーソル（いちばん近い拍）・旗をドラッグで変わり目を動かす・ほかをドラッグで拍の線を動かす・ダブルタップで分ける ----
   const cv = body.querySelector<HTMLCanvasElement>('#tempoWave')!;
   const cvTime = (x: number) => st.viewAt - st.span / 2 + (x / Math.max(1, cv.clientWidth)) * st.span;
   bindTempoDrag(cv, cvTime, () => (st.span / Math.max(1, cv.clientWidth)) * 12, {
     tap: (t) => {
-      if (st.anchorMode) {
-        const W = Math.max(1, cv.clientWidth);
-        const near = st.anchors.findIndex((a) => Math.abs(a - t) < (12 / W) * st.span);
-        if (near >= 0) st.anchors.splice(near, 1);
-        else if (t >= 0 && t <= r.duration) st.anchors.push(t);
-        st.anchors.sort((a, b) => a - b);
-        rerender();
-        return;
-      }
       const now = performance.now();
       const p = curTempoPlan()!;
       if (now - tempoLastTap.at < 400 && Math.abs(t - tempoLastTap.t) < st.span * 0.03) {
-        // ダブルタップ: そこから新しい BPM
+        // ダブルタップ: そこから新しい区間
         tempoLastTap = { at: 0, t: 0 };
         const res = splitAt(p, TPB, t);
-        if (res && tempoEditPlan(() => res.plan, res.index)) toast('ここから新しい区間にしました。BPM を直してください');
+        if (res) tempoEditPlan(() => res.plan, res.index);
         rerender();
         return;
       }
       tempoLastTap = { at: now, t };
-      const i = sectionAtTime(p, TPB, t);
-      // 同じ区間なら描き直さない（描き直すとダブルタップの 2 回目が別のキャンバスになるため）
-      if (i === st.sel) return;
-      st.sel = i;
+      st.cursor = nearestBeat(p, t);
+      selectAt(st.cursor);
       rerender();
     },
-    // 何もない所をドラッグ: 拍の線を動かす（OFFSET の微調整）
     slide: (dt, start) => {
-      if (st.anchorMode) return;
-      if (st.plan) {
-        const base = start as TempoPlan;
-        st.plan = nudge(base, Math.round(dt * 1000) / 1000);
-      } else st.fine = Math.round(((start as number) + dt) * 1000) / 1000;
+      const s0 = start as { plan: TempoPlan | null; fine: number };
+      const d = Math.round(dt * 1000) / 1000;
+      if (s0.plan) st.plan = nudge(s0.plan, d);
+      st.fine = Math.round((s0.fine + d) * 1000) / 1000;
       update();
     },
     slideStart: () => {
-      if (st.anchorMode) return null;
       tempoPush();
-      return st.plan ? curTempoPlan() : st.fine;
+      return { plan: st.plan ? curTempoPlan() : null, fine: st.fine };
     },
     after: rerender,
   });
 
-  body.querySelector('[data-tundo]')?.addEventListener('click', () => {
+  const on = (sel: string, fn: (b: HTMLElement) => void) => body.querySelectorAll<HTMLElement>(sel).forEach((b) => b.addEventListener('click', () => { fn(b); rerender(); }));
+  on('[data-tundo]', () => {
     const s = st.undo.pop();
     if (!s) return;
     st.redo.push(tempoSnap());
     tempoRestore(s);
-    rerender();
   });
-  body.querySelector('[data-tredo]')?.addEventListener('click', () => {
+  on('[data-tredo]', () => {
     const s = st.redo.pop();
     if (!s) return;
     st.undo.push(tempoSnap());
     tempoRestore(s);
-    rerender();
   });
-  body.querySelector('[data-tanchor]')?.addEventListener('click', () => {
-    st.anchorMode = !st.anchorMode;
-    rerender();
+  // 区間を選ぶ（短い区間も選べるように、区間ごとのボタン）
+  const goSec = (i: number) => {
+    const p = curTempoPlan()!;
+    const ss = editSections(p);
+    st.sel = Math.max(0, Math.min(ss.length - 1, i));
+    const t = st.sel === 0 ? Math.max(0, -p.offset) : planTimeAt(p, TPB, ss[st.sel].s);
+    if (!tempoPreview.on) st.viewAt = t + st.span * 0.3;
+  };
+  on('[data-tsec]', (b) => goSec(Number(b.dataset.tsec)));
+  on('[data-tsecmove]', (b) => goSec(st.sel + Number(b.dataset.tsecmove)));
+  // カーソル
+  on('[data-tcur]', (b) => {
+    const p = curTempoPlan()!;
+    const tick = Math.round(tickAtTime(p, TPB, st.cursor >= 0 ? st.cursor : st.viewAt));
+    const sec2 = editSections(p)[sectionAtTime(p, TPB, st.cursor >= 0 ? st.cursor : st.viewAt)];
+    const base = sec2.s + Math.round((tick - sec2.s) / TPB) * TPB;
+    st.cursor = Math.max(0, Math.min(r.duration, planTimeAt(p, TPB, base + Number(b.dataset.tcur) * TPB)));
+    if (!tempoPreview.on && Math.abs(st.cursor - st.viewAt) > st.span * 0.45) st.viewAt = st.cursor;
   });
-  body.querySelector('[data-tremeasure]')?.addEventListener('click', () => startTempo(true));
-  body.querySelector('[data-tclear]')?.addEventListener('click', () => {
-    st.anchors = [];
-    rerender();
+  on('[data-tsplit]', () => {
+    if (st.cursor < 0) return;
+    const res = splitAt(curTempoPlan()!, TPB, st.cursor);
+    if (!res) toast('区間の頭では分けられません');
+    else tempoEditPlan(() => res.plan, res.index);
+  });
+  const curTick = () => Math.round(tickAtTime(curTempoPlan()!, TPB, st.cursor));
+  on('[data-tfrom]', () => { if (st.cursor >= 0) tempoEditPlan((p) => setStart(p, TPB, st.sel, curTick())); });
+  on('[data-tto]', () => { if (st.cursor >= 0) tempoEditPlan((p) => setEnd(p, TPB, st.sel, curTick())); });
+  // 始まり・終わりを 1 拍・1 小節ずつ
+  const stepTick = (p: TempoPlan, tick: number, v: string) => tick + (v.endsWith('bar') ? barBeatsAt(p, tick) : 1) * (v.startsWith('-') ? -1 : 1) * TPB;
+  on('[data-tstart]', (b) => {
+    const i = st.sel;
+    tempoEditPlan((p) => {
+      const q = setStart(p, TPB, i, stepTick(p, editSections(p)[i].s, b.dataset.tstart!));
+      // またいで区間が減ったら、選ぶ区間も前へ
+      st.sel = Math.min(i, editSections(q).length - 1) - (editSections(p).length - editSections(q).length);
+      return q;
+    });
+  });
+  on('[data-tend]', (b) => {
+    const i = st.sel;
+    tempoEditPlan((p) => { const e = editSections(p)[i].e; return e === Infinity ? null : setEnd(p, TPB, i, stepTick(p, e, b.dataset.tend!)); });
   });
   // BPM を書き換える（区間の長さはそのままで、後ろの区間の時刻は変わらない）
   const setSelBpm = (b: number) => {
-    if (!(b >= 10 && b <= 2000)) { toast('BPM は 10〜2000 で入れてください'); rerender(); return; }
+    if (!(b >= 10 && b <= 2000)) { toast('BPM は 10〜2000 で入れてください'); return; }
     tempoEditPlan((p) => setBpm(p, TPB, st.sel, b));
-    rerender();
   };
   const bpmIn = body.querySelector<HTMLInputElement>('#tempoBpmIn')!;
-  bpmIn.addEventListener('change', () => setSelBpm(Number(bpmIn.value)));
+  bpmIn.addEventListener('change', () => { setSelBpm(Number(bpmIn.value)); rerender(); });
   bpmIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') bpmIn.blur(); });
-  body.querySelectorAll<HTMLButtonElement>('[data-tbpm]').forEach((b) => b.addEventListener('click', () => {
-    const p = curTempoPlan()!;
-    const cur = editSections(p)[st.sel].bpm;
+  on('[data-tbpm]', (b) => {
+    const cur = editSections(curTempoPlan()!)[st.sel].bpm;
     const d = Number(b.dataset.tbpm);
     // 小数の BPM は、まず整数にそろえる
     setSelBpm(cur !== Math.round(cur) ? (d > 0 ? Math.ceil(cur) : Math.floor(cur)) : cur + d);
-  }));
-  body.querySelectorAll<HTMLButtonElement>('[data-tmul]').forEach((b) => b.addEventListener('click', () => {
+  });
+  on('[data-tmul]', (b) => {
     const m = Number(b.dataset.tmul);
     if (tempoRaw()) {
       // 測ったままなら、測った結果の側で倍・半分にする（拍子も合わせて変わる）
       tempoPush();
       st.mul[st.sel] = Math.min(4, Math.max(0.25, st.mul[st.sel] * m));
     } else {
-      const p = curTempoPlan()!;
-      tempoEditPlan((q) => setBpm(q, TPB, st.sel, editSections(p)[st.sel].bpm * m));
+      const cur = editSections(curTempoPlan()!)[st.sel].bpm;
+      tempoEditPlan((q) => setBpm(q, TPB, st.sel, cur * m));
     }
-    rerender();
-  }));
+  });
   body.querySelector<HTMLSelectElement>('[data-tmeter]')?.addEventListener('change', (e) => {
     const v = (e.target as HTMLSelectElement).value;
     if (tempoRaw()) {
@@ -1860,37 +1885,27 @@ function renderTempoSheet(body: HTMLElement) {
     } else tempoEditPlan((p) => setMeter(p, st.sel, parseMeter(v)));
     rerender();
   });
-  body.querySelector('[data-tsplit]')?.addEventListener('click', () => {
-    // 再生中は今の位置、止まっているときは波形の真ん中で分ける
-    const t = tempoPreview.on ? audio.now() : st.viewAt;
-    const res = splitAt(curTempoPlan()!, TPB, t);
-    if (!res) toast('ここでは分けられません（区間の頭や、1 拍目より前）');
-    else if (tempoEditPlan(() => res.plan, res.index)) toast('分けました。新しい区間の BPM を直してください');
-    rerender();
-  });
-  body.querySelector('[data-tdel]')?.addEventListener('click', () => {
+  on('[data-tdel]', () => {
     const i = st.sel;
-    if (tempoEditPlan((p) => removeSection(p, TPB, i), Math.max(0, i - 1))) toast(i === 0 ? '最初の区間を消しました（次の区間が前に伸びます）' : '区間を消しました（前の区間が伸びます）');
-    rerender();
+    tempoEditPlan((p) => removeSection(p, TPB, i), Math.max(0, i - 1));
   });
   body.querySelectorAll<HTMLButtonElement>('[data-tfine]').forEach((b) => b.addEventListener('click', () => {
     const d = Number(b.dataset.tfine);
+    // 手で直した案では案の OFFSET を動かし、表示用に動かした量も数えておく
     if (st.plan) tempoEditPlan((p) => nudge(p, d));
-    else {
-      tempoPush();
-      st.fine = Math.round((st.fine + d) * 1000) / 1000;
-    }
+    else tempoPush();
+    st.fine = Math.round((st.fine + d) * 1000) / 1000;
     update();
   }));
   body.querySelectorAll<HTMLButtonElement>('[data-tzoom]').forEach((b) => b.addEventListener('click', () => {
-    st.span = Math.min(16, Math.max(0.5, st.span * Number(b.dataset.tzoom)));
+    st.span = Math.min(32, Math.max(0.5, st.span * Number(b.dataset.tzoom)));
     update();
   }));
   body.querySelectorAll<HTMLButtonElement>('[data-tview]').forEach((b) => b.addEventListener('click', () => {
     st.viewAt = Math.max(0, Math.min(r.duration, st.viewAt + Number(b.dataset.tview) * st.span * 0.8));
     update();
   }));
-  body.querySelectorAll<HTMLButtonElement>('[data-tshift]').forEach((b) => b.addEventListener('click', () => {
+  on('[data-tshift]', (b) => {
     const n = Number(b.dataset.tshift);
     if (st.plan) tempoEditPlan((p) => shiftDownbeat(p, TPB, n));
     else {
@@ -1898,28 +1913,25 @@ function renderTempoSheet(body: HTMLElement) {
       st.shift += n;
     }
     // 動かした 1 拍目（赤い線）が見えるところへ
-    const p = curTempoPlan()!;
-    if (!tempoPreview.on) st.viewAt = -p.offset + st.span * 0.3;
-    rerender();
-  }));
-  body.querySelector<HTMLButtonElement>('[data-tplayhere]')?.addEventListener('click', () => {
+    if (!tempoPreview.on) st.viewAt = -curTempoPlan()!.offset + st.span * 0.3;
+  });
+  // 今の 1 拍目（OFFSET の所。音源の頭より前なら、その次の小節の頭）を小節の頭として測り直す
+  body.querySelector('[data-tremeasure]')?.addEventListener('click', () => {
+    st.anchors = [firstBar.t];
+    startTempo(true);
+  });
+  on('[data-tplayhere]', () => {
     if (tempoPreview.row === -2) stopTempoPreview();
     else void startTempoPreview(-2, Math.max(0, st.viewAt - st.span / 2));
-    rerender();
   });
-  body.querySelector<HTMLButtonElement>('[data-tplay]')?.addEventListener('click', () => {
+  on('[data-tplay]', () => {
     if (tempoPreview.row === st.sel) stopTempoPreview();
-    else void startTempoPreview(st.sel, Math.max(0, tS - 1));
-    rerender();
-  });
-  body.querySelectorAll<HTMLButtonElement>('[data-tact]').forEach((b) => b.addEventListener('click', () => {
-    if (b.dataset.tact === 'ok') {
+    else {
       const p = curTempoPlan()!;
-      ed.applyTempo(p);
-      toast(`BPM ${p.bpm}・OFFSET ${p.offset.toFixed(3)} を入れました`);
+      const s = editSections(p)[st.sel];
+      void startTempoPreview(st.sel, Math.max(0, (st.sel === 0 ? 0 : planTimeAt(p, TPB, s.s)) - 1));
     }
-    closeSheet();
-  }));
+  });
 }
 
 /**
@@ -1946,7 +1958,7 @@ function bindTempoDrag(
     const t = timeAt(x);
     const p = curTempoPlan();
     let k = -1;
-    if (p && !st.anchorMode) {
+    if (p) {
       // いちばん近い境目（区間 1 以降の頭）
       let best = grab();
       editSections(p).forEach((s, i) => {
@@ -2203,18 +2215,17 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
     ctx.fillStyle = '#111';
     ctx.fillText(label, x + 5, 15);
   });
-  // 手で決めた 1 拍目（緑の線と旗）
-  for (const a of st.anchors) {
-    if (a < t0 - 0.01 || a > t1 + 0.01) continue;
-    const x = xOf(a);
-    ctx.fillStyle = '#4ade80';
-    ctx.fillRect(x - 1, 0, 2, H);
+  // カーソル（白い点線と、小節・拍）
+  if (st.cursor >= t0 && st.cursor <= t1) {
+    const x = xOf(st.cursor);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([5, 4]);
     ctx.beginPath();
-    ctx.moveTo(x + 1, H - 22);
-    ctx.lineTo(x + 13, H - 16);
-    ctx.lineTo(x + 1, H - 10);
-    ctx.closePath();
-    ctx.fill();
+    ctx.moveTo(x, 22);
+    ctx.lineTo(x, H);
+    ctx.stroke();
+    ctx.setLineDash([]);
   }
   // 音源の頭（0 秒）
   if (t0 < 0) {
