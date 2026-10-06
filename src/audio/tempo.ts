@@ -28,6 +28,8 @@ export interface TempoSegment {
   matched: number;
   /** 合った拍の、決めた BPM の拍とのずれ（ミリ秒、二乗平均） */
   jitterMs: number;
+  /** 区間の頭が小節の頭だと分かっている */
+  barStart?: boolean;
 }
 
 export interface TempoResult {
@@ -792,6 +794,8 @@ interface CoarseSeg {
   end: number;
   /** この区間の拍のうち、小節の頭の 1 つ（分かっているとき） */
   down?: number;
+  /** 区間の頭が小節の頭だと分かっている（BPM の変わり目を小節の頭で決めたとき） */
+  barStart?: boolean;
   bpm: number;
   rawBpm: number;
   phase: number;
@@ -851,8 +855,11 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
   // 1 拍ずつ実際の立ち上がりを拾い、区間全体で直線（時刻 = 基準 + k × 拍の長さ）に当てはめる
   let P = 60 / bestBpm;
   let phase = best.phase;
-  // 手で決めた 1 拍目がこの区間にあれば、拍の線は必ずそこを通す
-  const anchor = curAnchors.find((x) => x >= start && x < end);
+  // 手で決めた 1 拍目がこの区間にあれば、拍の線は必ずそこを通す。
+  // ただし区間の両端から 6 秒以内のものは使わない（大まかな区間の境目はずれていて、実は別の BPM の所かもしれない。
+  // そこは BPM の変わり目を決めるときに使う）
+  const inMid = (x: number) => x >= start + 6 && x < end - 6;
+  const anchor = curAnchors.find(inMid);
   if (anchor !== undefined) {
     phase = anchor;
   } else {
@@ -921,11 +928,12 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
   }
   phase = a;
   // 手で決めた 1 拍目が区間に 2 つ以上あれば、その間がちょうど整数拍になるように拍の長さを決める
-  const anchorsIn = curAnchors.filter((x) => x >= start && x < end);
+  // （BPM が 0.5% 以上変わるときは、間で BPM が変わっているので使わない）
+  const anchorsIn = curAnchors.filter(inMid);
   if (anchorsIn.length >= 2) {
     const span = anchorsIn[anchorsIn.length - 1] - anchorsIn[0];
     const n = Math.round(span / P);
-    if (n > 0) P = span / n;
+    if (n > 0 && Math.abs(span / n / P - 1) < 0.005) P = span / n;
   }
   const rawBpm = 60 / P;
   // きりのいい BPM（整数 → 小数 1 桁 → 2 桁）にしても、区間全体のずれがほとんど増えなければそちらを使う
@@ -973,7 +981,7 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
  * BPM が変わる所を細かく決める（だんだん速く・遅くなる所も）。
  * G = 続いた区間（最初 A・途中・最後 Z）。A の拍から始めて、1 拍ずつ「どの BPM で次の拍に進むか」を選び、Z の BPM で終わる道のうち、
  * 拍の位置に音がいちばんよく乗るものを探す（動的計画法）。BPM を変えるたびに減点し、同じ BPM は 4 拍（1 小節）以上続ける。
- * BPM は今の区間から次の区間の BPM へ向かう向きにだけ変え、小節の頭以外で変えるときは減点する。
+ * BPM は今の区間から次の区間の BPM へ向かう向きにだけ、小節の頭でだけ変える。
  * 戻り値は A と Z の間の区間（A.end・Z.start も直す）。見つからないときは null
  */
 const KERN = [0.5, 0.85, 1, 0.85, 0.5];
@@ -982,7 +990,7 @@ function snap5(bpm: number, beats: number) {
   const r = Math.round(bpm / 5) * 5;
   return beats <= 16 && Math.abs(bpm / r - 1) <= 0.015 ? r : bpm;
 }
-function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
+function bridge(env: Envelope, G: CoarseSeg[], shiftA = false): CoarseSeg[] | null {
   const { fr, t0, all } = env;
   const A = G[0];
   const Z = G[G.length - 1];
@@ -1017,6 +1025,18 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   mu /= Math.max(1, cnt);
   if (!(mu > 0)) return null;
   const LAMBDA = 3 * mu;
+  // 拍 1 つごとの基準は、その近く（前後 1.5 秒）の音の平均。曲全体の平均にすると、音の少ない所では
+  // 拍が 1 つ増えるごとに減点されて、遅い BPM（拍が少ない）ほど得をしてしまう
+  const LS = 0.01;
+  const l0 = lo - 2;
+  const nL = Math.ceil((hi + 2 - l0) / LS) + 1;
+  const pre = new Float64Array(nL + 1);
+  for (let i = 0; i < nL; i++) pre[i + 1] = pre[i] + hit(l0 + i * LS);
+  const muAt = (t: number) => {
+    const a = Math.max(0, Math.round((t - 1.5 - l0) / LS));
+    const b = Math.min(nL, Math.round((t + 1.5 - l0) / LS));
+    return b > a ? (pre[b] - pre[a]) / (b - a) : mu;
+  };
   // BPM の候補: 0 = A、1 = Z（同じ BPM でも別に扱う）、途中の区間の BPM、その間（少し外側まで）の整数
   const all3 = G.map((g) => g.bpm);
   const bl = Math.min(...all3) * 0.97;
@@ -1061,7 +1081,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
     for (let j = 0; j < inner.length; j++) { const r = inside[j]; if (r && t > r[0] && t < r[1]) return j; }
     return -1;
   };
-  const score = (_k: number, t: number) => (innerAt(t) >= 0 ? 0 : hit(t) - mu);
+  const score = (_k: number, t: number) => (innerAt(t) >= 0 ? 0 : hit(t) - muAt(t));
   // 区間の順番（A → 途中の区間 → Z）。BPM は今の区間から次の区間の BPM へ向かう向きにだけ変える
   // （行ってすぐ戻るような変化は、拍の位置を合わせるためだけのものになりやすいので使わない）
   const ord = [0, ...inner.map((g) => cand.indexOf(g.bpm, 2)), 1];
@@ -1071,7 +1091,6 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   // 小節の中の拍の位置（0 = 小節の頭）。BPM は小節の頭で変わることが多いので、それ以外で変えるときは減点
   const aDown = A.down ?? findDownbeatCoarse(env, A);
   const bp0 = ((Math.round((tStart - aDown) / PA) % 4) + 4) % 4;
-  const OFFBAR = LAMBDA;
   // 手で決めた 1 拍目: そこに小節の頭が来る道を強く選ぶ（拍は来るが小節の頭でない道は強く避ける）
   const anchorsW = curAnchors.filter((x) => x > lo - 0.05 && x < hi + 0.05);
   const aBonus = (t: number, bp: number) => {
@@ -1090,9 +1109,19 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   const tim = new Float32Array(S);
   const back = new Int32Array(S).fill(-1);
   const key = (f: number, k: number, bp: number, c: number, st: number) => (((f * nT + k) * NB + bp) * MINLEN + (c - 1)) * nSt + st;
-  const s0 = key(0, 0, bp0, MINLEN, 0);
-  val[s0] = 0;
-  tim[s0] = 0;
+  // 最初の区間 A の拍の位置は、16 分が続く曲では 1/4 拍ずれた所と迷うことがある。
+  // A が曲の最初の区間なら、1/4 拍ずつずらした始まりも試し（ずらすのは少し減点）、変わり目とのつながりで決める
+  // 小節の頭の位置（A の拍のどれが小節の頭か）も、A が最初の区間なら変わり目のほうから決め直せるようにする
+  // （BPM は小節の頭で変わるので、変わり目がはっきりしていれば小節の頭も決まる）
+  for (let q = 0; q < (shiftA ? 4 : 1); q++) {
+    for (let b = 0; b < (shiftA ? NB : 1); b++) {
+      const dt = (q * PA) / 4;
+      const bp = shiftA ? b : bp0;
+      const s0 = key(Math.round(dt * BK), 0, bp, MINLEN, 0);
+      val[s0] = (q ? -0.5 * LAMBDA : 0) + (bp !== bp0 ? -0.5 * LAMBDA : 0);
+      tim[s0] = dt;
+    }
+  }
   const relax = (s2: number, v2: number, t2: number, from: number) => {
     if (v2 > val[s2]) {
       val[s2] = v2;
@@ -1124,7 +1153,9 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
             if (k2 === ord[st + 1]) st2 = Math.min(nSt - 1, st + 1);
             else if (k2 < nAnchor) continue;
             else if (!((cand[k2] - cand[k]) * (target - cand[k2]) > 0)) continue;
-            const pen = LAMBDA + odd(k2) + (bp === 0 ? 0 : OFFBAR);
+            // BPM は小節の頭でだけ変える
+            if (bp !== 0) continue;
+            const pen = LAMBDA + odd(k2);
             const t2 = t + 60 / cand[k2];
             const j = innerAt(t2);
             if (t2 < hi && (j < 0 || ord[j + 1] === k2)) relax(key(Math.round((t2 - tStart) * BK), k2, bp2, 1, st2), v + score(k2, t2) + aBonus(t2, bp2) - pen, t2, s);
@@ -1153,8 +1184,17 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   if (end < 0) return null;
   // たどって、BPM ごとの区間にする（拍 i から i+1 までは、拍 i+1 の状態の BPM）
   const path: { t: number; k: number }[] = [];
-  for (let s = end; s >= 0; s = back[s]) path.push({ t: tStart + tim[s], k: Math.floor(s / (NB * MINLEN * nSt)) % nT });
+  let startState = end;
+  for (let s = end; s >= 0; s = back[s]) { path.push({ t: tStart + tim[s], k: Math.floor(s / (NB * MINLEN * nSt)) % nT }); startState = s; }
   path.reverse();
+  // A の拍を 1/4 拍ずらした始まりを選んだときは、A の拍の位置もずらす
+  const q0 = Math.round((path[0].t - tStart) / (PA / 4));
+  if (shiftA) {
+    if (q0 > 0 && q0 < 4) A.phase += (q0 * PA) / 4;
+    // 始まりの拍の、小節の中の位置から、A の小節の頭を決め直す
+    const bpS = Math.floor(startState / (MINLEN * nSt)) % NB;
+    A.down = path[0].t - bpS * PA;
+  }
   const endBp = Math.floor(end / (MINLEN * nSt)) % NB;
   const pieces: { k: number; start: number; end: number; beats: number }[] = [];
   for (let i = 1; i < path.length; i++) {
@@ -1171,7 +1211,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
     const rank = (x: typeof p) => (x.k <= 1 ? Infinity : x.k < nAnchor ? 1e6 + x.end - x.start : x.end - x.start);
     const k = rank(p) >= rank(q) ? p.k : q.k;
     const P = 60 / cand[k];
-    pieces.splice(i - 1, 2, { k, start: p.start, end: q.end, beats: Math.max(0.25, Math.round((4 * (q.end - p.start)) / P) / 4) });
+    pieces.splice(i - 1, 2, { k, start: p.start, end: q.end, beats: Math.max(1, Math.round((q.end - p.start) / P)) });
   }
   const out: CoarseSeg[] = [];
   let aEnd = A.end;
@@ -1183,8 +1223,8 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
       // 途中の区間と同じ BPM なら、その区間の測った値（ずれの大きさなど）を使う
       const g = inner.find((x) => x.bpm === cand[p.k]);
       out.push(g && p.end - p.start > 8
-        ? { ...g, start: p.start, end: p.end, phase: p.start }
-        : { start: p.start, end: p.end, bpm: snap5(cand[p.k], p.beats), rawBpm: cand[p.k], phase: p.start, beats: p.beats, matched: p.beats, jitterMs: 0 });
+        ? { ...g, start: p.start, end: p.end, phase: p.start, barStart: true }
+        : { start: p.start, end: p.end, bpm: snap5(cand[p.k], p.beats), rawBpm: cand[p.k], phase: p.start, beats: p.beats, matched: p.beats, jitterMs: 0, barStart: true });
     }
   }
   A.end = aEnd;
@@ -1192,6 +1232,7 @@ function bridge(env: Envelope, G: CoarseSeg[]): CoarseSeg[] | null {
   // Z の拍の位置は、つながった所に合わせる（次の境目を探すときに使う）
   Z.phase = tStart + tim[end];
   Z.down = Z.phase - endBp * PZ;
+  Z.barStart = true;
   return out;
 }
 
@@ -1325,10 +1366,12 @@ function coarseToResult(c: { segs: CoarseSeg[]; downbeat: number }, duration: nu
     const P = 60 / s.bpm;
     const endT = i + 1 < segs.length ? segs[i + 1].start : duration;
     // BPM は拍の途中（1/4 拍単位）でも変わることがある
-    const n = i + 1 < segs.length ? Math.max(0.25, Math.round((4 * (endT - tPrev)) / P) / 4) : Math.max(1, Math.floor((endT - tPrev) / P));
+    // 次の区間が小節の頭から始まると分かっているときは、拍の途中では変えない（整数の拍）
+    const whole = i + 1 < segs.length && segs[i + 1].barStart;
+    const n = i + 1 < segs.length ? (whole ? Math.max(1, Math.round((endT - tPrev) / P)) : Math.max(0.25, Math.round((4 * (endT - tPrev)) / P) / 4)) : Math.max(1, Math.floor((endT - tPrev) / P));
     out.push({
       startBeat: beat, endBeat: beat + n, start: i === 0 ? 0 : tPrev, end: endT,
-      bpm: s.bpm, rawBpm: s.rawBpm, beats: s.beats, matched: s.matched, jitterMs: s.jitterMs,
+      bpm: s.bpm, rawBpm: s.rawBpm, beats: s.beats, matched: s.matched, jitterMs: s.jitterMs, barStart: s.barStart,
     });
     beat += n;
     tPrev += n * P;
@@ -1456,9 +1499,9 @@ export function computeMeters(r: TempoResult, override: (Meter | null)[] = [], a
         for (let h = h0 + ((o - h0) % L2 + L2) % L2; h < h1; h += L2) { s2 += a(si, h); c++; }
         score[o] = c ? ((s2 / c) / mean - 1) * Math.sqrt(bars) : 0;
       }
-      // BPM の変わり目（区間の頭）は小節の頭であることが多い
+      // BPM の変わり目（区間の頭）は小節の頭であることが多い。小節の頭で変わると分かっている区間は、そこを小節の頭にする
       if (si > 0 && h0 === 0 && score[0] !== -Infinity) score[0] += 3;
-      units.push({ si, h0, h1, L2, score, force: -1 });
+      units.push({ si, h0, h1, L2, score, force: si > 0 && h0 === 0 && segs[si].barStart ? 0 : -1 });
     }
   });
   // 手で決めた 1 拍目
@@ -1662,7 +1705,7 @@ function analyzeInner(env: Envelope, duration: number, progress: ((p: number) =>
       while (i < segs.length - 1) {
         let j = i + 1;
         while (j < segs.length - 1 && segs[j].end - segs[j].start < 40) j++;
-        const mid = bridge(env, segs.slice(i, j + 1));
+        const mid = bridge(env, segs.slice(i, j + 1), i === 0);
         if (!mid) bridgeFail++;
         out.push(...(mid ?? segs.slice(i + 1, j)), segs[j]);
         i = j;
