@@ -949,9 +949,11 @@ function refineCoarse(env: Envelope, start: number, end: number, roughBpm: numbe
   };
   const baseRms = rmsWith(P);
   let bpm = Number(rawBpm.toFixed(3));
+  // 区間が短いときは、区間全体でのずれが 15ms 未満なら丸めた値を使う（短い区間では細かい値まで測れない）
+  const spanBeats = Math.max(1, (end - start) / P);
   for (const d of [0, 1, 2]) {
     const c = Number(rawBpm.toFixed(d));
-    if (rmsWith(60 / c) <= Math.max(baseRms * 1.1, baseRms + 0.001)) {
+    if (rmsWith(60 / c) <= Math.max(baseRms * 1.1, baseRms + 0.001) || Math.abs(60 / c - P) * spanBeats < 0.015) {
       bpm = c;
       break;
     }
@@ -1251,15 +1253,29 @@ function bridge(env: Envelope, G: CoarseSeg[], shiftA = false): CoarseSeg[] | nu
  * 変わり目の前後で、次の区間の拍の位置（小節の頭）も決まる。区間が続くときは、上位の候補をいくつか残して
  * 次の変わり目と合わせて選ぶ（前の変わり目と次の変わり目のつながりで、途中の区間の拍の位置が決まる）
  */
+const PEN_RAMP = 2;
+const PEN_STEP = 0.3;
+const BO_PEN = 0.5;
+/** 変わり目が、次の区間の測った拍の位置に乗るときの加点 */
+const W_PH = 1;
+/** 次の区間の最初の 4 小節の頭の音の重み */
+const W_BAR = 0.6;
+
 function solveChain(env: Envelope, segsIn: CoarseSeg[], shiftFirst: boolean): CoarseSeg[] | null {
   // 短い（16 秒未満の）区間は、だんだん変わる所を大まかに 1 つの BPM で見ただけのことが多いので、仮説の途中の段として扱う
-  const segs = segsIn.filter((x, i) => i === 0 || i === segsIn.length - 1 || x.end - x.start >= 16);
+  // 最後の区間も、短ければ前の区間の続き（曲の終わりの音の少ない所を別の BPM と見ただけのことが多い）
+  const segs = segsIn.filter((x, i) => i === 0 || x.end - x.start >= 16);
   for (let i = 1; i < segs.length; i++) segs[i - 1] = { ...segs[i - 1], end: segs[i].start };
   for (let i = segs.length - 1; i > 0; i--) if (Math.abs(segs[i].bpm / segs[i - 1].bpm - 1) < 0.015) {
     segs[i - 1] = { ...segs[i - 1], end: segs[i].end };
     segs.splice(i, 1);
   }
   if (segs.length < 2) return null;
+  // 安定した区間の BPM は、整数に近ければ（0.2% 以内）整数にする（区間の端に変わり目の途中が入って、少しずれて測れることがある）
+  for (let i = 0; i < segs.length; i++) {
+    const r = Math.round(segs[i].bpm);
+    if (Math.abs(segs[i].bpm - r) < segs[i].bpm * 0.002) segs[i] = { ...segs[i], bpm: r };
+  }
   const { fr, t0, all } = env;
   const N = all.length;
   // 立ち上がりの山のずれ（最初の区間の拍で決める）
@@ -1292,6 +1308,14 @@ function solveChain(env: Envelope, segsIn: CoarseSeg[], shiftFirst: boolean): Co
     const b = Math.min(N, f + W);
     return hk[f] - (pre[b] - pre[a]) / (b - a);
   };
+  // 拍 1 つの点数: 拍の位置だけでなく、拍を 2・4 分割した所か 3 分割した所（合うほう）にも音が乗っているかを見る。
+  // 拍の上に音がなく裏や 3 連の位置に音がある所（シンコペーション）でも、正しい BPM なら音が格子に乗る
+  // 拍の長さ（秒）を掛けて、時間あたりの点数にする（速い BPM ほど拍が多くて、点数が多く・少なくなりやすいのを防ぐ）
+  const bs = (t: number, P: number) => {
+    const two = 0.6 * sc(t + P / 2) + 0.3 * (sc(t + P / 4) + sc(t + (3 * P) / 4));
+    const three = 0.45 * (sc(t + P / 3) + sc(t + (2 * P) / 3));
+    return (sc(t) + Math.max(two, three)) * (P / 0.4);
+  };
   const LAM = 3 * mu;
   const aB = (t: number, bar: boolean) => {
     for (const x of curAnchors) if (Math.abs(t - x) < 0.035) return bar ? 20 * LAM : -20 * LAM;
@@ -1305,7 +1329,7 @@ function solveChain(env: Envelope, segsIn: CoarseSeg[], shiftFirst: boolean): Co
     for (let bo = 0; bo < (shiftFirst ? 4 : 1); bo++) {
       const dt = (q * P0) / 4;
       beam.push({
-        score: (q ? -0.5 * LAM : 0) + (bo ? -0.5 * LAM : 0),
+        score: (q ? -0.5 * LAM : 0) + (bo ? -BO_PEN * LAM : 0),
         bpm: first.bpm, phase: first.phase + dt, barRef: down0 + dt + bo * P0, from: -Infinity,
         out: [{ ...first, phase: first.phase + dt, down: down0 + dt + bo * P0 }],
       });
@@ -1322,9 +1346,13 @@ function solveChain(env: Envelope, segsIn: CoarseSeg[], shiftFirst: boolean): Co
     for (const st of beam) {
       const a = st.bpm;
       const Pa = 60 / a;
-      const wStart = Math.max(boundary - 20, st.from);
+      const wStart = Math.max(boundary - 31, st.from);
+      // どの仮説も同じ時間の範囲 [wStart, wEnd) で比べる（範囲が違うと、拍の多い仮説ほど得をする）
+      const nextB = j + 2 < segs.length ? segs[j + 1].end : Infinity;
+      const wEnd = Math.min(boundary + 20, nextB - 10, Y.end - 1);
       // 小節の頭の候補
-      const sMin = Math.max(boundary - 14, st.from + 2 * Pa);
+      // （大まかな区間の境目は、無音や音の少ない所ではかなりずれるので、前は 25 秒まで探す）
+      const sMin = Math.max(boundary - 25, st.from + 2 * Pa);
       const sMax = Math.min(boundary + 8, Y.end - 6);
       const k0 = Math.ceil((sMin - st.barRef) / (4 * Pa));
       for (let k = k0; st.barRef + k * 4 * Pa <= sMax; k++) {
@@ -1333,32 +1361,64 @@ function solveChain(env: Envelope, segsIn: CoarseSeg[], shiftFirst: boolean): Co
         let xs = 0;
         for (let t = st.phase + Math.ceil((wStart - st.phase) / Pa - 1e-9) * Pa; t < s0 - 1e-6; t += Pa) {
           const c = Math.round((t - st.barRef) / Pa);
-          xs += sc(t) + aB(t, ((c % 4) + 4) % 4 === 0);
+          xs += bs(t, Pa) + aB(t, ((c % 4) + 4) % 4 === 0);
         }
         for (const n of NS) {
           for (let m = 1; m <= 17; m++) {
             if (m === 1 && n !== 1) continue;
             const R = (m - 1) * n;
             if (R > 64) break;
+            // 1 小節より短い途中の段は使わない（拍の位置を少しずらすためだけの段になりやすい）
+            if (m > 1 && R < 4) continue;
             // 途中の BPM
             const tempos: number[] = [];
             for (let i = 1; i < m; i++) tempos.push(Math.round(a + ((b - a) * i) / m));
             if (tempos.some((x, i) => x === (i ? tempos[i - 1] : a) || x === b)) continue;
             let t = s0;
             let c = 0;
-            let score = xs;
+            let score = st.score + xs;
             const starts: number[] = [];
             for (const tp of tempos) {
               starts.push(t);
               const P = 60 / tp;
-              for (let q2 = 0; q2 < n; q2++) { score += sc(t) + aB(t, c % 4 === 0); t += P; c++; }
+              for (let q2 = 0; q2 < n; q2++) { score += bs(t, P) + aB(t, c % 4 === 0); t += P; c++; }
             }
-            const rampEnd = t;
-            if (rampEnd > Y.end - 4) continue;
-            for (let q2 = 0; q2 < 8; q2++) { score += sc(t) + aB(t, c % 4 === 0); t += Pb; c++; }
+            if (t > wEnd - 2) continue;
+            let eOwn = 0;
+            // 次の区間の中の拍は、拍の位置（1/4・1/3 拍のずれ）を問わずに BPM が合っているかだけを見る。
+            // 拍の上より裏に音の多い区間では、正しい拍の位置の点数が低くなるため（拍の位置は変わり目のつながりで決める）
+            {
+              let bestY = -Infinity;
+              let ownY = -Infinity;
+              for (const f of [0, 0.25, 0.5, 0.75, 1 / 3, 2 / 3]) {
+                // 拍の位置の細かいずれ（±30ms）も許す（BPM を丸めた分や、立ち上がりの測り方のずれ）
+                for (const e of [-0.03, -0.02, -0.01, 0, 0.01, 0.02, 0.03]) {
+                  let y = 0;
+                  for (let tt = t + f * Pb + e; tt < wEnd; tt += Pb) y += bs(tt, Pb);
+                  if (y > bestY) bestY = y;
+                  if (f === 0 && y > ownY) { ownY = y; eOwn = e; }
+                }
+              }
+              for (let tt = t; tt < wEnd; tt += Pb, c++) score += aB(tt, c % 4 === 0);
+              score += bestY;
+            }
+            // 新しい BPM の拍の位置は、変わり目のつながりから少し（±30ms まで）ずらしてよい（前の区間の拍の位置の測りのずれを持ち越さない）
+            const rampEnd = t + eOwn;
+            // 新しい BPM の最初の 4 小節の頭の音（シンバルなど、区間の始まりの強い音は小節の頭に来る）
+            {
+              const firstBar = rampEnd + (((4 - (R % 4)) % 4) * Pb);
+              for (let q3 = 0; q3 < 4; q3++) score += W_BAR * sc(firstBar + q3 * 4 * Pb);
+            }
+            // 変わり目が、次の区間を大まかに測った拍の位置（±40ms）に乗るなら加点。
+            // 無音の所で変わるときは音から変わり目の位置が決まらないので、前の区間の小節の頭と次の区間の拍の位置が両方合う所を選ぶ
+            {
+              const x = (rampEnd - Y.phase) / Pb;
+              const d = Math.abs(x - Math.round(x)) * Pb;
+              if (d < 0.04) score += W_PH * LAM;
+            }
             // 形の複雑さ
             if (m > 1) {
-              score -= LAM + 0.1 * LAM * (m - 1);
+              score -= PEN_RAMP * LAM + PEN_STEP * LAM * (m - 1);
               if (Math.abs((b - a) / m - Math.round((b - a) / m)) > 1e-6) score -= 0.7 * LAM;
             }
             if (next.length >= K * 4 && score < next[next.length - 1].score) continue;
@@ -1371,7 +1431,7 @@ function solveChain(env: Envelope, segsIn: CoarseSeg[], shiftFirst: boolean): Co
             });
             const barRefY = rampEnd + (((4 - (R % 4)) % 4) * Pb);
             out.push({ ...Y, start: rampEnd, phase: rampEnd, down: barRefY, barStart: R % 4 === 0, whole: true });
-            next.push({ score, bpm: b, phase: rampEnd, barRef: barRefY, from: rampEnd + 8 * Pb, out });
+            next.push({ score, bpm: b, phase: rampEnd, barRef: barRefY, from: wEnd, out });
             next.sort((x, y) => y.score - x.score);
             if (next.length > K * 4) next.length = K * 4;
           }
@@ -1833,17 +1893,29 @@ function analyzeInner(env: Envelope, duration: number, progress: ((p: number) =>
       const len = (x: CoarseSeg) => x.end - x.start;
       let a = 0;
       segs.forEach((x, i) => { if (len(x) > len(segs[a])) a = i; });
+      // 隣の区間の BPM に近いほど、また太鼓の曲でよくある速さ（170 くらい）に近いほどよい
       const fix = (i: number, ref: number) => {
+        const cost = (b: number) => Math.abs(Math.log2(b / ref)) + Math.abs(Math.log2(b / 170));
         const x = segs[i];
         let c = x.bpm;
         for (const m of [0.5, 2]) {
           const b = x.bpm * m;
-          if (b >= BPM_MIN && b <= BPM_MAX && Math.abs(Math.log2(b / ref)) < Math.abs(Math.log2(c / ref)) - 0.1) c = b;
+          if (b >= BPM_MIN && b <= BPM_MAX && cost(b) < cost(c) - 0.1) c = b;
         }
         if (c !== x.bpm) segs[i] = refineCoarse(env, x.start, x.end, c);
       };
       for (let i = a + 1; i < segs.length; i++) fix(i, segs[i - 1].bpm);
       for (let i = a - 1; i >= 0; i--) fix(i, segs[i + 1].bpm);
+    }
+    // 同じ BPM の区間にはさまれた、BPM がちょうど 2/3・3/2 倍（1% 以内）の区間は、3 連のリズムが目立つだけのことが多いので、前後の BPM にする
+    // （3/4・4/3 倍は 175 → 130 → 175 のような本当の変化と区別がつかないので入れない）
+    for (let i = 1; i + 1 < segs.length; i++) {
+      const p = segs[i - 1].bpm;
+      const q = segs[i + 1].bpm;
+      if (Math.abs(p / q - 1) >= 0.015) continue;
+      const r = segs[i].bpm / p;
+      if (![2 / 3, 3 / 2].some((x) => Math.abs(r / x - 1) < 0.01)) continue;
+      segs[i] = refineCoarse(env, segs[i].start, segs[i].end, (p + q) / 2);
     }
     for (let guard = 0; guard < 50 && segs.length > 1; guard++) {
       let j = segs.findIndex((x) => x.end - x.start < 8);
@@ -2033,3 +2105,4 @@ export function planBeatTimes(plan: TempoPlan, tpb: number, untilSec: number): {
   }
   return out;
 }
+
