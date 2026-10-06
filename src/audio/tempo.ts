@@ -1748,9 +1748,11 @@ export function tempoPlan(r: TempoResult, tpb: number, mul: number | number[] = 
   const meters = r.meters?.length ? r.meters : [{ beat: r.downbeat, num: 4, den: 4 }];
   const L0 = meterLen(meters[0]) * m(segOf(meters[0].beat));
   const t0 = r.t0 + fine;
-  // 測った 1 拍目は、音源の頭以降でいちばん早い小節の頭に合わせる
+  // 測った 1 拍目は、音源の頭以降でいちばん早い小節の頭に合わせる。
+  // ただし音源の頭のわずかに前（0.1 秒以内）の小節の頭は、測りの誤差で前に出ただけのことが多いので、そこを 1 小節目にする
+  // （例: 本当は 0.013 秒の 1 拍目が -0.003 秒と測れたとき、1 小節後ろを 1 小節目にすると譜面全体が 1 小節ずれる）
   let d0 = scaled(r.downbeat);
-  d0 -= Math.floor((t0 + (d0 - firstBeat) * P1) / (L0 * P1)) * L0;
+  d0 -= Math.floor((t0 + (d0 - firstBeat) * P1 + 0.1) / (L0 * P1)) * L0;
   // そこから手で動かした拍数（音源の頭より前にも、何小節後ろにも動かせる。最初の BPM の区間の中まで）
   const d = Math.min(d0 + shift, firstBeat + segs[0].beats - 1);
   const down = t0 + (d - firstBeat) * P1;
