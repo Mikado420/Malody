@@ -1855,6 +1855,38 @@ function alignScore(env: Envelope, r: TempoResult, phaseFree = false): number {
 }
 
 /**
+ * 区間ごとの、拍の位置と音のずれ（秒、＋は音が後ろ）。BPM は譜面に書けるように整数などに丸め、区間の拍数も整数にするので、
+ * 曲によっては区間ごとに音の位置が数十 ms ずつずれる（変わり目の前後で音源の拍の間がわずかに違うなど）
+ */
+function segResiduals(env: Envelope, r: TempoResult): { e: number; w: number }[] {
+  const at = (t: number) => {
+    const x = (t - env.t0) * env.fr;
+    const i = Math.floor(x);
+    const a = env.all[i] ?? 0;
+    const b = env.all[i + 1] ?? 0;
+    return a + (b - a) * (x - i);
+  };
+  const out: { e: number; w: number }[] = [];
+  let ts = r.t0;
+  for (const s of r.segments) {
+    const P = 60 / s.bpm;
+    const nb = s.endBeat - s.startBeat;
+    if (nb >= 32) {
+      let best = -Infinity;
+      let be = 0;
+      for (let e = -0.045; e <= 0.0451; e += 0.001) {
+        let y = 0;
+        for (let j = 0; j < nb; j++) y += at(ts + j * P + e) + 0.5 * at(ts + (j + 0.5) * P + e);
+        if (y > best) { best = y; be = e; }
+      }
+      out.push({ e: be, w: nb * P });
+    }
+    ts += nb * P;
+  }
+  return out;
+}
+
+/**
  * 曲の BPM（途中の変化も）と、小節の頭を測る。
  * 2 つの測り方（大まかに区間全体で合わせる／拍を 1 つずつ追う）で測り、曲の音の立ち上がりによく乗っているほうを使う
  */
@@ -1981,6 +2013,13 @@ function analyzeInner(env: Envelope, duration: number, progress: ((p: number) =>
   // 拍子と小節の頭（途中で 1 小節だけ短い・長い小節も）
   best.beatAcc = beatAccents(env, best);
   computeMeters(best, opts.meters ?? [], curAnchors);
+  // 区間ごとに音と拍の位置が少しずつずれる曲では、ずれのいちばん大きい区間が目立たないよう、OFFSET を真ん中に合わせる
+  // （例: 150 の区間で合わせると 200 の区間で 30ms 遅れるとき、両方 15ms ずつにする。手で決めた 1 拍目があるときはそこに合わせたままにする）
+  if (!curAnchors.length) {
+    const res = segResiduals(env, best);
+    // ずれは最初の区間からの差で見る（音の立ち上がりの山の出方で、ずれの値そのものは数十 ms かたよるため。最初の区間の位置はもう合わせてある）
+    if (res.length > 1) best.t0 += (Math.max(...res.map((x) => x.e)) + Math.min(...res.map((x) => x.e))) / 2 - res[0].e;
+  }
   const name = best === single ? '1 つの BPM' : best === coarse ? '区間ごと' : '1 拍ずつ';
   const bpms = (r: TempoResult) => r.segments.map((x) => x.bpm).join('→');
   best.info = `大まかな区間 ${rawInfo}／区間ごと ${bpms(coarse)}${bridgeFail ? `（つなぎ失敗 ${bridgeFail}）` : ''}／合い方 1 つ ${ss.toFixed(3)}・区間 ${sc.toFixed(3)}・1 拍ずつ ${sf.toFixed(3)}／採用 ${name}`;
