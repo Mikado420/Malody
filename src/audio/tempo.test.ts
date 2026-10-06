@@ -117,6 +117,19 @@ describe('BPM・OFFSET の自動測定', () => {
     expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual([[88, 160], [92, 145], [96, 130], [160, 145], [168, 160], [176, 175]]);
   });
 
+  it('2 拍ごとに速くなる曲（150 から 2 拍ごとに +2 で 180）も、2 拍ごとの BPM で出す', () => {
+    const sr = 22050;
+    const parts = [{ bpm: 150, beats: 32 }];
+    for (let i = 1; i <= 15; i++) parts.push({ bpm: 150 + 2 * i, beats: 2 });
+    parts.push({ bpm: 180, beats: 64 });
+    const plan = tempoPlan(analyzeTempo(song(sr, 0.5, parts), sr), TPB)!;
+    expect(plan.bpm).toBe(150);
+    expect(Math.abs(plan.offset - -0.5)).toBeLessThan(0.006);
+    expect(plan.changes.map((c) => [c.tick / TPB, c.bpm])).toEqual(
+      Array.from({ length: 15 }, (_, i) => [32 + i * 2, 152 + 2 * i]),
+    );
+  });
+
   it('3/4 拍子の曲は #MEASURE 3/4 にする', () => {
     const sr = 22050;
     const x = song(sr, 0.5, [{ bpm: 150, beats: 120, bar: 3 }]);

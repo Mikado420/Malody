@@ -796,6 +796,8 @@ interface CoarseSeg {
   down?: number;
   /** 区間の頭が小節の頭だと分かっている（BPM の変わり目を小節の頭で決めたとき） */
   barStart?: boolean;
+  /** 区間の頭が前の区間の拍のちょうど整数個あと（拍の途中で変わらない） */
+  whole?: boolean;
   bpm: number;
   rawBpm: number;
   phase: number;
@@ -1236,6 +1238,161 @@ function bridge(env: Envelope, G: CoarseSeg[], shiftA = false): CoarseSeg[] | nu
   return out;
 }
 
+
+// ---------- 仮説を立てて確かめる（BPM の変わり方） ----------
+
+/**
+ * BPM の変わり目を「仮説 → 検算」で決める。
+ * 安定した区間（大まかに測ったもの）の間ごとに、次の形の変わり方をすべて試し、音とのいちばんよく合うものを選ぶ:
+ *   前の BPM a のまま、ある小節の頭 s まで進み、そこから n 拍ごとに (b - a) / m ずつ BPM を変えて、m 段目で次の BPM b になる
+ *   （m = 1 なら s でいきなり b。n は 1・2・4・8 拍。途中の BPM は整数に丸める）
+ * 例: 175 → 160 → 145 → 130 は m = 3・n = 4、150 から 2 拍ごとに +2 で 180 は m = 15・n = 2。
+ * 点数 = 拍の位置の音の強さ（その近くの平均との差）の合計 − 形の複雑さ。
+ * 変わり目の前後で、次の区間の拍の位置（小節の頭）も決まる。区間が続くときは、上位の候補をいくつか残して
+ * 次の変わり目と合わせて選ぶ（前の変わり目と次の変わり目のつながりで、途中の区間の拍の位置が決まる）
+ */
+function solveChain(env: Envelope, segsIn: CoarseSeg[], shiftFirst: boolean): CoarseSeg[] | null {
+  // 短い（16 秒未満の）区間は、だんだん変わる所を大まかに 1 つの BPM で見ただけのことが多いので、仮説の途中の段として扱う
+  const segs = segsIn.filter((x, i) => i === 0 || i === segsIn.length - 1 || x.end - x.start >= 16);
+  for (let i = 1; i < segs.length; i++) segs[i - 1] = { ...segs[i - 1], end: segs[i].start };
+  for (let i = segs.length - 1; i > 0; i--) if (Math.abs(segs[i].bpm / segs[i - 1].bpm - 1) < 0.015) {
+    segs[i - 1] = { ...segs[i - 1], end: segs[i].end };
+    segs.splice(i, 1);
+  }
+  if (segs.length < 2) return null;
+  const { fr, t0, all } = env;
+  const N = all.length;
+  // 立ち上がりの山のずれ（最初の区間の拍で決める）
+  const S0 = segs[0];
+  const P0 = 60 / S0.bpm;
+  let lag = 0;
+  {
+    let bv = -Infinity;
+    for (let d = -4; d <= 2; d++) {
+      let sum = 0;
+      for (let t = S0.phase + Math.ceil((S0.start - S0.phase) / P0) * P0; t < Math.min(S0.end, S0.start + 60); t += P0) sum += all[Math.round((t - t0) * fr) + d] ?? 0;
+      if (sum > bv) { bv = sum; lag = d; }
+    }
+  }
+  const hk = new Float32Array(N);
+  for (let f = 0; f < N; f++) {
+    let v = 0;
+    for (let d = -2; d <= 2; d++) v = Math.max(v, (all[f + lag + d] ?? 0) * KERN[d + 2]);
+    hk[f] = v;
+  }
+  const pre = new Float64Array(N + 1);
+  for (let f = 0; f < N; f++) pre[f + 1] = pre[f] + hk[f];
+  const mu = pre[N] / Math.max(1, N);
+  if (!(mu > 0)) return null;
+  const W = Math.round(1.5 * fr);
+  const sc = (t: number) => {
+    const f = Math.round((t - t0) * fr);
+    if (f < 0 || f >= N) return 0;
+    const a = Math.max(0, f - W);
+    const b = Math.min(N, f + W);
+    return hk[f] - (pre[b] - pre[a]) / (b - a);
+  };
+  const LAM = 3 * mu;
+  const aB = (t: number, bar: boolean) => {
+    for (const x of curAnchors) if (Math.abs(t - x) < 0.035) return bar ? 20 * LAM : -20 * LAM;
+    return 0;
+  };
+  type State = { score: number; bpm: number; phase: number; barRef: number; from: number; out: CoarseSeg[] };
+  const first = { ...segs[0] };
+  const down0 = first.down ?? findDownbeatCoarse(env, first);
+  let beam: State[] = [];
+  for (let q = 0; q < (shiftFirst ? 4 : 1); q++) {
+    for (let bo = 0; bo < (shiftFirst ? 4 : 1); bo++) {
+      const dt = (q * P0) / 4;
+      beam.push({
+        score: (q ? -0.5 * LAM : 0) + (bo ? -0.5 * LAM : 0),
+        bpm: first.bpm, phase: first.phase + dt, barRef: down0 + dt + bo * P0, from: -Infinity,
+        out: [{ ...first, phase: first.phase + dt, down: down0 + dt + bo * P0 }],
+      });
+    }
+  }
+  const NS = [1, 2, 4, 8];
+  const K = 8;
+  for (let j = 0; j + 1 < segs.length; j++) {
+    const Y = segs[j + 1];
+    const b = Y.bpm;
+    const Pb = 60 / b;
+    const boundary = segs[j].end;
+    const next: State[] = [];
+    for (const st of beam) {
+      const a = st.bpm;
+      const Pa = 60 / a;
+      const wStart = Math.max(boundary - 20, st.from);
+      // 小節の頭の候補
+      const sMin = Math.max(boundary - 14, st.from + 2 * Pa);
+      const sMax = Math.min(boundary + 8, Y.end - 6);
+      const k0 = Math.ceil((sMin - st.barRef) / (4 * Pa));
+      for (let k = k0; st.barRef + k * 4 * Pa <= sMax; k++) {
+        const s0 = st.barRef + k * 4 * Pa;
+        // s までの前の BPM の拍
+        let xs = 0;
+        for (let t = st.phase + Math.ceil((wStart - st.phase) / Pa - 1e-9) * Pa; t < s0 - 1e-6; t += Pa) {
+          const c = Math.round((t - st.barRef) / Pa);
+          xs += sc(t) + aB(t, ((c % 4) + 4) % 4 === 0);
+        }
+        for (const n of NS) {
+          for (let m = 1; m <= 17; m++) {
+            if (m === 1 && n !== 1) continue;
+            const R = (m - 1) * n;
+            if (R > 64) break;
+            // 途中の BPM
+            const tempos: number[] = [];
+            for (let i = 1; i < m; i++) tempos.push(Math.round(a + ((b - a) * i) / m));
+            if (tempos.some((x, i) => x === (i ? tempos[i - 1] : a) || x === b)) continue;
+            let t = s0;
+            let c = 0;
+            let score = xs;
+            const starts: number[] = [];
+            for (const tp of tempos) {
+              starts.push(t);
+              const P = 60 / tp;
+              for (let q2 = 0; q2 < n; q2++) { score += sc(t) + aB(t, c % 4 === 0); t += P; c++; }
+            }
+            const rampEnd = t;
+            if (rampEnd > Y.end - 4) continue;
+            for (let q2 = 0; q2 < 8; q2++) { score += sc(t) + aB(t, c % 4 === 0); t += Pb; c++; }
+            // 形の複雑さ
+            if (m > 1) {
+              score -= LAM + 0.1 * LAM * (m - 1);
+              if (Math.abs((b - a) / m - Math.round((b - a) / m)) > 1e-6) score -= 0.7 * LAM;
+            }
+            if (next.length >= K * 4 && score < next[next.length - 1].score) continue;
+            // 結果の区間
+            const out = st.out.map((x) => ({ ...x }));
+            out[out.length - 1].end = s0;
+            tempos.forEach((tp, i) => {
+              const st0 = starts[i];
+              out.push({ start: st0, end: i + 1 < starts.length ? starts[i + 1] : rampEnd, bpm: tp, rawBpm: tp, phase: st0, beats: n, matched: n, jitterMs: 0, barStart: (i * n) % 4 === 0, whole: true });
+            });
+            const barRefY = rampEnd + (((4 - (R % 4)) % 4) * Pb);
+            out.push({ ...Y, start: rampEnd, phase: rampEnd, down: barRefY, barStart: R % 4 === 0, whole: true });
+            next.push({ score, bpm: b, phase: rampEnd, barRef: barRefY, from: rampEnd + 8 * Pb, out });
+            next.sort((x, y) => y.score - x.score);
+            if (next.length > K * 4) next.length = K * 4;
+          }
+        }
+      }
+    }
+    if (!next.length) return null;
+    // 似た候補（同じ所で同じ形）ばかりにならないよう、上位から拍の位置の違うものを残す
+    const kept: State[] = [];
+    for (const x of next) {
+      if (kept.some((y) => Math.abs(y.phase - x.phase) < 0.01 && Math.abs(y.barRef - x.barRef) < 0.01)) continue;
+      kept.push(x);
+      if (kept.length >= K) break;
+    }
+    beam = kept;
+  }
+  const best = beam[0];
+  best.out[best.out.length - 1].end = segs[segs.length - 1].end;
+  return best.out;
+}
+
 /** 小節の頭: 4 拍ごとの位置のうち、低い音の立ち上がりがいちばん強い所 */
 function findDownbeatCoarse(env: Envelope, seg: CoarseSeg): number {
   if (seg.down !== undefined) return seg.down;
@@ -1367,7 +1524,7 @@ function coarseToResult(c: { segs: CoarseSeg[]; downbeat: number }, duration: nu
     const endT = i + 1 < segs.length ? segs[i + 1].start : duration;
     // BPM は拍の途中（1/4 拍単位）でも変わることがある
     // 次の区間が小節の頭から始まると分かっているときは、拍の途中では変えない（整数の拍）
-    const whole = i + 1 < segs.length && segs[i + 1].barStart;
+    const whole = i + 1 < segs.length && (segs[i + 1].barStart || segs[i + 1].whole);
     const n = i + 1 < segs.length ? (whole ? Math.max(1, Math.round((endT - tPrev) / P)) : Math.max(0.25, Math.round((4 * (endT - tPrev)) / P) / 4)) : Math.max(1, Math.floor((endT - tPrev) / P));
     out.push({
       startBeat: beat, endBeat: beat + n, start: i === 0 ? 0 : tPrev, end: endT,
@@ -1666,6 +1823,7 @@ function analyzeInner(env: Envelope, duration: number, progress: ((p: number) =>
   const craw = analyzeCoarse(env, tg, path, duration);
   const rawInfo = craw.segs.map((x) => Math.round(x.bpm)).join('→');
   let bridgeFail = 0;
+  let solvedChain = false;
   // 大まかな測り方の区間の整理: 8 秒未満の短い区間（裏拍や 3 連のリズムが目立つだけのことが多い）は隣につなぎ、
   // BPM の差が 1.5% 未満の隣どうしもつなぐ（つないだ所は、つないだ範囲全体で合わせ直す）
   {
@@ -1699,7 +1857,10 @@ function analyzeInner(env: Envelope, duration: number, progress: ((p: number) =>
     }
     // 境目を細かく決め、だんだん変わる所は小さな区間に分ける。
     // 短い（40 秒未満の）区間をはさむときは、その前後の区間とまとめて 1 度に決める
-    if (segs.length > 1) {
+    const solved = segs.length > 1 ? solveChain(env, segs, true) : null;
+    solvedChain = !!solved;
+    if (solved) segs = solved;
+    else if (segs.length > 1) {
       const out: CoarseSeg[] = [segs[0]];
       let i = 0;
       while (i < segs.length - 1) {
@@ -1738,7 +1899,8 @@ function analyzeInner(env: Envelope, duration: number, progress: ((p: number) =>
   let jumps = 0;
   for (let i = 1; i < fine.segments.length; i++) if (Math.abs(fine.segments[i].bpm / fine.segments[i - 1].bpm - 1) > 0.08) jumps++;
   const fineOk = jumps <= Math.max(2, fine.segments.length / 10);
-  if (fineOk && sf > bs * 1.03 && sf > ss * 1.04) best = fine;
+  // 区間ごとの案が「仮説 → 検算」で決めた変わり方なら、1 拍ずつの案ははっきり（10% 以上）よいときだけ使う
+  if (fineOk && sf > bs * (solvedChain && best === coarse ? 1.1 : 1.03) && sf > ss * 1.04) best = fine;
   // 手で決めた 1 拍目があるときは、そこに拍が来る案を使う
   if (curAnchors.length && anchorErr(best) > 0.035) {
     const ok = [coarse, single, fine].filter((r) => anchorErr(r) <= 0.035);
