@@ -2119,7 +2119,7 @@ function drawTempoOverview(plan: TempoPlan, playhead = -1) {
   const { ctx, W, H } = fitCanvas(cv);
   const dur = st.result.duration;
   const xOf = (t: number) => (Math.max(0, Math.min(dur, t)) / dur) * W;
-  ctx.fillStyle = '#111114';
+  ctx.fillStyle = '#020810';
   ctx.fillRect(0, 0, W, H);
   const secs = editSections(plan);
   const xs = secs.map((s, i) => ({
@@ -2167,7 +2167,7 @@ function drawTempoOverview(plan: TempoPlan, playhead = -1) {
   // 選んでいる区間
   const s = xs[st.sel];
   if (s) {
-    ctx.strokeStyle = '#ffb02e';
+    ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 3;
     ctx.strokeRect(s.x0 + 1.5, 1.5, Math.max(3, s.x1 - s.x0 - 3), H - 3);
   }
@@ -2204,7 +2204,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   if (!cv || !buf) return;
   const st = tempoState;
   const { ctx, W, H } = fitCanvas(cv);
-  ctx.fillStyle = '#111114';
+  ctx.fillStyle = '#020810';
   ctx.fillRect(0, 0, W, H);
   const t0 = st.viewAt - st.span / 2;
   const t1 = st.viewAt + st.span / 2;
@@ -2215,7 +2215,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   if (sel) {
     const a = st.sel === 0 ? 0 : planTimeAt(plan, TPB, sel.s);
     const b = sel.e === Infinity ? (st.result?.duration ?? t1) : planTimeAt(plan, TPB, sel.e);
-    ctx.fillStyle = 'rgba(255,176,46,0.08)';
+    ctx.fillStyle = 'rgba(30,136,255,0.12)';
     ctx.fillRect(xOf(a), 0, xOf(b) - xOf(a), H);
   }
   // 波形（1 px ごとの最大・最小）
@@ -2259,7 +2259,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
     if (i === 0 && t < t0) {
       // 最初の区間の旗は、画面の左端に小さく
       if (st.viewAt - st.span / 2 < (secs[1] ? planTimeAt(plan, TPB, secs[1].s) : Infinity)) {
-        ctx.fillStyle = i === st.sel ? '#ffb02e' : '#3fa9f5';
+        ctx.fillStyle = i === st.sel ? '#ffffff' : '#1e88ff';
         const label = String(Number(s.bpm.toFixed(3)));
         const w = ctx.measureText(label).width + 10;
         ctx.globalAlpha = 0.85;
@@ -2274,7 +2274,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
     const x = xOf(t);
     const label = String(Number(s.bpm.toFixed(3)));
     const w = ctx.measureText(label).width + 10;
-    ctx.fillStyle = i === st.sel ? '#ffb02e' : '#3fa9f5';
+    ctx.fillStyle = i === st.sel ? '#ffffff' : '#1e88ff';
     ctx.fillRect(x - 1.5, 0, 3, H);
     ctx.fillRect(x, 0, w, 20);
     ctx.fillStyle = '#111';

@@ -2,12 +2,16 @@
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 :root {
   --bg: #000;
-  --bar: #0b0b0d;
-  --panel: #1c1b21;
-  --line: #34333b;
-  --text: #f4f4f4;
-  --sub: #9a9aa2;
-  --accent: #ffb02e;
+  --bar: #030912;
+  --panel: #08111e;
+  --line: #1d3352;
+  --text: #f4f8ff;
+  --sub: #8ea6c4;
+  --accent: #1e88ff;
+  --accent-ink: #fff;
+  --btn: #0f1f36;
+  --btn-on: #12345e;
+  --glow-b: 0 0 6px rgba(30, 136, 255, 0.85), 0 0 16px rgba(30, 136, 255, 0.4);
   --don: #f2442b;
   --ka: #5ec4d4;
   --roll: #fbbf14;
@@ -38,7 +42,7 @@ button, select, input { font: inherit; color: inherit; }
 button {
   border: 0;
   border-radius: 10px;
-  background: #2a2930;
+  background: var(--btn);
   padding: 8px 12px;
   font-size: 14px;
   cursor: pointer;
@@ -46,7 +50,7 @@ button {
 }
 button:active { filter: brightness(1.3); }
 button:disabled { opacity: 0.35; }
-button.primary { background: var(--accent); color: #1a1405; font-weight: 700; }
+button.primary { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
 button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 
 /* ---------- エディタ本体 ---------- */
@@ -60,6 +64,10 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .stage {
   position: relative;
   flex: 1;
+  background:
+    radial-gradient(ellipse at 30% 85%, rgba(11, 95, 192, 0.22), transparent 60%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='97' viewBox='0 0 56 97'%3E%3Cpath d='M28 0 56 16v32L28 64 0 48V16zM28 64v33' fill='none' stroke='%231e88ff' stroke-opacity='0.09'/%3E%3C/svg%3E"),
+    #01050b;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -110,9 +118,11 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   min-width: 0;
   overflow: hidden;
   font-size: max(10px, calc(24px * var(--es, 0.45)));
-  background: rgba(30, 30, 34, 0.85);
-  border: 2px solid #3a3a40;
-  border-radius: calc(16px * var(--es, 0.45));
+  background: linear-gradient(160deg, rgba(16, 36, 64, 0.92), rgba(4, 12, 24, 0.92));
+  border: 2px solid #1f3d66;
+  border-radius: 0;
+  /* 角を斜めに切った形（曲選択の画面のカードと同じ） */
+  clip-path: polygon(calc(14px * var(--es, 0.45) + 4px) 0, 100% 0, 100% calc(100% - 14px * var(--es, 0.45) - 4px), calc(100% - 14px * var(--es, 0.45) - 4px) 100%, 0 100%, 0 calc(14px * var(--es, 0.45) + 4px));
 }
 .tool i {
   width: calc(40px * var(--es, 0.45));
@@ -129,7 +139,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .tool.roll i { background: var(--roll); border-radius: 999px; width: calc(64px * var(--es, 0.45)); }
 .tool.balloon i { background: var(--balloon); }
 .tool.erase i { background: transparent; border-style: dashed; box-shadow: none; }
-.tool.active { border-color: var(--accent); background: rgba(60, 48, 30, 0.95); }
+.tool.active { border-color: #fff; background: linear-gradient(160deg, rgba(30, 136, 255, 0.55), rgba(8, 40, 84, 0.95)); box-shadow: inset 0 0 14px rgba(30, 136, 255, 0.6); }
 
 
 /* 右のアイコンバー（Malody 風） */
@@ -141,8 +151,9 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   align-items: center;
   gap: 2px;
   padding: 6px 0 calc(6px + var(--safe-b));
-  background: var(--bar);
-  border-left: 1px solid var(--line);
+  background: linear-gradient(180deg, #06111f, #020710);
+  border-left: 1px solid rgba(30, 136, 255, 0.55);
+  box-shadow: -1px 0 10px rgba(30, 136, 255, 0.25);
   overflow-y: auto;
 }
 .side > button, .side > .divbtn {
@@ -160,8 +171,9 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   border-radius: 10px;
   cursor: pointer;
 }
-.side > *:active { background: #26252c; }
+.side > *:active { background: var(--btn); }
 .side svg {
+  filter: drop-shadow(0 0 3px rgba(255, 255, 255, 0.45));
   width: max(20px, calc(58px * var(--es, 0.45)));
   height: max(20px, calc(58px * var(--es, 0.45)));
   fill: none;
@@ -171,8 +183,8 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   stroke-linejoin: round;
 }
 .side small { font-size: 10px; color: var(--sub); font-variant-numeric: tabular-nums; }
-.side .on { background: #3a2f1c; }
-.side .on svg { stroke: var(--accent); }
+.side .on { background: var(--btn-on); }
+.side .on svg { stroke: var(--accent); filter: drop-shadow(0 0 4px var(--accent)); }
 
 /* ---------- シート ---------- */
 .sheet {
@@ -187,20 +199,26 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .sheet-panel {
   width: min(560px, 100%);
   max-height: 88%;
-  background: var(--panel);
+  background: linear-gradient(180deg, #0a1628, var(--panel) 120px);
+  border: 1px solid var(--line);
+  border-bottom: 0;
+  box-shadow: 0 -6px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(30, 136, 255, 0.15);
   border-radius: 16px 16px 0 0;
   display: flex;
   flex-direction: column;
   padding-bottom: var(--safe-b);
 }
 .sheet-head {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 10px 12px 8px 16px;
   border-bottom: 1px solid var(--line);
 }
-.sheet-head h2 { margin: 0; font-size: 17px; }
+.sheet-head h2 { margin: 0; font-size: 17px; text-shadow: 0 0 8px rgba(255, 255, 255, 0.35); }
+/* 見出しの下の線: 白と青に分けた光る線（ロゴの下線と同じ） */
+.sheet-head::after { content: ''; position: absolute; left: 16px; bottom: -1px; width: min(240px, 50%); height: 2px; background: linear-gradient(90deg, #fff 0 55%, var(--accent) 55% 100%); box-shadow: var(--glow-b); }
 .sheet-body {
   overflow-y: auto;
   touch-action: pan-y;
@@ -220,7 +238,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .field input[type='text'], .field input[type='number'] {
   flex: 1;
   min-width: 0;
-  background: #2a2930;
+  background: var(--btn);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
@@ -230,7 +248,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .field output { width: 48px; text-align: right; font-variant-numeric: tabular-nums; }
 .field select {
   flex: 1;
-  background: #2a2930;
+  background: var(--btn);
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 7px 6px;
@@ -241,7 +259,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
   display: flex;
   align-items: center;
   gap: 8px;
-  background: #26252c;
+  background: var(--btn);
   border-radius: 10px;
   padding: 6px 6px 6px 12px;
   font-size: 13px;
@@ -372,9 +390,9 @@ dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; font-weig
 
 .calib { display: flex; flex-direction: column; gap: 8px; }
 .calib .note { color: var(--sub); font-size: 12px; line-height: 1.6; margin: 0; }
-.calib button { background: #3a2f1c; color: var(--accent); font-weight: 700; padding: 10px; white-space: normal; }
+.calib button { background: var(--btn-on); color: var(--accent); font-weight: 700; padding: 10px; white-space: normal; }
 
-button.small { padding: 8px; font-size: 13px; background: #2a2930; color: var(--sub); }
+button.small { padding: 8px; font-size: 13px; background: var(--btn); color: var(--sub); }
 
 /* プレイ画面を出している間は、後ろに隠れているエディタを表示しない（重ねて描く手間を省く） */
 body.playing #app { visibility: hidden; }
@@ -385,7 +403,7 @@ body.playing #app { visibility: hidden; }
   flex: 1;
   min-height: 55vh;
   display: flex;
-  background: #111114;
+  background: #020810;
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
@@ -504,13 +522,13 @@ html, body { overscroll-behavior: none; }
 /* TJA の見出しの隣の太字ボタン（TJA の画面のときだけ出す） */
 .sheet-title { display: flex; align-items: center; gap: 10px; }
 .bold-toggle { display: none; min-width: 40px; height: 36px; padding: 0 10px; font-weight: 800; font-size: 16px; color: var(--sub); }
-.bold-toggle.on { background: var(--accent); color: #1a1405; }
+.bold-toggle.on { background: var(--accent); color: var(--accent-ink); }
 .sheet.tja .bold-toggle { display: inline-block; }
 .sheet.tja-bold .tja-hl, .sheet.tja-bold .tja-text { font-weight: 700; }
 
 .sheet-diag { font: 9px/1.2 ui-monospace, Menlo, monospace; color: #6e6e76; max-width: 140px; white-space: normal; }
 /* TJA の画面のとき、万一画面の下に隙間ができても文字の欄と同じ色にしておく */
-html:has(body.tja-open), body.tja-open { background: #111114; }
+html:has(body.tja-open), body.tja-open { background: #020810; }
 
 /* グラデのボタンと設定画面 */
 .sheet.grad { align-items: stretch; }
@@ -543,7 +561,7 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .grad-seg button { white-space: nowrap; padding: 8px 4px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
 .grad-err { margin: 0; color: #ff8a7a; font-size: 12px; }
 .grad-err:empty { display: none; }
-.grad-tja { display: flex; flex-direction: column; min-height: 0; background: #111114; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.grad-tja { display: flex; flex-direction: column; min-height: 0; background: #020810; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
 .grad-tja-head { padding: 6px 10px; font-size: 12px; color: var(--sub); border-bottom: 1px solid var(--line); }
 .grad-tja pre {
   flex: 1;
@@ -578,20 +596,20 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 }
 .div-menu.hidden { display: none; }
 .div-menu button { text-align: center; padding: 6px 8px; font-size: 15px; background: transparent; font-variant-numeric: tabular-nums; }
-.div-menu button.on { background: var(--accent); color: #1a1405; font-weight: 700; }
+.div-menu button.on { background: var(--accent); color: var(--accent-ink); font-weight: 700; }
 .div-menu hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 3px 0; }
 
 /* イベントの表示切り替えと一覧 */
 .ev-show { display: flex; flex-wrap: wrap; gap: 6px 16px; }
 .ev-show label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
 .ev-list { display: flex; flex-direction: column; gap: 6px; }
-.ev-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: #26252c; border-radius: 10px; }
+.ev-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: var(--btn); border-radius: 10px; }
 .ev-row i { width: 6px; align-self: stretch; border-radius: 3px; flex: none; }
 .ev-row .ev-name { flex: 1; display: flex; flex-direction: column; font-size: 15px; }
 .ev-row .ev-name small { color: var(--sub); font-size: 12px; }
 
 /* BPM・OFFSET の自動測定 */
-.tempo-progress { height: 8px; border-radius: 4px; background: #2a2930; overflow: hidden; }
+.tempo-progress { height: 8px; border-radius: 4px; background: var(--btn); overflow: hidden; }
 .tempo-progress i { display: block; height: 100%; background: var(--accent); transition: width 0.2s; }
 .note.bad { color: #ff8a7a; }
 
@@ -605,10 +623,10 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .fly-menu { min-width: 180px; padding: 6px; }
 .fly-menu button { text-align: left; padding: 9px 12px; font-size: 15px; white-space: nowrap; }
 .fly-menu button.primary:not(.on) { background: transparent; color: var(--accent); font-weight: 700; }
-.fly-menu button.on { background: #3a2f1c; color: var(--accent); font-weight: 700; }
+.fly-menu button.on { background: var(--btn-on); color: var(--accent); font-weight: 700; }
 .fly-menu h4 { margin: 6px 12px 2px; font-size: 11px; font-weight: 600; color: var(--sub); letter-spacing: 0.05em; }
 .fly-menu h4:first-child { margin-top: 2px; }
-.side .open { background: #26252c; }
+.side .open { background: var(--btn); }
 .tempo-wave-bar button[disabled] { opacity: 0.4; }
 .tempo-wave-bar { flex-wrap: wrap; }
 /* BPM・OFFSET の画面（画面いっぱい。上から: 操作のボタン・曲全体の帯・区間のボタン・拡大した波形・操作の行） */
@@ -621,19 +639,19 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .tempo-sp { flex: 1; }
 .tempo-top button { padding: 6px 14px; min-width: 42px; }
 .tempo-top button[disabled] { opacity: 0.35; }
-.tempo-tag { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: #3a3020; color: var(--accent); white-space: nowrap; }
+.tempo-tag { font-size: 12px; padding: 2px 9px; border-radius: 99px; background: var(--btn-on); color: var(--accent); white-space: nowrap; }
 .tempo-ov { width: 100%; height: 56px; border-radius: 10px; touch-action: none; cursor: pointer; display: block; flex: none; }
 .tempo-chips { display: flex; align-items: center; gap: 6px; flex: none; }
 .tempo-chips > button { padding: 6px 10px; flex: none; }
 .tempo-chip-list { flex: 1; display: flex; gap: 4px; overflow-x: auto; scrollbar-width: none; touch-action: pan-x; }
 .tempo-chip-list::-webkit-scrollbar { display: none; }
-.tempo-chip-list button { flex: none; display: flex; flex-direction: column; align-items: center; padding: 3px 9px 4px; min-width: 52px; font-weight: 800; font-size: 15px; line-height: 1.1; background: #26252c; border-left: 4px solid var(--c); }
+.tempo-chip-list button { flex: none; display: flex; flex-direction: column; align-items: center; padding: 3px 9px 4px; min-width: 52px; font-weight: 800; font-size: 15px; line-height: 1.1; background: var(--btn); border-left: 4px solid var(--c); }
 .tempo-chip-list button small { font-weight: 500; font-size: 10px; color: var(--sub); }
-.tempo-chip-list button.on { background: #3a2f1c; color: var(--accent); outline: 2px solid var(--accent); outline-offset: -2px; }
+.tempo-chip-list button.on { background: var(--btn-on); color: var(--accent); outline: 2px solid var(--accent); outline-offset: -2px; }
 .sheet.tempo .tempo-wave-wrap { flex: 1; min-height: 110px; display: flex; }
 .sheet.tempo .tempo-wave { flex: 1; height: auto; min-height: 110px; }
 .tempo-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 5px; flex: none; }
-.tempo-row button { padding: 6px 9px; min-width: 34px; font-size: 14px; background: #2c2b33; }
+.tempo-row button { padding: 6px 9px; min-width: 34px; font-size: 14px; background: var(--btn); }
 .tempo-row button[disabled] { opacity: 0.35; }
 .tempo-row button.primary { background: var(--accent); }
 .tempo-row .tempo-play { color: #4fc3ff; }
@@ -641,10 +659,10 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .tempo-sep { width: 1px; height: 24px; background: var(--line); margin: 0 4px; }
 .tempo-lbl { color: var(--sub); font-size: 12px; margin: 0 2px 0 4px; white-space: nowrap; }
 .tempo-val { min-width: 72px; text-align: center; font-size: 14px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.tempo-grp { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 2px; border-radius: 10px; background: #232228; }
-.tempo-insp { background: #1f1e24; border-radius: 12px; padding: 6px 8px; }
-.tempo-insp select { background: #111114; color: #f4f4f4; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 14px; }
-.tempo-insp input { width: 84px; height: 36px; font-size: 20px; font-weight: 800; text-align: center; background: #111114; color: #fff; border: 1px solid var(--accent); border-radius: 9px; font-variant-numeric: tabular-nums; }
+.tempo-grp { display: inline-flex; align-items: center; gap: 4px; padding: 3px 6px 3px 2px; border-radius: 10px; background: #0b1829; }
+.tempo-insp { background: #06101d; border-radius: 12px; padding: 6px 8px; }
+.tempo-insp select { background: #020810; color: #f4f4f4; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 14px; }
+.tempo-insp input { width: 84px; height: 36px; font-size: 20px; font-weight: 800; text-align: center; background: #020810; color: #fff; border: 1px solid var(--accent); border-radius: 9px; font-variant-numeric: tabular-nums; }
 /* 背の低い画面（スマホの横向きなど）では、帯やボタンを小さくしてスクロールを減らす */
 @media (max-height: 520px) {
   .sheet.tempo .sheet-body { gap: 4px; padding: 4px 10px 6px; }
@@ -714,7 +732,7 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
 .home-emblem { width: clamp(110px, 38vh, 300px); aspect-ratio: 1; }
 .home-emblem svg { width: 100%; height: 100%; animation: heFloat 6s ease-in-out infinite; }
 @keyframes heFloat { 50% { transform: translateY(-4px); } }
-.home-word { display: flex; gap: 0.5em; font-weight: 700; font-size: clamp(16px, min(5vh, 2.9vw), 40px); letter-spacing: 0.32em; line-height: 1; }
+.home-word { display: flex; gap: 0.12em; font-weight: 700; font-size: clamp(16px, min(5vh, 2.9vw), 40px); letter-spacing: 0.32em; line-height: 1; }
 .home-word .w { color: #fff; text-shadow: var(--hw-glow); }
 .home-word .b { color: var(--hb); text-shadow: var(--hb-glow); }
 .home-word-line { display: flex; width: clamp(150px, 26vw, 330px); height: 3px; margin-top: -2px; }
@@ -725,6 +743,7 @@ html:has(body.tja-open), body.tja-open { background: #111114; }
   clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px); display: grid; place-items: center; }
 .home-side svg { width: 58%; height: 58%; fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .home-side button:active { background: rgba(30, 136, 255, 0.35); }
+.home-tagline { color: #cfe4ff; font-size: clamp(9px, 1.8vh, 13px); letter-spacing: 0.55em; font-weight: 600; margin-right: -0.55em; }
 .home-info { display: flex; align-items: baseline; gap: 8px; color: #9cc8ff; font-size: 12px; letter-spacing: 0.3em; }
 .home-info b { color: #fff; font-size: 20px; letter-spacing: 0.05em; text-shadow: var(--hw-glow); }
 

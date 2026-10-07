@@ -43,17 +43,17 @@ const R = {
 
 const C = {
   bg: '#000000',
-  col: '#000000',
-  colLine: '#6a6a70',
-  lane: '#1b1b1b',
-  laneEdge: '#c8c8c8',
+  col: 'rgba(1,6,13,0.92)',
+  colLine: '#24548a',
+  lane: '#0b1626',
+  laneEdge: '#4f9bf0',
   gogo: 'rgba(255,110,40,0.16)',
   measure: 'rgba(255,255,255,0.8)',
   text: '#f4f4f4',
   sub: '#9a9aa2',
-  hex: '#9a9aa0',
-  hexEdge: '#e8e8ec',
-  wave: '#e8605e',
+  hex: '#16365e',
+  hexEdge: '#7fb8ff',
+  wave: '#3d8ef0',
   event: '#c27dff',
 };
 
@@ -439,11 +439,11 @@ export class EditorView {
     const leftTick = this.tickOf(L.colW - L.bigR * 2);
     const rightTick = this.tickOf(this.w + L.bigR * 2);
 
-    ctx.fillStyle = C.bg;
-    ctx.fillRect(0, 0, this.w, this.h);
+    // 背景は透明（後ろの六角形の模様を見せる。CSS の .stage）
+    ctx.clearRect(0, 0, this.w, this.h);
 
     // 波形
-    ctx.fillStyle = '#0c0c0e';
+    ctx.fillStyle = 'rgba(2,9,18,0.9)';
     ctx.fillRect(L.waveX, L.waveY, this.w - L.waveX, L.waveH);
     this.drawWave(L);
 
@@ -473,10 +473,14 @@ export class EditorView {
       ctx.fillRect(x1, L.laneY + L.laneH - bh, x2 - x1, bh);
     }
 
+    ctx.save();
     ctx.fillStyle = C.laneEdge;
+    ctx.shadowColor = 'rgba(30,136,255,0.8)';
+    ctx.shadowBlur = 8 * s;
     const edge = Math.max(1, 2 * s);
     ctx.fillRect(L.colW, L.laneY - edge / 2, this.w - L.colW, edge);
     ctx.fillRect(L.colW, L.laneY + L.laneH - edge / 2, this.w - L.colW, edge);
+    ctx.restore();
 
     // グリッド（小節線＋分割の点）
     // 曲の頭より前には小節線・グリッドを出さない
@@ -606,14 +610,18 @@ export class EditorView {
     }
     flush();
 
-    // 判定枠（Malody と同じ金色の二重の輪。ここが再生位置）
+    // 判定枠（白と青の二重の輪。ここが再生位置）
+    ctx.save();
+    ctx.shadowColor = 'rgba(30,136,255,0.9)';
+    ctx.shadowBlur = 10 * s;
     ctx.lineWidth = Math.max(1.5, 4 * s);
-    ctx.strokeStyle = '#e0a400';
+    ctx.strokeStyle = '#ffffff';
     ctx.beginPath();
     ctx.arc(L.playX, L.cy, R.judgeR * s, 0, Math.PI * 2);
     ctx.stroke();
+    ctx.restore();
     ctx.lineWidth = Math.max(1, 3 * s);
-    ctx.strokeStyle = '#8a6a10';
+    ctx.strokeStyle = '#1e88ff';
     ctx.beginPath();
     ctx.arc(L.playX, L.cy, R.judgeR2 * s, 0, Math.PI * 2);
     ctx.stroke();
@@ -789,7 +797,7 @@ export class EditorView {
     // 今の位置
     const now = timing.tickToTime(this.pos);
     const y = g.bottom - Math.min(1, Math.max(0, now / len)) * (g.bottom - g.top);
-    ctx.fillStyle = '#ffb02e';
+    ctx.fillStyle = '#ffffff';
     ctx.fillRect(L.colLine1, y - Math.max(1, 1.5 * s), R.densW * s, Math.max(2, 3 * s));
   }
 
@@ -810,7 +818,7 @@ export class EditorView {
     // 再生位置の線（左端から再生ボタンまで）
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, L.cy - lw / 2, L.play.x, lw);
-    ctx.fillStyle = '#ffb02e';
+    ctx.fillStyle = '#1e88ff';
     hexPath(ctx, 6 * s, L.cy, 9 * s);
     ctx.fill();
 

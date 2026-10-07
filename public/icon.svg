@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="g" cx="0.5" cy="0.48" r="0.62">
+      <stop offset="0" stop-color="#0b5fc0" stop-opacity="0.55"/>
+      <stop offset="0.6" stop-color="#03182f" stop-opacity="0.6"/>
+      <stop offset="1" stop-color="#000"/>
+    </radialGradient>
+    <pattern id="hx" width="42" height="72.75" patternUnits="userSpaceOnUse">
+      <path d="M21 0 42 12v24L21 48 0 36V12zM21 48v24.75" fill="none" stroke="#1e88ff" stroke-opacity="0.16" stroke-width="1.5"/>
+    </pattern>
+    <filter id="gw" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="gs" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <clipPath id="c"><rect width="512" height="512" rx="112"/></clipPath>
+  </defs>
+  <g clip-path="url(#c)">
+    <rect width="512" height="512" fill="#000"/>
+    <rect width="512" height="512" fill="url(#hx)"/>
+    <rect width="512" height="512" fill="url(#g)"/>
+    <!-- 斜めの帯 -->
+    <path d="M-40 420 380 -40h70L30 420z" fill="#1e88ff" opacity="0.10"/>
+    <path d="M300 560 560 300v44L344 560z" fill="#fff" opacity="0.08"/>
+    <!-- 六角形の枠 -->
+    <polygon points="256,58 427.5,157 427.5,355 256,454 84.5,355 84.5,157" fill="none" stroke="#1e88ff" stroke-width="10" filter="url(#gs)"/>
+    <polygon points="256,92 398,174 398,338 256,420 114,338 114,174" fill="#020a16" stroke="#fff" stroke-opacity="0.35" stroke-width="3"/>
+    <!-- 太鼓の面: 白い輪に青い弧、青の中心に白い点 -->
+    <g filter="url(#gw)">
+      <circle cx="256" cy="256" r="104" fill="none" stroke="#fff" stroke-width="24"/>
+      <path d="M256 152a104 104 0 0 1 104 104" fill="none" stroke="#1e88ff" stroke-width="24"/>
+      <circle cx="256" cy="256" r="48" fill="#1e88ff"/>
+      <circle cx="256" cy="256" r="21" fill="#fff"/>
+    </g>
+    <!-- 白と青の下線 -->
+    <path d="M150 478h120l-8 10H142z" fill="#fff" filter="url(#gs)"/>
+    <path d="M276 478h96l-8 10h-96z" fill="#1e88ff" filter="url(#gs)"/>
+  </g>
+</svg>

@@ -830,7 +830,7 @@ export class Renderer {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#fff';
-    ctx.fillText('Malody テストプレイ', 200, y0 + 15);
+    ctx.fillText('TJACS テストプレイ', 200, y0 + 15);
     // 名前の帯
     ctx.fillStyle = '#fff';
     roundRect(ctx, 46, y0 + 32, 290, 40, 20);
