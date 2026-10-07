@@ -8,6 +8,10 @@ import type { AudioFile } from './load';
 export interface LinkSetup {
   repo: string;
   token: string;
+  /** 中継役（Cloudflare Workers）の URL。あればトークンの代わりにこちらを通す */
+  relay?: string;
+  /** 中継役の合言葉 */
+  pass?: string;
 }
 
 export interface LinkResult {
@@ -19,9 +23,13 @@ export interface LinkResult {
 const API = 'https://api.github.com';
 
 async function gh(s: LinkSetup, path: string, init: RequestInit = {}, accept = 'application/vnd.github+json') {
+  const ct: Record<string, string> = init.body ? { 'Content-Type': 'application/json' } : {};
+  if (s.relay) {
+    return fetch(`${s.relay.replace(/\/+$/, '')}${path}`, { ...init, headers: { Accept: accept, 'X-Pass': s.pass ?? '', ...ct }, cache: 'no-store' });
+  }
   return fetch(`${API}/repos/${s.repo}${path}`, {
     ...init,
-    headers: { Authorization: `Bearer ${s.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...(init.body ? { 'Content-Type': 'application/json' } : {}) },
+    headers: { Authorization: `Bearer ${s.token}`, Accept: accept, 'X-GitHub-Api-Version': '2022-11-28', ...ct },
     cache: 'no-store',
   });
 }
@@ -32,12 +40,14 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export async function testSetup(s: LinkSetup): Promise<string | null> {
   try {
     const r = await gh(s, '/actions/workflows/fetch-audio.yml');
+    if (s.relay && r.status === 403) return '合言葉が違います';
+    if (s.relay && r.status === 500) return '中継役の設定（GITHUB_TOKEN・REPO）がまだです';
     if (r.status === 401) return 'トークンが正しくありません';
     if (r.status === 404) return 'リポジトリか、その中の fetch-audio.yml が見つかりません（トークンにこのリポジトリへのアクセスがあるかも確認してください）';
     if (!r.ok) return `確認できませんでした（${r.status}）`;
     return null;
   } catch {
-    return 'GitHub につながりませんでした';
+    return s.relay ? '中継役につながりませんでした（URL を確認してください）' : 'GitHub につながりませんでした';
   }
 }
 
@@ -57,6 +67,7 @@ export async function fetchLink(s: LinkSetup, url: string, onStatus: (msg: strin
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   onStatus('GitHub に頼んでいます…');
   const d = await gh(s, '/actions/workflows/fetch-audio.yml/dispatches', { method: 'POST', body: JSON.stringify({ ref: 'main', inputs: { url, id } }) });
+  if (s.relay && d.status === 403) throw new Error('合言葉が違います（設定を確認してください）');
   if (d.status === 401) throw new Error('トークンが正しくありません（設定を確認してください）');
   if (d.status === 403) throw new Error('トークンに Actions の書き込みの権限がありません');
   if (d.status === 404) throw new Error('リポジトリか fetch-audio.yml が見つかりません（設定を確認してください）');

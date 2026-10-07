@@ -39,6 +39,9 @@ const settings = {
   /** リンクから読み込む: 処理の入ったリポジトリと、トークン */
   linkRepo: 'Mikado420/Malody',
   linkToken: '',
+  /** リンクから読み込む: 中継役（トークン無しで使う）の URL と合言葉 */
+  linkRelay: '',
+  linkPass: '',
   /** 前の版の「1 拍を何分割」（読み込みの引き継ぎ用） */
   divisor: 0,
   /** グリッド: 1 小節（4/4、全音符）を何分割するか */
@@ -79,6 +82,20 @@ try {
 const saveSettings = () => {
   try { localStorage.setItem('malody-web:settings2', JSON.stringify(settings)); } catch { /* 無視 */ }
 };
+// 引き継ぎリンク（…#relay=URL&pass=合言葉）で開いたら、中継役の設定を取り込んで URL から消す
+{
+  const h = new URLSearchParams(location.hash.slice(1));
+  const relay = h.get('relay');
+  if (relay && /^https:\/\//.test(relay)) {
+    settings.linkRelay = relay;
+    settings.linkPass = h.get('pass') ?? '';
+    saveSettings();
+    history.replaceState(null, '', location.pathname + location.search);
+    setTimeout(() => toast('リンク取り込みの設定を引き継ぎました'), 800);
+  }
+}
+const linkSetup = () => ({ repo: settings.linkRepo, token: settings.linkToken, relay: settings.linkRelay || undefined, pass: settings.linkPass });
+const linkReady = () => !!settings.linkRelay || (!!settings.linkToken && !!settings.linkRepo);
 
 // ---------- 本体 ----------
 
@@ -2406,13 +2423,21 @@ let linkBusy = '';
 
 function renderLinkSheet(body: HTMLElement) {
   $('sheetTitle').textContent = 'リンクから音源を読み込む';
-  const ready = !!settings.linkToken && !!settings.linkRepo;
+  const ready = linkReady();
   body.innerHTML = `
     <label class="field"><span>リンク</span><input type="url" id="linkUrl" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off"></label>
     <div class="btns"><button data-act="linkGo" class="primary" ${!linkBusy ? '' : 'disabled'}>取り込む</button><button data-act="linkPaste">貼り付け</button></div>
     <p class="note" id="linkStatus">${linkBusy || (ready ? '' : 'YouTube は準備なしでも試せます（公開サーバー経由）。SoundCloud などは下の「準備」をしてください')}</p>
     <details class="link-setup" ${ready ? '' : 'open'}>
-      <summary>準備（はじめの 1 回だけ）</summary>
+      <summary>かんたん準備（中継役）</summary>
+      <p class="note">中継役の URL と合言葉を入れるだけで使えます。持ち主から「引き継ぎリンク」をもらった場合は、それを開くだけで設定済みになります。</p>
+      <label class="field"><span>中継役</span><input type="url" id="linkRelay" value="${esc(settings.linkRelay)}" placeholder="https://tjacs-relay.○○.workers.dev" autocomplete="off"></label>
+      <label class="field"><span>合言葉</span><input type="password" id="linkPass" value="${esc(settings.linkPass)}" autocomplete="off"></label>
+      <div class="btns"><button data-act="relaySave">確かめて保存</button><button data-act="relayShare" ${settings.linkRelay ? '' : 'disabled'}>引き継ぎリンクをコピー</button><button data-act="relayClear">消す</button></div>
+      <p class="note">引き継ぎリンクには合言葉が入っています。渡したい人にだけ送ってください。</p>
+    </details>
+    <details class="link-setup">
+      <summary>トークンで準備（持ち主向け）</summary>
       <ol class="note">
         <li>GitHub の <b>Settings → Developer settings → Personal access tokens → Fine-grained tokens</b> で「Generate new token」</li>
         <li>Repository access は「Only select repositories」で、下のリポジトリを選ぶ</li>
@@ -2448,6 +2473,29 @@ function renderLinkSheet(body: HTMLElement) {
     toast('準備ができました');
     renderLinkSheet(body);
   });
+  body.querySelector('[data-act="relaySave"]')!.addEventListener('click', async () => {
+    const relay = ($<HTMLInputElement>('linkRelay').value || '').trim().replace(/\/+$/, '');
+    const pass = ($<HTMLInputElement>('linkPass').value || '').trim();
+    if (!/^https:\/\//.test(relay)) { status('中継役の URL（https://…）を入れてください'); return; }
+    status('確かめています…');
+    const err = await testSetup({ repo: '', token: '', relay, pass });
+    if (err) { status(err); return; }
+    settings.linkRelay = relay;
+    settings.linkPass = pass;
+    saveSettings();
+    toast('準備ができました');
+    renderLinkSheet(body);
+  });
+  body.querySelector('[data-act="relayShare"]')!.addEventListener('click', async () => {
+    const u = `${location.origin}${location.pathname}#${new URLSearchParams({ relay: settings.linkRelay, pass: settings.linkPass })}`;
+    try { await navigator.clipboard.writeText(u); toast('引き継ぎリンクをコピーしました'); } catch { prompt('このリンクをコピーしてください', u); }
+  });
+  body.querySelector('[data-act="relayClear"]')!.addEventListener('click', () => {
+    settings.linkRelay = '';
+    settings.linkPass = '';
+    saveSettings();
+    renderLinkSheet(body);
+  });
   body.querySelector('[data-act="linkClear"]')!.addEventListener('click', () => {
     settings.linkToken = '';
     saveSettings();
@@ -2465,7 +2513,7 @@ function renderLinkSheet(body: HTMLElement) {
 }
 
 async function importLink(url: string, target: 'home' | 'editor') {
-  const ready = !!settings.linkToken && !!settings.linkRepo;
+  const ready = linkReady();
   const show = (m: string) => {
     linkBusy = m;
     const el = document.getElementById('linkStatus');
@@ -2479,7 +2527,7 @@ async function importLink(url: string, target: 'home' | 'editor') {
       res = await fetchYoutubePublic(url, show);
     } else {
       try {
-        res = await fetchLink({ repo: settings.linkRepo, token: settings.linkToken }, url, show);
+        res = await fetchLink(linkSetup(), url, show);
       } catch (e) {
         if (!youtubeId(url)) throw e;
         res = await fetchYoutubePublic(url, show);
