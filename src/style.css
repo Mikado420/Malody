@@ -860,3 +860,9 @@ html:has(body.tja-open), body.tja-open { background: #020810; }
 .cut-ov { height: 80px; }
 .cut-detail { flex: 1; min-height: 90px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .cut-detail canvas { width: 100%; height: 100% !important; min-height: 90px; }
+
+/* キーボードが出ている間: ページは動かさず、キーボードのぶんシートを縮める（src/orient.ts の keyboardGuard）。
+   横向きはキーボードが画面の下、回転して表示しているとき（縦持ち）は #root の右側が画面の下になる */
+body.kb:not(.kb-rot) .sheet { padding-bottom: var(--kb, 0px); }
+body.kb.kb-rot .sheet { padding-right: var(--kb, 0px); }
+body.kb .sheet-panel { max-height: 100%; }

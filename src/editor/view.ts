@@ -122,6 +122,9 @@ const fmtTime = (t: number) => {
   return `${sign}${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
 };
 
+/** レーンを指でスライドしたときの速さ（指の動きの何倍流すか） */
+const SCROLL_GAIN = 1.6;
+
 interface Box { x: number; y: number; r: number }
 
 export class EditorView {
@@ -357,7 +360,8 @@ export class EditorView {
         this.drag.moved = true;
         this.onUserScroll();
       }
-      if (this.drag.moved) this.scrollBy((-dx / this.zoom) * TPB);
+      // 指の動きより少し速く流す（長い譜面でも移動しやすいように）
+      if (this.drag.moved) this.scrollBy((-dx * SCROLL_GAIN / this.zoom) * TPB);
       this.drag.lastX = pt.x;
     });
 
@@ -420,7 +424,8 @@ export class EditorView {
       const b = this.evBoxes.find((bx) => x >= bx.x1 && x <= bx.x2);
       if (b) return this.onEventTap(b.items);
     }
-    // 曲の頭より前には置けない
+    // 曲の頭より前と、再生ボタンの中心より左には置けない
+    if (x < L.play.x) return;
     if (y >= L.laneY - L.r * 0.5 && y <= L.evTop + L.evH && this.tickOf(x) > -this.ed.step / 2) this.onTap(this.tickOf(x), (L.r / this.zoom) * TPB);
   }
 

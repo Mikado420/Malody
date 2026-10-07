@@ -28,8 +28,18 @@ export function localPoint(e: { clientX: number; clientY: number }, el: Element)
  * #root の大きさを実際の画面サイズ（innerWidth / innerHeight）に合わせる。
  * CSS の 100vh / 100dvh は端末やブラウザによって実際の表示領域とずれることがあるため。
  */
+/** 文字を入れる欄（キーボードが出るもの）にフォーカスがあるか */
+export function typing() {
+  const a = document.activeElement;
+  if (a instanceof HTMLTextAreaElement) return true;
+  if (a instanceof HTMLInputElement) return !['checkbox', 'radio', 'range', 'button', 'file', 'color'].includes(a.type);
+  return a instanceof HTMLElement && a.isContentEditable;
+}
+
 export function fitRoot() {
   const apply = () => {
+    // キーボードが出ている間は大きさを変えない（変えると画面全体が縮んだりずれたりする）
+    if (typing() && !document.body.classList.contains('tja-open')) return;
     const st = document.documentElement.style;
     st.setProperty('--vw', `${window.innerWidth}px`);
     st.setProperty('--vh', `${window.innerHeight}px`);
@@ -49,4 +59,56 @@ export function fitRoot() {
   window.addEventListener('orientationchange', later);
   window.visualViewport?.addEventListener('resize', later);
   portrait.addEventListener('change', later);
+  document.addEventListener('focusout', () => setTimeout(() => { if (!typing()) apply(); }, 120));
+  keyboardGuard();
+}
+
+/**
+ * 文字を入れるときに画面が上へずれる（iPhone の Safari が入力欄を見せようとページごと動かす）のを止める。
+ * ページは動かさずに、キーボードのぶんだけ設定画面（シート）を縮めて、入力欄をシートの中でスクロールして見せる。
+ * TJA の画面は別のしくみで合わせているので触らない
+ */
+function keyboardGuard() {
+  const vv = window.visualViewport;
+  const body = document.body;
+  const st = document.documentElement.style;
+  const reset = () => { if (window.scrollX || window.scrollY) window.scrollTo(0, 0); };
+  const clear = () => {
+    body.classList.remove('kb', 'kb-rot');
+    st.removeProperty('--kb');
+  };
+  /** 入力欄を、その入っているスクロールできる箱（.sheet-body など）の中で見える位置へ */
+  const reveal = () => {
+    const el = document.activeElement as HTMLElement | null;
+    if (!el) return;
+    let box = el.parentElement;
+    while (box && !(box.scrollHeight > box.clientHeight + 1 && /(auto|scroll)/.test(getComputedStyle(box).overflowY))) box = box.parentElement;
+    if (!box) return;
+    // 回転していても使えるよう、画面上の位置ではなくレイアウト上の位置（offsetTop）で比べる
+    let top = 0;
+    for (let e: HTMLElement | null = el; e && e !== box && e !== document.body; e = e.offsetParent as HTMLElement | null) top += e.offsetTop;
+    let btop = 0;
+    for (let e: HTMLElement | null = box; e && e !== document.body; e = e.offsetParent as HTMLElement | null) btop += e.offsetTop;
+    const y = top - (box.offsetParent === el.offsetParent ? btop : 0);
+    const pad = 12;
+    if (y - pad < box.scrollTop) box.scrollTop = Math.max(0, y - pad);
+    else if (y + el.offsetHeight + pad > box.scrollTop + box.clientHeight) box.scrollTop = y + el.offsetHeight + pad - box.clientHeight;
+  };
+  const update = () => {
+    if (body.classList.contains('tja-open')) { clear(); return; }
+    reset();
+    if (!typing() || !vv) { clear(); return; }
+    // キーボードの高さ（見えている範囲が画面よりどれだけ短いか）
+    const kb = Math.max(0, Math.round(window.innerHeight - vv.height));
+    if (kb < 60) { clear(); return; }
+    st.setProperty('--kb', `${kb}px`);
+    body.classList.add('kb');
+    body.classList.toggle('kb-rot', isRotated());
+    requestAnimationFrame(() => { reveal(); reset(); });
+  };
+  vv?.addEventListener('resize', update);
+  vv?.addEventListener('scroll', reset);
+  window.addEventListener('scroll', () => { if (!body.classList.contains('tja-open')) reset(); });
+  document.addEventListener('focusin', () => { update(); setTimeout(update, 120); setTimeout(update, 400); });
+  document.addEventListener('focusout', () => setTimeout(update, 60));
 }

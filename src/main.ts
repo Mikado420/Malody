@@ -605,10 +605,22 @@ async function persist(audioFile?: AudioFile | null) {
   if (!currentSongId) return;
   await saveSong(currentSongId, { chart: ed.chart, courseIndex: ed.courseIndex }, audioFile, audio.buffer ? audio.musicDuration : 0);
 }
+/** 音源のファイル名を WAVE: に合わせる（曲の情報や TJA のテキストで WAVE: を変えたとき） */
+function syncAudioName() {
+  const a = ed.audio;
+  const w = ed.chart.wave;
+  if (!a || !w || w === a.name) return;
+  const name = oggName(w);
+  ed.chart.wave = name;
+  if (name === a.name) return;
+  ed.audio = { name, data: a.data };
+  void persist(ed.audio);
+}
 ed.onChange((structural) => {
   view.invalidate();
   updateHeader();
   if (structural) {
+    syncAudioName();
     rebuildHits();
     updateSelBar();
     clearTimeout(saveTimer);
@@ -676,7 +688,6 @@ function openSheet(kind: SheetKind) {
   $('sheet').classList.toggle('tempo', kind === 'tempo' || kind === 'cut');
   document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
-  if (kind === 'events') requestAnimationFrame(showTjaDiag);
 }
 function closeSheet() {
   stopTempoPreview();
@@ -696,23 +707,6 @@ function refreshSheet() {
 }
 
 $('sheetClose').addEventListener('click', closeSheet);
-// 【調査用・一時的】画面の下の隙間の原因を調べるため、画面の高さの値を TJA の見出しの横に小さく出す
-function showTjaDiag() {
-  const root = document.getElementById('root')!.getBoundingClientRect();
-  const panel = document.querySelector('#sheet .sheet-panel')!.getBoundingClientRect();
-  const probe = document.createElement('div');
-  probe.style.cssText = 'position:fixed;left:0;width:1px;top:env(safe-area-inset-top);bottom:env(safe-area-inset-bottom);pointer-events:none;visibility:hidden';
-  document.body.appendChild(probe);
-  const pr = probe.getBoundingClientRect();
-  probe.remove();
-  const nav = navigator as Navigator & { standalone?: boolean };
-  const v = window.visualViewport;
-  $('sheetDiag').textContent = [
-    `ih${innerHeight}`, `ch${document.documentElement.clientHeight}`, `vv${v ? Math.round(v.height) : '-'}`,
-    `sh${screen.height}`, `st${nav.standalone ? 1 : 0}`, `root${Math.round(root.height)}`, `pan${Math.round(panel.bottom)}`,
-    `sa${Math.round(pr.top)}/${Math.round(innerHeight - pr.bottom)}`,
-  ].join(' ');
-}
 // TJA の文字の太さ（ふつう / 太字）。入力欄と色付きの文字の両方を同じ太さにする
 const applyTjaBold = () => {
   $('sheet').classList.toggle('tja-bold', settings.tjaBold);
@@ -752,7 +746,7 @@ function renderSheet() {
         <button data-off="-0.01">−10ms</button><button data-off="-0.001">−1ms</button><button data-off="0.01">+10ms</button>
       </div>
       <label class="field"><span>DEMOSTART</span><input type="number" step="0.01" inputmode="decimal" data-meta="demoStart" value="${c.demoStart}"></label>
-      <p class="note">音源: ${esc(ed.audio?.name ?? 'なし')}（WAVE: ${esc(c.wave || '-')}）</p>
+      <label class="field"><span>音源名</span><input type="text" data-meta="wave" value="${esc(c.wave)}" placeholder="${esc(ed.audio?.name ?? '曲名.ogg')}" autocomplete="off"></label>
 
       <h3>難易度</h3>
       <div class="list">${courses}</div>
@@ -968,7 +962,15 @@ $('sheetBody').addEventListener('change', (e) => {
   const el = e.target as HTMLInputElement | HTMLSelectElement;
   const d = el.dataset;
   if (d.meta) {
-    const key = d.meta as 'title' | 'subtitle' | 'bpm' | 'offset' | 'demoStart';
+    const key = d.meta as 'title' | 'subtitle' | 'bpm' | 'offset' | 'demoStart' | 'wave';
+    if (key === 'wave') {
+      // 音源名（WAVE:）。音源はいつも .ogg なので拡張子は .ogg にそろえる
+      const raw = el.value.trim().replace(/[\\/:*?"<>|]+/g, '_');
+      const name = raw ? oggName(raw) : '';
+      el.value = name;
+      ed.mutate(() => { ed.chart.wave = name; });
+      return;
+    }
     ed.mutate(() => {
       if (key === 'title' || key === 'subtitle') ed.chart[key] = el.value;
       else {
@@ -2494,52 +2496,18 @@ function renderLinkSheet(body: HTMLElement) {
   body.innerHTML = `
     <label class="field"><span>リンク</span><input type="url" id="linkUrl" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off"></label>
     <div class="btns"><button data-act="linkGo" class="primary" ${!linkBusy ? '' : 'disabled'}>取り込む</button><button data-act="linkPaste">貼り付け</button></div>
-    <p class="note" id="linkStatus">${linkBusy || (ready ? '' : 'YouTube は準備なしでも試せます（公開サーバー経由）。SoundCloud などは下の「準備」をしてください')}</p>
+    <p class="note" id="linkStatus">${linkBusy || (ready ? '' : 'まず下の「はじめに準備」をしてください')}</p>
     <details class="link-setup" ${ready ? '' : 'open'}>
-      <summary>かんたん準備（中継役）</summary>
-      <p class="note">中継役の URL と合言葉を入れるだけで使えます。持ち主から「引き継ぎリンク」をもらった場合は、それを開くだけで設定済みになります。</p>
-      <label class="field"><span>中継役</span><input type="url" id="linkRelay" value="${esc(settings.linkRelay)}" placeholder="https://tjacs-relay.○○.workers.dev" autocomplete="off"></label>
+      <summary>${ready ? '準備できています（変えるときはここ）' : 'はじめに準備（1 回だけ）'}</summary>
+      <p class="note"><b>引き継ぎリンク</b>をもらった人は、そのリンクを開くだけで準備が終わります（ここは触らなくて大丈夫）。</p>
+      <p class="note">自分で入れるときは、下の 2 つを入れて「保存」を押してください。</p>
+      <label class="field"><span>中継役 URL</span><input type="url" id="linkRelay" value="${esc(settings.linkRelay)}" placeholder="https://tjacs-relay.○○.workers.dev" autocomplete="off"></label>
       <label class="field"><span>合言葉</span><input type="password" id="linkPass" value="${esc(settings.linkPass)}" autocomplete="off"></label>
-      <div class="btns"><button data-act="relaySave">確かめて保存</button><button data-act="relayShare" ${settings.linkRelay ? '' : 'disabled'}>引き継ぎリンクをコピー</button><button data-act="relayClear">消す</button></div>
-      <p class="note">引き継ぎリンクには合言葉が入っています。渡したい人にだけ送ってください。</p>
-    </details>
-    <details class="link-setup">
-      <summary>トークンで準備（持ち主向け）</summary>
-      <ol class="note">
-        <li>GitHub の <b>Settings → Developer settings → Personal access tokens → Fine-grained tokens</b> で「Generate new token」</li>
-        <li>Repository access は「Only select repositories」で、下のリポジトリを選ぶ</li>
-        <li>Permissions で <b>Actions</b> と <b>Contents</b> を「Read and write」にして作る</li>
-        <li>できたトークンを下に貼って「確かめる」</li>
-      </ol>
-      <label class="field"><span>リポジトリ</span><input type="text" id="linkRepo" value="${esc(settings.linkRepo)}" autocomplete="off"></label>
-      <label class="field"><span>トークン</span><input type="password" id="linkToken" value="${esc(settings.linkToken)}" placeholder="github_pat_…" autocomplete="off"></label>
-      <div class="btns"><button data-act="linkSave">確かめて保存</button><button data-act="linkClear">トークンを消す</button></div>
-      <p class="note">トークンはこのブラウザの中だけに保存します。</p>
-    </details>
-    <details class="link-setup">
-      <summary>YouTube が取れないとき（クッキーの登録）</summary>
-      <ol class="note">
-        <li>YouTube 用の捨てアカウント（普段使わない Google アカウント）を作る</li>
-        <li>App Store の「Orion Browser」で、拡張機能「Get cookies.txt LOCALLY」を入れる</li>
-        <li>Orion で youtube.com に捨てアカウントでログインし、動画を 1 本再生する</li>
-        <li>拡張機能で cookies.txt を書き出し、中身を全部コピーする</li>
-        <li>GitHub のリポジトリ → Settings → Secrets and variables → Actions → New repository secret で、名前 <b>YT_COOKIES</b>、値に貼って保存</li>
-      </ol>
-      <p class="note">クッキーは数日〜数週間で切れることがあります。取れなくなったら登録し直してください。</p>
+      <div class="btns"><button data-act="relaySave" class="primary">保存</button><button data-act="relayClear">消す</button></div>
+      <button data-act="relayShare" ${settings.linkRelay ? '' : 'disabled'}>別のスマホ・友だち用の引き継ぎリンクをコピー</button>
+      <p class="note">引き継ぎリンクには合言葉が入っています。使ってほしい人にだけ送ってください。</p>
     </details>`;
   const status = (m: string) => { const el = document.getElementById('linkStatus'); if (el) el.textContent = m; };
-  body.querySelector('[data-act="linkSave"]')!.addEventListener('click', async () => {
-    const repo = ($<HTMLInputElement>('linkRepo').value || '').trim().replace(/^https:\/\/github\.com\//, '').replace(/\/$/, '');
-    const token = ($<HTMLInputElement>('linkToken').value || '').trim();
-    status('確かめています…');
-    const err = await testSetup({ repo, token });
-    if (err) { status(err); return; }
-    settings.linkRepo = repo;
-    settings.linkToken = token;
-    saveSettings();
-    toast('準備ができました');
-    renderLinkSheet(body);
-  });
   body.querySelector('[data-act="relaySave"]')!.addEventListener('click', async () => {
     const relay = ($<HTMLInputElement>('linkRelay').value || '').trim().replace(/\/+$/, '');
     const pass = ($<HTMLInputElement>('linkPass').value || '').trim();
@@ -2560,11 +2528,6 @@ function renderLinkSheet(body: HTMLElement) {
   body.querySelector('[data-act="relayClear"]')!.addEventListener('click', () => {
     settings.linkRelay = '';
     settings.linkPass = '';
-    saveSettings();
-    renderLinkSheet(body);
-  });
-  body.querySelector('[data-act="linkClear"]')!.addEventListener('click', () => {
-    settings.linkToken = '';
     saveSettings();
     renderLinkSheet(body);
   });
@@ -2590,7 +2553,7 @@ async function importLink(url: string, target: 'home' | 'editor') {
     // YouTube: まず GitHub（クッキーを登録していれば使う）、だめなら公開サーバー（Piped・Invidious）
     let res: LinkResult;
     if (!ready) {
-      if (!youtubeId(url)) throw new Error('YouTube 以外のリンクは、先に「準備」をしてください');
+      if (!youtubeId(url)) throw new Error('先に「はじめに準備」をしてください');
       res = await fetchYoutubePublic(url, show);
     } else {
       try {
