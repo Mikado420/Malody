@@ -8,62 +8,77 @@ export interface AudioFile {
   data: ArrayBuffer;
 }
 
-export interface LoadResult {
-  chart: EChart | null;
+export interface LoadedSong {
+  chart: EChart;
   audio: AudioFile | null;
-  /** zip 内に .tja が複数あったときの候補（選び直し用） */
-  others: string[];
-  message: string;
+  /** .tja のファイル名（zip の中ならフォルダ付き） */
+  tjaName: string;
 }
 
-const AUDIO_EXT = /\.(ogg|mp3|wav|m4a|aac|opus|flac)$/i;
+export interface LoadResult {
+  /** 読み込んだ譜面（.tja ごとに 1 曲。合う音源があれば組み合わせ済み） */
+  songs: LoadedSong[];
+  /** どの譜面にも組み合わなかった音源 */
+  audios: AudioFile[];
+  /** 読めなかったファイル */
+  skipped: string[];
+}
+
 const base = (p: string) => p.split('/').pop() ?? p;
 const dir = (p: string) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/') + 1) : '');
-
 const toBuf = (u: Uint8Array) => u.buffer.slice(u.byteOffset, u.byteOffset + u.byteLength) as ArrayBuffer;
 
+/** 中身から音源かどうかを見分ける（拡張子が変わっていても読めるように） */
+export function isAudio(name: string, data: ArrayBuffer): boolean {
+  if (/\.(ogg|oga|mp3|wav|m4a|aac|opus|flac|mp4|m4v|mov|webm|aif|aiff)$/i.test(name)) return true;
+  const b = new Uint8Array(data, 0, Math.min(12, data.byteLength));
+  const s = (i: number, n: number) => String.fromCharCode(...b.slice(i, i + n));
+  return s(0, 4) === 'OggS' || (s(0, 4) === 'RIFF' && s(8, 4) === 'WAVE') || s(0, 3) === 'ID3' || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0)
+    || s(4, 4) === 'ftyp' || s(0, 4) === 'fLaC' || s(0, 4) === 'FORM';
+}
+
+function isTja(name: string, data: ArrayBuffer): boolean {
+  if (/\.tja$/i.test(name)) return true;
+  if (data.byteLength > 2_000_000 || /\.(png|jpe?g|gif|txt|md|json|html?)$/i.test(name)) return false;
+  return /#START/i.test(decodeText(data.slice(0, 200_000)));
+}
+
 /**
- * 選ばれたファイル群（.tja / .zip / 音源）を読み込む。
- * 拡張子で判定するが、zip は中身のシグネチャでも判定する（iOS で拡張子が変わる対策）。
+ * 選ばれたファイル（.tja・.zip・音源。いくつでも、混ぜても）を読み込む。
+ * zip は中を展開する。.tja ごとに 1 曲にし、WAVE: と同じ名前 → 同じフォルダ → 1 曲だけなら残りの音源、の順で音源を組み合わせる
  */
-export async function loadFiles(files: File[], pickTja?: string): Promise<LoadResult> {
+export async function loadFiles(files: File[]): Promise<LoadResult> {
   const entries: { name: string; data: ArrayBuffer }[] = [];
   for (const f of files) {
     const buf = await f.arrayBuffer();
     if (isZip(buf)) {
-      for (const e of await readZip(buf)) entries.push({ name: e.name, data: toBuf(e.data) });
-    } else {
-      entries.push({ name: f.name, data: buf });
-    }
+      for (const e of await readZip(buf)) if (!e.name.endsWith('/') && !/(^|\/)__MACOSX\//.test(e.name)) entries.push({ name: e.name, data: toBuf(e.data) });
+    } else entries.push({ name: f.name, data: buf });
   }
-
-  const tjas = entries.filter((e) => /\.tja$/i.test(e.name));
-  const audios = entries.filter((e) => AUDIO_EXT.test(e.name));
-
-  if (!tjas.length) {
-    if (audios.length) {
-      return { chart: null, audio: { name: base(audios[0].name), data: audios[0].data }, others: [], message: '音源を読み込みました' };
-    }
-    return { chart: null, audio: null, others: [], message: '.tja・.zip・音源ファイルが見つかりませんでした' };
+  const tjas: typeof entries = [];
+  const audios: typeof entries = [];
+  const skipped: string[] = [];
+  for (const e of entries) {
+    if (isAudio(e.name, e.data)) audios.push(e);
+    else if (isTja(e.name, e.data)) tjas.push(e);
+    else if (!/(^|\/)\./.test(e.name)) skipped.push(base(e.name));
   }
-
-  const tja = tjas.find((t) => t.name === pickTja) ?? tjas[0];
-  const chart = parseTJA(decodeText(tja.data));
-
-  // WAVE: と同じ名前 → 同じフォルダの音源 → 最初の音源
-  const audio =
-    audios.find((a) => base(a.name) === chart.wave && dir(a.name) === dir(tja.name)) ??
-    audios.find((a) => base(a.name) === chart.wave) ??
-    audios.find((a) => dir(a.name) === dir(tja.name)) ??
-    audios[0];
-
-  const parts = [`「${chart.title || base(tja.name)}」を読み込みました（${chart.courses.length}難易度）`];
-  if (!audio) parts.push('音源が見つかりませんでした。ファイルメニューから音源を追加できます');
-
+  const used = new Set<(typeof entries)[number]>();
+  const songs: LoadedSong[] = [];
+  const parsed = tjas.map((t) => ({ t, chart: parseTJA(decodeText(t.data)) }));
+  for (const { t, chart } of parsed) {
+    const free = audios.filter((a) => !used.has(a));
+    const audio =
+      free.find((a) => base(a.name) === chart.wave && dir(a.name) === dir(t.name)) ??
+      free.find((a) => base(a.name).toLowerCase() === chart.wave.toLowerCase()) ??
+      free.find((a) => dir(a.name) === dir(t.name) && dir(t.name) !== '' && parsed.filter((p) => dir(p.t.name) === dir(t.name)).length === 1) ??
+      (parsed.length === 1 && free.length === 1 ? free[0] : undefined);
+    if (audio) used.add(audio);
+    songs.push({ chart, audio: audio ? { name: base(audio.name), data: audio.data } : null, tjaName: t.name });
+  }
   return {
-    chart,
-    audio: audio ? { name: base(audio.name), data: audio.data } : null,
-    others: tjas.map((t) => t.name),
-    message: parts.join('。'),
+    songs,
+    audios: audios.filter((a) => !used.has(a)).map((a) => ({ name: base(a.name), data: a.data })),
+    skipped,
   };
 }

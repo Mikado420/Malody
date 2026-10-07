@@ -235,7 +235,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .sheet-body .note { color: var(--sub); font-size: 12px; line-height: 1.6; margin: 0; }
 .field { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .field > span { width: 92px; flex: none; color: var(--sub); font-size: 13px; }
-.field input[type='text'], .field input[type='number'] {
+.field input[type='text'], .field input[type='number'], .field input[type='url'], .field input[type='password'] {
   flex: 1;
   min-width: 0;
   background: var(--btn);
@@ -816,3 +816,27 @@ html:has(body.tja-open), body.tja-open { background: #020810; }
   .home-info { display: none; }
   .home-left { padding-left: 60px; }
 }
+
+/* 処理中 */
+.busy { position: absolute; inset: 0; z-index: 30; background: rgba(0, 4, 10, 0.72); display: grid; place-items: center; }
+.busy.hidden { display: none; }
+.busy-panel { min-width: min(360px, 86vw); padding: 18px 20px; background: var(--panel); border: 1px solid var(--accent); box-shadow: var(--glow-b);
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px); display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.busy-panel p { margin: 0; font-size: 14px; text-align: center; line-height: 1.5; }
+.busy-spin { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(30, 136, 255, 0.25); border-top-color: #fff; border-right-color: var(--accent); animation: hbSpin 0.9s linear infinite; }
+.busy-bar { width: 100%; height: 6px; background: #0b1829; overflow: hidden; }
+.busy-bar.hidden { display: none; }
+.busy-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #fff, var(--accent)); box-shadow: var(--glow-b); transition: width 0.2s; }
+/* 読み込み（ファイルから / リンクから） */
+.src-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.src-pick button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 16px; text-align: left; white-space: normal; border: 1px solid var(--line); }
+.src-pick b { font-size: 17px; }
+.src-pick small { color: var(--sub); font-size: 12px; line-height: 1.4; }
+.link-setup summary { cursor: pointer; color: var(--accent); font-size: 14px; padding: 4px 0; }
+.link-setup ol { padding-left: 20px; margin: 6px 0; }
+.link-setup ol li { margin: 2px 0; }
+.link-setup .field, .link-setup .btns { margin-top: 8px; }
+/* 音源のカット */
+.cut-ov { height: 80px; }
+.cut-detail { flex: 1; min-height: 90px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.cut-detail canvas { width: 100%; height: 100% !important; min-height: 90px; }

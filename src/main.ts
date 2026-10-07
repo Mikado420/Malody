@@ -15,6 +15,9 @@ import { writeCourseBody } from './chart/tjaWrite';
 import { DIVISORS, Editor, type Tool } from './editor/editor';
 import { EditorView, eventText, EVENT_COLOR, type EventItem, type EventShow } from './editor/view';
 import { loadFiles, type AudioFile } from './io/load';
+import { encodeSJIS } from './chart/sjis';
+import { bufferChannels, isOgg, oggName, pcmToOgg } from './audio/toOgg';
+import { fetchLink, testSetup } from './io/linkFetch';
 import { loadAudio, loadChart, loadHitSound, saveHitSound } from './io/storage';
 import { getCurrentId, listSongs, loadSongAudio, loadSongData, newId, saveSong, setCurrentId } from './io/library';
 import { Home } from './home/home';
@@ -32,6 +35,9 @@ const esc = (s: string) =>
 // ---------- 設定 ----------
 
 const settings = {
+  /** リンクから読み込む: 処理の入ったリポジトリと、トークン */
+  linkRepo: 'Mikado420/Malody',
+  linkToken: '',
   /** 前の版の「1 拍を何分割」（読み込みの引き継ぎ用） */
   divisor: 0,
   /** グリッド: 1 小節（4/4、全音符）を何分割するか */
@@ -401,8 +407,9 @@ function flyItems(kind: string): FlyItem[] {
   if (kind === 'file') {
     return [
       { head: '読み込み' },
-      { label: '.tja / .zip を開く', primary: true, run: () => void fileAction('open') },
-      { label: '音源を読み込む', run: () => void fileAction('audio') },
+      { label: '読み込み（.tja / .zip / 音源）', primary: true, run: () => void fileAction('open') },
+      { label: '音源を読み込む（ファイル / リンク）', run: () => void fileAction('audio') },
+      { label: '音源をカット', run: () => void fileAction('cut') },
       { label: '新規作成', run: () => void fileAction('new') },
       { label: 'サンプル譜面', run: () => void fileAction('sample') },
       { head: '書き出し' },
@@ -568,7 +575,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'info' | 'settings' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo';
+type SheetKind = 'info' | 'settings' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo' | 'src' | 'link' | 'cut';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -581,7 +588,7 @@ function openSheet(kind: SheetKind) {
   // グラデの設定は縦いっぱい・横広めで、左に設定、右に .tja の書き方
   $('sheet').classList.toggle('grad', kind === 'grad');
   // BPM・OFFSET の画面は画面いっぱい
-  $('sheet').classList.toggle('tempo', kind === 'tempo');
+  $('sheet').classList.toggle('tempo', kind === 'tempo' || kind === 'cut');
   document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
   if (kind === 'events') requestAnimationFrame(showTjaDiag);
@@ -598,7 +605,7 @@ function refreshSheet() {
   if ($('sheetBody').contains(document.activeElement) && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) return;
   // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
   if (sheet === 'events' && document.getElementById('tjaText')) return;
-  if (sheet === 'grad' || sheet === 'point' || sheet === 'tempo') return;
+  if (sheet === 'grad' || sheet === 'point' || sheet === 'tempo' || sheet === 'link' || sheet === 'cut') return;
   if (sheet === 'evlist') { renderSheet(); return; }
   renderSheet();
 }
@@ -695,8 +702,14 @@ function renderSheet() {
       </div>
       <button data-act="resetZoom">エディタの拡大率を初期値（プレイ画面と同じ間隔）に戻す</button>
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>
-      <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja は UTF-8（BOM付き）です。</p>
+      <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja はシフトJIS です。</p>
       <p class="note">バージョン: ${esc(BUILD_ID.slice(0, 7))}</p>`;
+  } else if (sheet === 'src') {
+    renderSrcSheet(body);
+  } else if (sheet === 'link') {
+    renderLinkSheet(body);
+  } else if (sheet === 'cut') {
+    renderCutSheet(body);
   } else if (sheet === 'tempo') {
     renderTempoSheet(body);
   } else if (sheet === 'evlist' && evList) {
@@ -937,41 +950,92 @@ function addEventAction(kind: string) {
 // ---------- ファイル ----------
 
 const fileOpen = $<HTMLInputElement>('fileOpen');
-const fileAudio = $<HTMLInputElement>('fileAudio');
+
+/** 読み込みの使い方: any = 何でも（譜面は新しい曲に）、audio = 開いている曲の音源を差し替える */
+let importMode: 'any' | 'audio' = 'any';
+function pickFiles(mode: 'any' | 'audio') {
+  importMode = mode;
+  fileOpen.click();
+}
 
 fileOpen.addEventListener('change', async () => {
   const files = Array.from(fileOpen.files ?? []);
   fileOpen.value = '';
   if (!files.length) return;
   try {
-    const r = await loadFiles(files);
-    if (r.chart) {
-      // 読み込んだ譜面は、新しい曲として一覧に入れる
-      const id = newId();
-      await saveSong(id, { chart: r.chart, courseIndex: 0 }, r.audio, r.audio ? await audioLength(r.audio) : 0, home.visible ? home.currentFolder : undefined);
-      if (home.visible) await home.select(id);
-      else await openSong(id, 'edit');
-      closeSheet();
-    } else if (r.audio && home.visible) {
-      toast('曲選択の画面では .tja / .zip を読み込んでください（音源だけは、編集の画面で読み込めます）');
-      return;
-    } else if (r.audio) {
-      await applyAudioOnly(r.audio);
-      closeSheet();
-    }
-    toast(r.message);
+    await importFiles(files, importMode);
   } catch (err) {
+    busyEnd();
     toast(`読み込めませんでした: ${(err as Error).message}`);
   }
 });
 
-fileAudio.addEventListener('change', async () => {
-  const f = fileAudio.files?.[0];
-  fileAudio.value = '';
-  if (!f) return;
-  await applyAudioOnly({ name: f.name, data: await f.arrayBuffer() });
+// ---------- 処理中の表示 ----------
+
+function busy(msg: string, p?: number) {
+  $('busy').classList.remove('hidden');
+  $('busyMsg').textContent = msg;
+  $('busyBar').style.width = p === undefined ? '0%' : `${Math.round(p * 100)}%`;
+  $('busyBar').parentElement!.classList.toggle('hidden', p === undefined);
+}
+function busyEnd() {
+  $('busy').classList.add('hidden');
+}
+
+/** 音源を .ogg にする（.ogg ならそのまま）。長さ（秒）も返す */
+async function convertAudio(a: AudioFile, label = a.name): Promise<{ file: AudioFile; length: number }> {
+  busy(`「${label}」を読み込んでいます…`);
+  const buf = await audio.ctx.decodeAudioData(a.data.slice(0));
+  if (isOgg(a.data)) return { file: { name: oggName(a.name), data: a.data }, length: buf.duration };
+  const data = await pcmToOgg(bufferChannels(buf), buf.sampleRate, (p) => busy(`「${label}」を .ogg にしています…`, p));
+  return { file: { name: oggName(a.name), data }, length: buf.duration };
+}
+
+/** 読み込み: .tja・.zip・音源を何でも。譜面は新しい曲として一覧に入れ、音源はすべて .ogg にする */
+async function importFiles(files: File[], mode: 'any' | 'audio') {
+  busy('読み込んでいます…');
+  const r = await loadFiles(files);
+  const folder = home.visible ? home.currentFolder : '';
+  const added: string[] = [];
+  for (const sng of r.songs) {
+    let a: AudioFile | null = null;
+    let len = 0;
+    if (sng.audio) {
+      try {
+        const c = await convertAudio(sng.audio, sng.chart.title || sng.audio.name);
+        a = c.file;
+        len = c.length;
+        sng.chart.wave = a.name;
+      } catch { r.skipped.push(sng.audio.name); }
+    }
+    const id = newId();
+    await saveSong(id, { chart: sng.chart, courseIndex: 0 }, a, len, folder);
+    added.push(id);
+  }
+  // 譜面の無い音源: 編集中で「音源を読み込む」なら今の曲に、ほかは音源ごとに新しい曲
+  for (const raw of r.audios) {
+    let c: { file: AudioFile; length: number };
+    try { c = await convertAudio(raw); } catch { r.skipped.push(raw.name); continue; }
+    if (mode === 'audio' && currentSongId && !home.visible) {
+      busyEnd();
+      await applyAudioOnly(c.file);
+      return;
+    }
+    const chart = newChart(raw.name.replace(/\.[^.]+$/, ''));
+    chart.wave = c.file.name;
+    const id = newId();
+    await saveSong(id, { chart, courseIndex: 0 }, c.file, c.length, folder);
+    added.push(id);
+  }
+  busyEnd();
   closeSheet();
-});
+  const skip = r.skipped.length ? `（読めなかったファイル: ${r.skipped.slice(0, 3).join('、')}${r.skipped.length > 3 ? ' ほか' : ''}）` : '';
+  if (!added.length) { toast(`読み込めるファイルがありませんでした${skip}`); return; }
+  toast(`${added.length} 曲を追加しました${skip}`);
+  if (home.visible) await home.select(added[0]);
+  else if (added.length === 1) await openSong(added[0], 'edit');
+  else await home.show(added[0]);
+}
 
 async function applyAudioOnly(a: AudioFile) {
   await setAudio(a);
@@ -996,8 +1060,9 @@ function download(blob: Blob, name: string) {
 const safeName = (s: string) => (s || 'chart').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
 
 async function fileAction(act: string) {
-  if (act === 'open') fileOpen.click();
-  else if (act === 'audio') fileAudio.click();
+  if (act === 'open') pickFiles('any');
+  else if (act === 'audio') { srcTarget = 'editor'; openSheet('src'); }
+  else if (act === 'cut') openCut();
   else if (act === 'tempo') startTempo();
   else if (act === 'new') {
     await createSong(newChart());
@@ -1007,7 +1072,7 @@ async function fileAction(act: string) {
     await createSong(parseTJA(DEMO_TJA));
     closeSheet();
   } else if (act === 'saveTja') {
-    download(new Blob(['﻿' + writeTJA(ed.chart)], { type: 'text/plain' }), `${safeName(ed.chart.title)}.tja`);
+    download(new Blob([encodeSJIS(writeTJA(ed.chart)).buffer as ArrayBuffer], { type: 'text/plain' }), `${safeName(ed.chart.title)}.tja`);
   } else if (act === 'saveZip') {
     const name = safeName(ed.chart.title);
     const files: { name: string; data: Uint8Array; compress?: boolean }[] = [];
@@ -1015,7 +1080,7 @@ async function fileAction(act: string) {
       ed.chart.wave = ed.audio.name;
       files.push({ name: `${name}/${ed.audio.name}`, data: new Uint8Array(ed.audio.data) });
     }
-    const tja = new TextEncoder().encode('﻿' + writeTJA(ed.chart));
+    const tja = encodeSJIS(writeTJA(ed.chart));
     files.unshift({ name: `${name}/${name}.tja`, data: tja, compress: true });
     download(await writeZip(files), `${name}.zip`);
   } else if (act === 'copy') {
@@ -1218,7 +1283,18 @@ async function openSong(id: string, mode: 'edit' | 'play') {
   void setCurrentId(id);
   ed.load(data.chart, null, data.courseIndex);
   view.pos = 0;
-  await setAudio(await loadSongAudio(id), false);
+  let a = await loadSongAudio(id);
+  // 前の版で入れた .mp3 などは、開いたときに .ogg にしておく
+  if (a && !isOgg(a.data)) {
+    try {
+      a = (await convertAudio(a, data.chart.title)).file;
+      data.chart.wave = a.name;
+      ed.chart.wave = a.name;
+      await saveSong(id, { chart: ed.chart, courseIndex: ed.courseIndex }, a);
+    } catch { /* そのまま使う */ }
+    busyEnd();
+  }
+  await setAudio(a, false);
   // 長さが分からなかった曲は、開いたときに覚える
   if (audio.buffer) void persist();
   home.hide();
@@ -1236,7 +1312,7 @@ async function createSong(chart: EChart, folder = '') {
 
 const home = new Home({
   open: openSong,
-  importFiles: () => fileOpen.click(),
+  importFiles: () => { srcTarget = 'home'; openSheet('src'); },
   create: (folder) => createSong(newChart(), folder),
   settings: () => openSheet('settings'),
   toast,
@@ -2305,4 +2381,311 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   ctx.fillStyle = '#9a9aa2';
   ctx.font = '11px ui-monospace, monospace';
   ctx.fillText(fmtSec(Math.max(0, t0)), 4, H - 4);
+}
+
+// ---------- 読み込み（ファイルから / リンクから） ----------
+
+/** 読み込みの画面を出した所（曲選択なら新しい曲、エディタなら今の曲の音源） */
+let srcTarget: 'home' | 'editor' = 'home';
+
+function renderSrcSheet(body: HTMLElement) {
+  const home_ = srcTarget === 'home';
+  $('sheetTitle').textContent = home_ ? '読み込み' : '音源を読み込む';
+  body.innerHTML = `
+    <div class="src-pick">
+      <button data-src="file"><b>ファイルから</b><small>${home_ ? '.tja・.zip・音源（何でも、いくつでも）' : '音源ファイル（.ogg に自動で変換）'}</small></button>
+      <button data-src="link"><b>リンクから</b><small>YouTube・SoundCloud などのリンク</small></button>
+    </div>`;
+  body.querySelector('[data-src="file"]')!.addEventListener('click', () => pickFiles(home_ ? 'any' : 'audio'));
+  body.querySelector('[data-src="link"]')!.addEventListener('click', () => openSheet('link'));
+}
+
+/** リンクから取り込み中の様子（画面を閉じても続く） */
+let linkBusy = '';
+
+function renderLinkSheet(body: HTMLElement) {
+  $('sheetTitle').textContent = 'リンクから音源を読み込む';
+  const ready = !!settings.linkToken && !!settings.linkRepo;
+  body.innerHTML = `
+    <label class="field"><span>リンク</span><input type="url" id="linkUrl" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" ${ready ? '' : 'disabled'}></label>
+    <div class="btns"><button data-act="linkGo" class="primary" ${ready && !linkBusy ? '' : 'disabled'}>取り込む</button><button data-act="linkPaste" ${ready ? '' : 'disabled'}>貼り付け</button></div>
+    <p class="note" id="linkStatus">${linkBusy || (ready ? '' : '下の「準備」を先にしてください')}</p>
+    <details class="link-setup" ${ready ? '' : 'open'}>
+      <summary>準備（はじめの 1 回だけ）</summary>
+      <ol class="note">
+        <li>GitHub の <b>Settings → Developer settings → Personal access tokens → Fine-grained tokens</b> で「Generate new token」</li>
+        <li>Repository access は「Only select repositories」で、下のリポジトリを選ぶ</li>
+        <li>Permissions で <b>Actions</b> と <b>Contents</b> を「Read and write」にして作る</li>
+        <li>できたトークンを下に貼って「確かめる」</li>
+      </ol>
+      <label class="field"><span>リポジトリ</span><input type="text" id="linkRepo" value="${esc(settings.linkRepo)}" autocomplete="off"></label>
+      <label class="field"><span>トークン</span><input type="password" id="linkToken" value="${esc(settings.linkToken)}" placeholder="github_pat_…" autocomplete="off"></label>
+      <div class="btns"><button data-act="linkSave">確かめて保存</button><button data-act="linkClear">トークンを消す</button></div>
+      <p class="note">トークンはこのブラウザの中だけに保存します。</p>
+    </details>`;
+  const status = (m: string) => { const el = document.getElementById('linkStatus'); if (el) el.textContent = m; };
+  body.querySelector('[data-act="linkSave"]')!.addEventListener('click', async () => {
+    const repo = ($<HTMLInputElement>('linkRepo').value || '').trim().replace(/^https:\/\/github\.com\//, '').replace(/\/$/, '');
+    const token = ($<HTMLInputElement>('linkToken').value || '').trim();
+    status('確かめています…');
+    const err = await testSetup({ repo, token });
+    if (err) { status(err); return; }
+    settings.linkRepo = repo;
+    settings.linkToken = token;
+    saveSettings();
+    toast('準備ができました');
+    renderLinkSheet(body);
+  });
+  body.querySelector('[data-act="linkClear"]')!.addEventListener('click', () => {
+    settings.linkToken = '';
+    saveSettings();
+    renderLinkSheet(body);
+  });
+  body.querySelector('[data-act="linkPaste"]')?.addEventListener('click', async () => {
+    try { $<HTMLInputElement>('linkUrl').value = (await navigator.clipboard.readText()).trim(); } catch { toast('貼り付けできませんでした'); }
+  });
+  body.querySelector('[data-act="linkGo"]')?.addEventListener('click', () => {
+    const url = $<HTMLInputElement>('linkUrl').value.trim();
+    if (!/^https?:\/\//.test(url)) { status('リンク（https://…）を入れてください'); return; }
+    void importLink(url, srcTarget);
+    renderLinkSheet(body);
+  });
+}
+
+async function importLink(url: string, target: 'home' | 'editor') {
+  const show = (m: string) => {
+    linkBusy = m;
+    const el = document.getElementById('linkStatus');
+    if (el) el.textContent = m;
+  };
+  try {
+    const res = await fetchLink({ repo: settings.linkRepo, token: settings.linkToken }, url, show);
+    show('');
+    const c = await convertAudio(res.audio, res.title);
+    busyEnd();
+    if (target === 'editor' && currentSongId && !home.visible) {
+      await applyAudioOnly(c.file);
+    } else {
+      const chart = newChart(res.title);
+      if (res.artist) chart.subtitle = `--${res.artist}`;
+      chart.wave = c.file.name;
+      const id = newId();
+      await saveSong(id, { chart, courseIndex: 0 }, c.file, c.length, home.visible ? home.currentFolder : '');
+      toast(`「${res.title}」を追加しました`);
+      if (home.visible) await home.select(id);
+    }
+    if (sheet === 'link') closeSheet();
+  } catch (err) {
+    busyEnd();
+    show('');
+    const m = (err as Error).message;
+    toast(m);
+    const el = document.getElementById('linkStatus');
+    if (el) el.textContent = m;
+  } finally {
+    linkBusy = '';
+    if (sheet === 'link') document.querySelector<HTMLButtonElement>('[data-act="linkGo"]')?.removeAttribute('disabled');
+  }
+}
+
+// ---------- 音源のカット ----------
+
+const cutState = { start: 0, end: 0, fadeIn: 0, fadeOut: 0, pad: 0, dur: 0, prevTimer: 0 };
+
+function openCut() {
+  const buf = audio.buffer;
+  if (!buf) { toast('先に音源を読み込んでください'); return; }
+  Object.assign(cutState, { start: 0, end: buf.duration, fadeIn: 0, fadeOut: 0, pad: 0, dur: buf.duration });
+  openSheet('cut');
+}
+
+const fmtCut = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`;
+
+function renderCutSheet(body: HTMLElement) {
+  $('sheetTitle').textContent = '音源をカット';
+  const c = cutState;
+  const step = (key: 'start' | 'end', label: string) => `
+    <div class="tempo-row"><span class="tempo-lbl">${label}</span>
+      ${[-1, -0.1, -0.01].map((d) => `<button data-cstep="${key}" data-d="${d}">${d}</button>`).join('')}
+      <b class="tempo-val" id="cut_${key}">${fmtCut(c[key])}</b>
+      ${[0.01, 0.1, 1].map((d) => `<button data-cstep="${key}" data-d="${d}">+${d}</button>`).join('')}
+      <button data-cplay="${key}" class="tempo-play">▶ ${key === 'start' ? 'ここから' : '終わりの手前から'}</button>
+    </div>`;
+  const num = (key: 'fadeIn' | 'fadeOut' | 'pad', label: string) => `<span class="tempo-grp"><span class="tempo-lbl">${label}</span><button data-cnum="${key}" data-d="-0.5">−</button><b class="tempo-val" id="cut_${key}">${c[key].toFixed(1)} 秒</b><button data-cnum="${key}" data-d="0.5">＋</button></span>`;
+  body.innerHTML = `
+    <div class="tempo-top"><b class="tempo-title">音源をカット</b><span class="tempo-sp"></span><button data-cact="cancel">やめる</button><button data-cact="ok" class="primary">反映</button></div>
+    <canvas id="cutWave" class="tempo-ov cut-ov"></canvas>
+    <div class="cut-detail"><canvas id="cutA" class="tempo-wave"></canvas><canvas id="cutB" class="tempo-wave"></canvas></div>
+    ${step('start', '始まり')}
+    ${step('end', '終わり')}
+    <div class="tempo-row">${num('fadeIn', 'フェードイン')}${num('fadeOut', 'フェードアウト')}${num('pad', '頭に無音')}</div>
+    <p class="note" id="cutInfo"></p>`;
+  const buf = audio.buffer!;
+  const peaks = overviewPeaks(buf);
+  const draw = () => {
+    for (const k of ['start', 'end'] as const) $('cut_' + k).textContent = fmtCut(c[k]);
+    for (const k of ['fadeIn', 'fadeOut', 'pad'] as const) $('cut_' + k).textContent = `${c[k].toFixed(1)} 秒`;
+    const len = c.end - c.start + c.pad;
+    const off = ed.chart.offset + c.start - c.pad;
+    $('cutInfo').textContent = `新しい長さ ${fmtCut(len)} ／ OFFSET ${ed.chart.offset.toFixed(3)} → ${off.toFixed(3)}（譜面はずれないように自動で直します）`;
+    // 曲全体
+    const ov = $<HTMLCanvasElement>('cutWave');
+    const { ctx, W, H } = fitCanvas(ov);
+    ctx.fillStyle = '#020810';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(30,136,255,0.75)';
+    for (let x = 0; x < W; x++) {
+      const k0 = Math.floor((x / W) * peaks.length);
+      const k1 = Math.max(k0 + 1, Math.floor(((x + 1) / W) * peaks.length));
+      let m = 0;
+      for (let k = k0; k < k1; k++) m = Math.max(m, peaks[k]);
+      ctx.fillRect(x, H / 2 - (m * H) / 2, 1, Math.max(1, m * H));
+    }
+    const xs = (t: number) => (t / c.dur) * W;
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.fillRect(0, 0, xs(c.start), H);
+    ctx.fillRect(xs(c.end), 0, W - xs(c.end), H);
+    // フェードの線
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(xs(c.start), H);
+    ctx.lineTo(xs(c.start + c.fadeIn), 2);
+    ctx.lineTo(xs(c.end - c.fadeOut), 2);
+    ctx.lineTo(xs(c.end), H);
+    ctx.stroke();
+    for (const t of [c.start, c.end]) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(xs(t) - 1.5, 0, 3, H);
+    }
+    // 始まり・終わりの近く（±1.5 秒）
+    const detail = (id: string, at: number) => {
+      const cv = $<HTMLCanvasElement>(id);
+      const g = fitCanvas(cv);
+      const span = 3;
+      const t0 = at - span / 2;
+      g.ctx.fillStyle = '#020810';
+      g.ctx.fillRect(0, 0, g.W, g.H);
+      const chs = bufferChannels(buf);
+      g.ctx.fillStyle = '#5e8ac0';
+      for (let x = 0; x < g.W; x++) {
+        const a = Math.floor((t0 + (x / g.W) * span) * buf.sampleRate);
+        const b = Math.floor((t0 + ((x + 1) / g.W) * span) * buf.sampleRate);
+        if (b <= 0 || a >= buf.length) continue;
+        let mx = 0;
+        for (let i = Math.max(0, a); i < Math.min(buf.length, b); i += 4) for (const ch of chs) mx = Math.max(mx, Math.abs(ch[i]));
+        g.ctx.fillRect(x, g.H / 2 - mx * g.H * 0.48, 1, Math.max(1, mx * g.H * 0.96));
+      }
+      g.ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      if (id === 'cutA') g.ctx.fillRect(0, 0, g.W / 2, g.H);
+      else g.ctx.fillRect(g.W / 2, 0, g.W / 2, g.H);
+      g.ctx.fillStyle = '#fff';
+      g.ctx.fillRect(g.W / 2 - 1, 0, 2, g.H);
+      g.ctx.font = '11px ui-monospace, monospace';
+      g.ctx.fillText(id === 'cutA' ? '始まり' : '終わり', 6, 14);
+    };
+    detail('cutA', c.start);
+    detail('cutB', c.end);
+  };
+  draw();
+  const clamp = () => {
+    c.start = Math.max(0, Math.min(c.start, c.dur - 1));
+    c.end = Math.max(c.start + 1, Math.min(c.end, c.dur));
+    c.fadeIn = Math.max(0, Math.min(c.fadeIn, (c.end - c.start) / 2));
+    c.fadeOut = Math.max(0, Math.min(c.fadeOut, (c.end - c.start) / 2));
+    c.pad = Math.max(0, Math.min(c.pad, 10));
+    c.start = Math.round(c.start * 1000) / 1000;
+    c.end = Math.round(c.end * 1000) / 1000;
+  };
+  // 曲全体の上: 近いほうの線をドラッグ
+  const ov = $<HTMLCanvasElement>('cutWave');
+  let drag: 'start' | 'end' | null = null;
+  const tAt = (e: PointerEvent) => (localPoint(e, ov).x / Math.max(1, ov.clientWidth)) * c.dur;
+  ov.addEventListener('pointerdown', (e) => {
+    ov.setPointerCapture(e.pointerId);
+    const t = tAt(e);
+    drag = Math.abs(t - c.start) <= Math.abs(t - c.end) ? 'start' : 'end';
+    c[drag] = t;
+    clamp();
+    draw();
+  });
+  ov.addEventListener('pointermove', (e) => { if (!drag) return; c[drag] = tAt(e); clamp(); draw(); });
+  ov.addEventListener('pointerup', () => { drag = null; });
+  // 近くの波形の上: 横にドラッグで細かく動かす
+  for (const [id, key] of [['cutA', 'start'], ['cutB', 'end']] as const) {
+    const cv = $<HTMLCanvasElement>(id);
+    let d: { x: number; v: number } | null = null;
+    cv.addEventListener('pointerdown', (e) => { cv.setPointerCapture(e.pointerId); d = { x: localPoint(e, cv).x, v: c[key] }; });
+    cv.addEventListener('pointermove', (e) => {
+      if (!d) return;
+      c[key] = d.v - ((localPoint(e, cv).x - d.x) / Math.max(1, cv.clientWidth)) * 3;
+      clamp();
+      draw();
+    });
+    cv.addEventListener('pointerup', () => { d = null; });
+  }
+  body.querySelectorAll<HTMLButtonElement>('[data-cstep]').forEach((b) => b.addEventListener('click', () => {
+    const k = b.dataset.cstep as 'start' | 'end';
+    c[k] += Number(b.dataset.d);
+    clamp();
+    draw();
+  }));
+  body.querySelectorAll<HTMLButtonElement>('[data-cnum]').forEach((b) => b.addEventListener('click', () => {
+    const k = b.dataset.cnum as 'fadeIn' | 'fadeOut' | 'pad';
+    c[k] = Math.round((c[k] + Number(b.dataset.d)) * 10) / 10;
+    clamp();
+    draw();
+  }));
+  // 試聴: 始まりから 4 秒、終わりの 4 秒前から終わりまで
+  body.querySelectorAll<HTMLButtonElement>('[data-cplay]').forEach((b) => b.addEventListener('click', async () => {
+    clearTimeout(c.prevTimer);
+    const from = b.dataset.cplay === 'start' ? c.start : Math.max(c.start, c.end - 4);
+    const to = b.dataset.cplay === 'start' ? Math.min(c.end, c.start + 4) : c.end;
+    await audio.startAt(from, 1);
+    c.prevTimer = window.setTimeout(() => audio.stop(), (to - from) * 1000);
+  }));
+  body.querySelectorAll<HTMLButtonElement>('[data-cact]').forEach((b) => b.addEventListener('click', async () => {
+    clearTimeout(c.prevTimer);
+    audio.stop();
+    if (b.dataset.cact === 'ok') await applyCut();
+    closeSheet();
+  }));
+}
+
+/** カットを反映: 切り出し・フェード・頭の無音を付けて .ogg にし直し、OFFSET と DEMOSTART を合わせる */
+async function applyCut() {
+  const c = cutState;
+  const buf = audio.buffer;
+  if (!buf) return;
+  const sr = buf.sampleRate;
+  const s0 = Math.round(c.start * sr);
+  const s1 = Math.round(c.end * sr);
+  const pad = Math.round(c.pad * sr);
+  const fi = Math.round(c.fadeIn * sr);
+  const fo = Math.round(c.fadeOut * sr);
+  const chs = bufferChannels(buf).map((ch) => {
+    const out = new Float32Array(pad + (s1 - s0));
+    out.set(ch.subarray(s0, s1), pad);
+    const n = s1 - s0;
+    for (let i = 0; i < fi && i < n; i++) out[pad + i] *= i / fi;
+    for (let i = 0; i < fo && i < n; i++) out[pad + n - 1 - i] *= i / fo;
+    return out;
+  });
+  try {
+    busy('カットした音源を .ogg にしています…', 0);
+    const data = await pcmToOgg(chs, sr, (p) => busy('カットした音源を .ogg にしています…', p));
+    const name = oggName(ed.audio?.name ?? `${safeName(ed.chart.title)}.ogg`);
+    const shift = c.start - c.pad;
+    ed.mutate(() => {
+      ed.chart.offset = Math.round((ed.chart.offset + shift) * 1000) / 1000;
+      ed.chart.demoStart = Math.max(0, Math.round((ed.chart.demoStart - shift) * 1000) / 1000);
+      ed.chart.wave = name;
+    });
+    await setAudio({ name, data });
+    busyEnd();
+    toast('カットを反映しました');
+  } catch (err) {
+    busyEnd();
+    toast(`反映できませんでした: ${(err as Error).message}`);
+  }
 }

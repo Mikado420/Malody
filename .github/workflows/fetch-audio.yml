@@ -1,0 +1,56 @@
+# TJA Chart Studio の「リンクから音源を読み込む」用。
+# アプリが GitHub の API でこの処理を動かし（workflow_dispatch）、YouTube・SoundCloud などのリンクから音声を取り出して
+# .ogg（Vorbis）にし、out-<id> というブランチに置く。アプリはそれを受け取ったあと、ブランチを消す。
+name: fetch-audio
+run-name: fetch ${{ inputs.id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 音源のリンク
+        required: true
+      id:
+        description: アプリが決める受け取り用の名前（英小文字と数字）
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - name: 取り出して .ogg にする
+        env:
+          URL: ${{ inputs.url }}
+          ID: ${{ inputs.id }}
+        run: |
+          [[ "$ID" =~ ^[a-z0-9]{4,40}$ ]] || { echo "bad id"; exit 1; }
+          python3 -m pip install -U --quiet "yt-dlp[default]"
+          mkdir -p out
+          set +e
+          yt-dlp --no-playlist --no-progress -f "bestaudio/best" -x --audio-format vorbis --audio-quality 5 \
+            -o "out/audio.%(ext)s" \
+            --print-to-file "%(title)s" out/title.txt --print-to-file "%(uploader)s" out/artist.txt --no-simulate \
+            "$URL" > out/log.txt 2>&1
+          echo $? > out/status.txt
+          set -e
+          tail -n 40 out/log.txt
+          ls -la out
+      - name: 受け取り用のブランチに置く
+        env:
+          ID: ${{ inputs.id }}
+          TOKEN: ${{ github.token }}
+        run: |
+          cd out
+          git init -q -b out
+          git config user.name tjacs
+          git config user.email tjacs@users.noreply.github.com
+          git add -A
+          git commit -qm "fetch $ID"
+          git push -q --force "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}" "HEAD:refs/heads/out-${ID}"
