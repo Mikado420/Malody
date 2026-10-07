@@ -1,0 +1,24 @@
+# 調査用（一時的）: 公開サーバー（Piped・Invidious）が YouTube の音声を返すか確かめる
+name: check-public
+on: workflow_dispatch
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          V=YE7VzlLtp-4
+          O="Origin: https://mikado420.github.io"
+          echo "== piped list"; curl -s -m 10 -D - https://piped-instances.kavin.rocks/ -H "$O" -o p.json | grep -i "^HTTP\|access-control-allow-origin"; jq -r '.[].api_url' p.json | head -20 > pl.txt; cat pl.txt
+          echo "== invidious list"; curl -s -m 10 -D - "https://api.invidious.io/instances.json?sort_by=health" -H "$O" -o i.json | grep -i "^HTTP\|access-control-allow-origin"; jq -r '.[] | select(.[1].api == true and .[1].type == "https") | .[1].uri' i.json | head -20 > il.txt; cat il.txt
+          for a in $(cat pl.txt) https://pipedapi.kavin.rocks https://pipedapi.adminforge.de; do
+            echo "== piped $a"
+            curl -s -m 15 -D h.txt -H "$O" "$a/streams/$V" -o s.json; grep -i "^HTTP\|access-control-allow-origin" h.txt
+            u=$(jq -r '[.audioStreams[]? | select(.mimeType|test("mp4"))][0].url // empty' s.json 2>/dev/null); jq -r '.error // .message // empty' s.json 2>/dev/null | head -c 200; echo
+            [ -n "$u" ] && { curl -s -m 20 -D h2.txt -H "$O" -r 0-99999 "$u" -o a.bin; grep -i "^HTTP\|access-control-allow-origin\|content-length" h2.txt; ls -la a.bin; }
+          done
+          for a in $(cat il.txt) https://inv.nadeko.net https://yewtu.be; do
+            echo "== invidious $a"
+            curl -s -m 15 -D h.txt -H "$O" "$a/api/v1/videos/$V?local=true" -o s.json; grep -i "^HTTP\|access-control-allow-origin" h.txt
+            u=$(jq -r '[.adaptiveFormats[]? | select(.type|test("audio/mp4"))][0].url // empty' s.json 2>/dev/null); jq -r '.error // empty' s.json 2>/dev/null | head -c 200; echo
+            [ -n "$u" ] && { case "$u" in /*) u="$a$u";; esac; curl -s -m 20 -D h2.txt -H "$O" "$u&range=0-99999" -o a.bin; grep -i "^HTTP\|access-control-allow-origin\|content-length" h2.txt; ls -la a.bin; }
+          done

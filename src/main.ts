@@ -17,7 +17,8 @@ import { EditorView, eventText, EVENT_COLOR, type EventItem, type EventShow } fr
 import { loadFiles, type AudioFile } from './io/load';
 import { encodeSJIS } from './chart/sjis';
 import { bufferChannels, isOgg, oggName, pcmToOgg } from './audio/toOgg';
-import { fetchLink, testSetup } from './io/linkFetch';
+import { fetchLink, testSetup, type LinkResult } from './io/linkFetch';
+import { fetchYoutubePublic, youtubeId } from './io/ytPublic';
 import { loadAudio, loadChart, loadHitSound, saveHitSound } from './io/storage';
 import { getCurrentId, listSongs, loadSongAudio, loadSongData, newId, saveSong, setCurrentId } from './io/library';
 import { Home } from './home/home';
@@ -2407,9 +2408,9 @@ function renderLinkSheet(body: HTMLElement) {
   $('sheetTitle').textContent = 'リンクから音源を読み込む';
   const ready = !!settings.linkToken && !!settings.linkRepo;
   body.innerHTML = `
-    <label class="field"><span>リンク</span><input type="url" id="linkUrl" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off" ${ready ? '' : 'disabled'}></label>
-    <div class="btns"><button data-act="linkGo" class="primary" ${ready && !linkBusy ? '' : 'disabled'}>取り込む</button><button data-act="linkPaste" ${ready ? '' : 'disabled'}>貼り付け</button></div>
-    <p class="note" id="linkStatus">${linkBusy || (ready ? '' : '下の「準備」を先にしてください')}</p>
+    <label class="field"><span>リンク</span><input type="url" id="linkUrl" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off"></label>
+    <div class="btns"><button data-act="linkGo" class="primary" ${!linkBusy ? '' : 'disabled'}>取り込む</button><button data-act="linkPaste">貼り付け</button></div>
+    <p class="note" id="linkStatus">${linkBusy || (ready ? '' : 'YouTube は準備なしでも試せます（公開サーバー経由）。SoundCloud などは下の「準備」をしてください')}</p>
     <details class="link-setup" ${ready ? '' : 'open'}>
       <summary>準備（はじめの 1 回だけ）</summary>
       <ol class="note">
@@ -2422,6 +2423,17 @@ function renderLinkSheet(body: HTMLElement) {
       <label class="field"><span>トークン</span><input type="password" id="linkToken" value="${esc(settings.linkToken)}" placeholder="github_pat_…" autocomplete="off"></label>
       <div class="btns"><button data-act="linkSave">確かめて保存</button><button data-act="linkClear">トークンを消す</button></div>
       <p class="note">トークンはこのブラウザの中だけに保存します。</p>
+    </details>
+    <details class="link-setup">
+      <summary>YouTube が取れないとき（クッキーの登録）</summary>
+      <ol class="note">
+        <li>YouTube 用の捨てアカウント（普段使わない Google アカウント）を作る</li>
+        <li>App Store の「Orion Browser」で、拡張機能「Get cookies.txt LOCALLY」を入れる</li>
+        <li>Orion で youtube.com に捨てアカウントでログインし、動画を 1 本再生する</li>
+        <li>拡張機能で cookies.txt を書き出し、中身を全部コピーする</li>
+        <li>GitHub のリポジトリ → Settings → Secrets and variables → Actions → New repository secret で、名前 <b>YT_COOKIES</b>、値に貼って保存</li>
+      </ol>
+      <p class="note">クッキーは数日〜数週間で切れることがあります。取れなくなったら登録し直してください。</p>
     </details>`;
   const status = (m: string) => { const el = document.getElementById('linkStatus'); if (el) el.textContent = m; };
   body.querySelector('[data-act="linkSave"]')!.addEventListener('click', async () => {
@@ -2453,13 +2465,26 @@ function renderLinkSheet(body: HTMLElement) {
 }
 
 async function importLink(url: string, target: 'home' | 'editor') {
+  const ready = !!settings.linkToken && !!settings.linkRepo;
   const show = (m: string) => {
     linkBusy = m;
     const el = document.getElementById('linkStatus');
     if (el) el.textContent = m;
   };
   try {
-    const res = await fetchLink({ repo: settings.linkRepo, token: settings.linkToken }, url, show);
+    // YouTube: まず GitHub（クッキーを登録していれば使う）、だめなら公開サーバー（Piped・Invidious）
+    let res: LinkResult;
+    if (!ready) {
+      if (!youtubeId(url)) throw new Error('YouTube 以外のリンクは、先に「準備」をしてください');
+      res = await fetchYoutubePublic(url, show);
+    } else {
+      try {
+        res = await fetchLink({ repo: settings.linkRepo, token: settings.linkToken }, url, show);
+      } catch (e) {
+        if (!youtubeId(url)) throw e;
+        res = await fetchYoutubePublic(url, show);
+      }
+    }
     show('');
     const c = await convertAudio(res.audio, res.title);
     busyEnd();
