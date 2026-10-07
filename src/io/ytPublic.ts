@@ -26,7 +26,7 @@ export function youtubeId(url: string): string | null {
 const PIPED_FALLBACK = ['https://pipedapi.kavin.rocks', 'https://pipedapi.adminforge.de', 'https://api.piped.private.coffee', 'https://pipedapi.r4fo.com'];
 const INVIDIOUS_FALLBACK = ['https://inv.nadeko.net', 'https://invidious.nerdvpn.de', 'https://yewtu.be', 'https://invidious.f5.si'];
 
-async function getJson<T>(url: string, ms = 12000): Promise<T> {
+async function getJson<T>(url: string, ms = 8000): Promise<T> {
   const ac = new AbortController();
   const t = setTimeout(() => ac.abort(), ms);
   try {
@@ -68,7 +68,7 @@ async function download(s: Stream, onP: (p: number) => void): Promise<ArrayBuffe
       for (let a = 0; a < s.size; a += CH) {
         const b = Math.min(s.size, a + CH) - 1;
         const r = await fetch(`${s.url}${s.url.includes('?') ? '&' : '?'}range=${a}-${b}`, { signal: ac.signal });
-        if (!r.ok) throw new Error(String(r.status));
+        if (!r.ok || /text\/html/.test(r.headers.get('content-type') ?? '')) throw new Error(String(r.status));
         const part = new Uint8Array(await r.arrayBuffer());
         if (!part.length) throw new Error('empty');
         out.set(part.subarray(0, Math.min(part.length, s.size - a)), a);
@@ -79,6 +79,8 @@ async function download(s: Stream, onP: (p: number) => void): Promise<ArrayBuffe
     }
     const r = await fetch(s.url, { signal: ac.signal });
     if (!r.ok) throw new Error(String(r.status));
+    // ボット確認のページ（HTML）が返ってくるサーバーがある
+    if (/text\/html/.test(r.headers.get('content-type') ?? '')) throw new Error('html');
     const buf = await r.arrayBuffer();
     if (buf.byteLength < 10000) throw new Error('too small');
     onP(1);
@@ -115,8 +117,8 @@ export async function fetchYoutubePublic(url: string, onStatus: (m: string) => v
   const tries: { name: string; run: () => Promise<{ title: string; artist: string; streams: Stream[] }> }[] = [];
   onStatus('公開サーバーを探しています…');
   const [pl, il] = await Promise.all([pipedList(), invidiousList()]);
-  for (const api of pl.slice(0, 8)) tries.push({ name: new URL(api).hostname, run: () => viaPiped(api, id) });
-  for (const api of il.slice(0, 8)) tries.push({ name: new URL(api).hostname, run: () => viaInvidious(api, id) });
+  for (const api of pl.slice(0, 5)) tries.push({ name: new URL(api).hostname, run: () => viaPiped(api, id) });
+  for (const api of il.slice(0, 6)) tries.push({ name: new URL(api).hostname, run: () => viaInvidious(api, id) });
   let n = 0;
   for (const t of tries) {
     n++;
