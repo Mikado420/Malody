@@ -25,13 +25,19 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - name: ffmpeg を入れる
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
+      # YouTube の「ボットではないか」の確認を通りやすくする（PO トークンを作るサーバー）
+      - name: PO トークンのサーバーを動かす
+        if: contains(inputs.url, 'youtu')
+        run: docker run -d --name bgutil -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
       - name: 取り出して .ogg にする
         env:
           URL: ${{ inputs.url }}
           ID: ${{ inputs.id }}
         run: |
           [[ "$ID" =~ ^[a-z0-9]{4,40}$ ]] || { echo "bad id"; exit 1; }
-          python3 -m pip install -U --quiet "yt-dlp[default]"
+          python3 -m pip install -U --quiet "yt-dlp[default]" bgutil-ytdlp-pot-provider
           mkdir -p out
           set +e
           # YouTube はデータセンターからのアクセスを「ボット」と断ることがあるので、取り出し方（クライアント）を変えて何度か試す
