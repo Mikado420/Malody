@@ -1,0 +1,22 @@
+=== try default
+[soundcloud] Downloading main page
+[soundcloud] Downloading JS asset
+[soundcloud] Extracting URL: https://soundcloud.com/forss/flickermood
+[soundcloud] forss/flickermood: Downloading info JSON
+[soundcloud] 293: Downloading original download format info JSON
+WARNING: [soundcloud] Original download format is only available for registered users. Use --cookies, --cookies-from-browser, --username and --password, --netrc-cmd, or --netrc (soundcloud) to provide account credentials. See  https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp  for how to manually pass cookies
+[soundcloud] 293: Downloading hls_aac format info JSON
+[soundcloud] 293: Downloading hls_aac format info JSON
+[soundcloud] 293: Downloading hls_mp3 format info JSON
+[soundcloud] 293: Downloading http_mp3 format info JSON
+[soundcloud] 293: Checking thumbnail extension
+[info] 293: Downloading 1 format(s): hls_aac_160k
+[info] Writing '%(title)s' to: out/title.txt
+[info] Writing '%(uploader)s' to: out/artist.txt
+[hlsnative] Downloading m3u8 manifest
+[hlsnative] Total fragments: 22
+[download] Destination: out/audio.m4a
+[download] Download completed
+WARNING: 293: writing DASH m4a. Only some players support this container. Install ffmpeg to fix this automatically
+WARNING: 293: Possible MPEG-TS in MP4 container or malformed AAC timestamps. Install ffmpeg to fix this automatically
+ERROR: Postprocessing: ffprobe and ffmpeg not found. Please install or provide the path using --ffmpeg-location
