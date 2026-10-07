@@ -27,18 +27,18 @@ jobs:
           deno-version: v2.x
       - name: ffmpeg を入れる
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg > /dev/null
-      # YouTube の「ボットではないか」の確認を通りやすくする（PO トークンを作るサーバー）
-      - name: PO トークンのサーバーを動かす
-        if: contains(inputs.url, 'youtu')
-        run: docker run -d --name bgutil -p 4416:4416 brainicism/bgutil-ytdlp-pot-provider
       - name: 取り出して .ogg にする
         env:
           URL: ${{ inputs.url }}
           ID: ${{ inputs.id }}
+          # YouTube にログインした状態のクッキー（cookies.txt の中身）。リポジトリの Secrets に YT_COOKIES として入れると使う
+          COOKIES: ${{ secrets.YT_COOKIES }}
         run: |
           [[ "$ID" =~ ^[a-z0-9]{4,40}$ ]] || { echo "bad id"; exit 1; }
-          python3 -m pip install -U --quiet "yt-dlp[default]" bgutil-ytdlp-pot-provider
+          python3 -m pip install -U --quiet "yt-dlp[default]"
           mkdir -p out
+          cookie=()
+          if [ -n "$COOKIES" ]; then printf '%s' "$COOKIES" > "$RUNNER_TEMP/cookies.txt"; cookie=(--cookies "$RUNNER_TEMP/cookies.txt"); fi
           set +e
           # YouTube はデータセンターからのアクセスを「ボット」と断ることがあるので、取り出し方（クライアント）を変えて何度か試す
           code=1
@@ -46,7 +46,7 @@ jobs:
             args=()
             [ -n "$client" ] && args=(--extractor-args "youtube:player_client=$client")
             echo "=== try ${client:-default}" >> out/log.txt
-            yt-dlp "${args[@]}" --no-playlist --no-progress -f "bestaudio/best" -x --audio-format vorbis --audio-quality 5 \
+            yt-dlp "${cookie[@]}" "${args[@]}" --no-playlist --no-progress -f "bestaudio/best" -x --audio-format vorbis --audio-quality 5 \
               -o "out/audio.%(ext)s" \
               --print-to-file "%(title)s" out/title.txt --print-to-file "%(uploader)s" out/artist.txt --no-simulate \
               "$URL" >> out/log.txt 2>&1
