@@ -1859,8 +1859,9 @@ function meterOptions(auto: Meter | undefined, sel: Meter | null, withAuto = tru
 
 /** 区間の色（BPM ごとに色相を変える。だんだん変わる所は少しずつ色が変わる） */
 function tempoColor(bpm: number, alpha = 1) {
-  const h = ((Math.log2(bpm / 60) * 150) % 360 + 360) % 360;
-  return `hsla(${h.toFixed(0)}, 42%, 40%, ${alpha})`;
+  // 白・青・黒でそろえるので、BPM ごとに青の濃さを変えて見分ける
+  const k = ((Math.log2(bpm / 60) * 2.3) % 1 + 1) % 1;
+  return `hsla(219, ${(62 + k * 20).toFixed(0)}%, ${(18 + k * 30).toFixed(0)}%, ${alpha})`;
 }
 
 /** tick → 「小節 n」「小節 n 拍 b」 */
@@ -2282,7 +2283,7 @@ function drawTempoOverview(plan: TempoPlan, playhead = -1) {
   const { ctx, W, H } = fitCanvas(cv);
   const dur = st.result.duration;
   const xOf = (t: number) => (Math.max(0, Math.min(dur, t)) / dur) * W;
-  ctx.fillStyle = '#020810';
+  ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
   const secs = editSections(plan);
   const xs = secs.map((s, i) => ({
@@ -2351,11 +2352,11 @@ function drawTempoOverview(plan: TempoPlan, playhead = -1) {
   // 下の波形に出している範囲
   const v0 = xOf(st.viewAt - st.span / 2);
   const v1 = xOf(st.viewAt + st.span / 2);
-  ctx.strokeStyle = 'rgba(79,195,255,0.9)';
+  ctx.strokeStyle = '#ffffff';
   ctx.lineWidth = 2;
   ctx.strokeRect(v0, 1, Math.max(3, v1 - v0), H - 2);
   if (playhead >= 0) {
-    ctx.fillStyle = '#ff5a4a';
+    ctx.fillStyle = '#5c93ff';
     ctx.fillRect(xOf(playhead) - 1, 0, 2, H);
   }
 }
@@ -2367,7 +2368,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   if (!cv || !buf) return;
   const st = tempoState;
   const { ctx, W, H } = fitCanvas(cv);
-  ctx.fillStyle = '#020810';
+  ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, W, H);
   const t0 = st.viewAt - st.span / 2;
   const t1 = st.viewAt + st.span / 2;
@@ -2378,13 +2379,13 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   if (sel) {
     const a = st.sel === 0 ? 0 : planTimeAt(plan, TPB, sel.s);
     const b = sel.e === Infinity ? (st.result?.duration ?? t1) : planTimeAt(plan, TPB, sel.e);
-    ctx.fillStyle = 'rgba(30,136,255,0.12)';
+    ctx.fillStyle = 'rgba(30,107,255,0.14)';
     ctx.fillRect(xOf(a), 0, xOf(b) - xOf(a), H);
   }
   // 波形（1 px ごとの最大・最小）
   const sr = buf.sampleRate;
   const chs = Array.from({ length: buf.numberOfChannels }, (_, i) => buf.getChannelData(i));
-  ctx.fillStyle = '#5e6a78';
+  ctx.fillStyle = '#3c5f9e';
   const mid = H / 2 + 8;
   const amp = H / 2 - 12;
   for (let x = 0; x < W; x++) {
@@ -2408,7 +2409,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   beats.forEach((b, k) => {
     if (b.t < t0 - 0.01 || b.t > t1 + 0.01) return;
     const x = xOf(b.t);
-    ctx.fillStyle = k === 0 ? '#ff5a4a' : b.bar ? '#ffd21f' : 'rgba(255,255,255,0.45)';
+    ctx.fillStyle = k === 0 ? '#5c93ff' : b.bar ? '#ffffff' : 'rgba(255,255,255,0.4)';
     ctx.fillRect(x - (b.bar ? 1 : 0.5), 0, b.bar ? 2 : 1, H);
     if (b.bar) {
       ctx.font = '600 11px system-ui, sans-serif';
@@ -2422,7 +2423,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
     if (i === 0 && t < t0) {
       // 最初の区間の旗は、画面の左端に小さく
       if (st.viewAt - st.span / 2 < (secs[1] ? planTimeAt(plan, TPB, secs[1].s) : Infinity)) {
-        ctx.fillStyle = i === st.sel ? '#ffffff' : '#1e88ff';
+        ctx.fillStyle = i === st.sel ? '#ffffff' : '#1e6bff';
         const label = String(Number(s.bpm.toFixed(3)));
         const w = ctx.measureText(label).width + 10;
         ctx.globalAlpha = 0.85;
@@ -2437,7 +2438,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
     const x = xOf(t);
     const label = String(Number(s.bpm.toFixed(3)));
     const w = ctx.measureText(label).width + 10;
-    ctx.fillStyle = i === st.sel ? '#ffffff' : '#1e88ff';
+    ctx.fillStyle = i === st.sel ? '#ffffff' : '#1e6bff';
     ctx.fillRect(x - 1.5, 0, 3, H);
     ctx.fillRect(x, 0, w, 20);
     ctx.fillStyle = '#111';
@@ -2462,7 +2463,7 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   }
   // 確認再生中の今の位置
   if (playhead >= t0 && playhead <= t1) {
-    ctx.fillStyle = '#4fc3ff';
+    ctx.fillStyle = '#5c93ff';
     ctx.fillRect(xOf(playhead) - 1, 0, 2, H);
   }
   ctx.fillStyle = '#9a9aa2';
@@ -2634,9 +2635,9 @@ function renderCutSheet(body: HTMLElement) {
     // 曲全体
     const ov = $<HTMLCanvasElement>('cutWave');
     const { ctx, W, H } = fitCanvas(ov);
-    ctx.fillStyle = '#020810';
+    ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = 'rgba(30,136,255,0.75)';
+    ctx.fillStyle = 'rgba(30,107,255,0.75)';
     for (let x = 0; x < W; x++) {
       const k0 = Math.floor((x / W) * peaks.length);
       const k1 = Math.max(k0 + 1, Math.floor(((x + 1) / W) * peaks.length));
@@ -2667,10 +2668,10 @@ function renderCutSheet(body: HTMLElement) {
       const g = fitCanvas(cv);
       const span = 3;
       const t0 = at - span / 2;
-      g.ctx.fillStyle = '#020810';
+      g.ctx.fillStyle = '#000';
       g.ctx.fillRect(0, 0, g.W, g.H);
       const chs = bufferChannels(buf);
-      g.ctx.fillStyle = '#5e8ac0';
+      g.ctx.fillStyle = '#3c6fd0';
       for (let x = 0; x < g.W; x++) {
         const a = Math.floor((t0 + (x / g.W) * span) * buf.sampleRate);
         const b = Math.floor((t0 + ((x + 1) / g.W) * span) * buf.sampleRate);

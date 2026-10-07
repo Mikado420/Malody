@@ -43,17 +43,18 @@ const R = {
 
 const C = {
   bg: '#000000',
-  col: 'rgba(1,6,13,0.92)',
-  colLine: '#24548a',
+  col: 'rgba(0,0,0,0.94)',
+  colLine: '#1e6bff',
   lane: '#0b1626',
   laneEdge: '#4f9bf0',
   gogo: 'rgba(255,110,40,0.16)',
   measure: 'rgba(255,255,255,0.8)',
   text: '#f4f4f4',
   sub: '#9a9aa2',
-  hex: '#16365e',
-  hexEdge: '#7fb8ff',
-  wave: '#3d8ef0',
+  btn: '#1c1c1c',
+  btnEdge: '#ffffff',
+  play: '#1e6bff',
+  wave: '#2f6fe8',
   event: '#c27dff',
 };
 
@@ -449,7 +450,7 @@ export class EditorView {
     ctx.clearRect(0, 0, this.w, this.h);
 
     // 波形
-    ctx.fillStyle = 'rgba(2,9,18,0.9)';
+    ctx.fillStyle = 'rgba(0,0,0,0.9)';
     ctx.fillRect(L.waveX, L.waveY, this.w - L.waveX, L.waveH);
     this.drawWave(L);
 
@@ -852,19 +853,31 @@ export class EditorView {
     // 再生位置の線（左端から再生ボタンまで）
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, L.cy - lw / 2, L.play.x, lw);
-    ctx.fillStyle = '#1e88ff';
-    hexPath(ctx, 6 * s, L.cy, 9 * s);
-    ctx.fill();
+    ctx.fillStyle = C.play;
+    ctx.fillRect(0, L.cy - 6 * s, 12 * s, 12 * s);
 
+    // 拡大縮小・再生のボタン: 斜めの四角（平行四辺形）
     const hex = (b: Box, label: 'plus' | 'minus' | 'play' | 'pause') => {
       ctx.save();
-      ctx.translate(b.x, b.y);
-      hexPath(ctx, 0, 0, b.r);
-      ctx.fillStyle = C.hex;
+      // 左端からはみ出さないよう、少し右に寄せる
+      const hw = b.r * 0.84;
+      const hh = b.r * 0.8;
+      const sk = b.r * 0.26;
+      ctx.translate(Math.max(b.x, hw + sk * 0.2 + 2), b.y);
+      ctx.beginPath();
+      ctx.moveTo(-hw + sk, -hh);
+      ctx.lineTo(hw + sk * 0.2, -hh);
+      ctx.lineTo(hw - sk, hh);
+      ctx.lineTo(-hw - sk * 0.2, hh);
+      ctx.closePath();
+      const isPlay = label === 'play' || label === 'pause';
+      ctx.fillStyle = isPlay ? C.play : C.btn;
       ctx.fill();
-      ctx.lineWidth = Math.max(1.5, 4 * s);
-      ctx.strokeStyle = C.hexEdge;
-      ctx.stroke();
+      if (!isPlay) {
+        ctx.lineWidth = Math.max(1, 2 * s);
+        ctx.strokeStyle = C.btnEdge;
+        ctx.stroke();
+      }
       ctx.fillStyle = '#fff';
       const k = b.r;
       if (label === 'plus' || label === 'minus') {
@@ -899,8 +912,6 @@ export class EditorView {
       ctx.translate(x, y);
       ctx.rotate(-Math.PI / 2);
       ctx.textAlign = align;
-      ctx.shadowColor = 'rgba(255,255,255,0.35)';
-      ctx.shadowBlur = 6 * s;
       ctx.fillText(text, 0, 0);
       ctx.restore();
     };

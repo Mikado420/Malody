@@ -1,6 +1,6 @@
 /**
- * 最初の画面（曲選択）。Malody の曲選択のように、左にロゴ、右にフォルダと曲の一覧、右下に試聴のボタン。
- * 曲を選ぶと大きく開いて、BPM・長さ・難易度と「プレイ」「編集」が出る。
+ * 最初の画面（曲選択）。左にロゴとフォルダ、真ん中に曲の縦の一覧、右の青い面に選んだ曲
+ * （BPM・長さ・難易度・試聴・「プレイ」「編集」）。
  */
 import type { AudioFile } from '../io/load';
 import {
@@ -29,20 +29,15 @@ const fmtBpm = (e: SongEntry) => {
 };
 const COURSE_SHORT: Record<string, string> = { Easy: 'かんたん', Normal: 'ふつう', Hard: 'むずかしい', Oni: 'おに', Edit: 'うら' };
 
-/** 曲名から決まる、ジャケットの代わりの幾何学模様 */
+/** 曲名から決まる、ジャケットの代わりの斜線の模様 */
 function jacket(e: SongEntry) {
   let h = 0;
   for (const ch of e.title) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
-  const rot = h % 360;
-  const n = 3 + (h % 4);
-  const arcs = Array.from({ length: n }, (_, i) => {
-    const r = 14 + i * 7;
-    const len = 20 + ((h >> (i * 3)) % 60);
-    const off = (h >> (i * 2)) % 100;
-    return `<circle cx="50" cy="50" r="${r}" fill="none" stroke="${i % 2 ? '#1e88ff' : '#fff'}" stroke-width="${i % 2 ? 3 : 1.6}" stroke-dasharray="${len} ${100 - len}" pathLength="100" stroke-dashoffset="${off}" opacity="${i % 2 ? 0.95 : 0.8}"/>`;
-  }).join('');
-  return `<svg class="hj" viewBox="0 0 100 100" aria-hidden="true"><g transform="rotate(${rot} 50 50)">${arcs}</g>
-    <circle cx="50" cy="50" r="7" fill="#fff"/><circle cx="50" cy="50" r="3" fill="#1e88ff"/></svg>`;
+  const w = 5 + (h % 5);
+  const gap = 8 + ((h >> 4) % 10);
+  const ang = [-60, -45, -30][h % 3];
+  const bands = Array.from({ length: 14 }, (_, k) => `<rect x="${-60 + k * (w + gap)}" y="-40" width="${w}" height="200" fill="${k % 3 === (h >> 8) % 3 ? '#fff' : '#000'}" opacity="${k % 3 === (h >> 8) % 3 ? 0.9 : 0.55}"/>`).join('');
+  return `<svg class="hj" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g transform="rotate(${ang + 90} 50 50)">${bands}</g></svg>`;
 }
 
 const ICON = {
@@ -54,9 +49,11 @@ const ICON = {
 export class Home {
   private readonly el: HTMLElement;
   private readonly list: HTMLElement;
+  private readonly detail: HTMLElement;
+  private readonly foldersEl: HTMLElement;
   private songs: SongEntry[] = [];
   private folders: string[] = [];
-  /** 今見ているフォルダ（null は一番上） */
+  /** 今見ているフォルダ（null は「すべて」） */
   private folder: string | null = null;
   private sel: string | null = null;
   private sort: Sort = 'updated';
@@ -72,10 +69,11 @@ export class Home {
     this.preview.loop = true;
     this.preview.addEventListener('play', () => { this.playing = true; this.paintPlayer(); });
     this.preview.addEventListener('pause', () => { this.playing = false; this.paintPlayer(); });
-    this.el.querySelectorAll<HTMLButtonElement>('[data-h]').forEach((b) => b.addEventListener('click', () => this.action(b.dataset.h!)));
+    this.detail = document.getElementById('homeDetail')!;
+    this.foldersEl = document.getElementById('homeFolders')!;
     const q = document.getElementById('homeQuery') as HTMLInputElement;
     q.addEventListener('input', () => { this.query = q.value.trim(); this.render(); });
-    this.list.addEventListener('click', (e) => this.onListClick(e));
+    this.el.addEventListener('click', (e) => this.onClick(e));
   }
 
   /** 今見ているフォルダ（一番上なら ''） */
@@ -140,54 +138,53 @@ export class Home {
       const q = this.query.toLowerCase();
       return this.sorted(this.songs.filter((s) => `${s.title} ${s.subtitle}`.toLowerCase().includes(q)));
     }
-    return this.sorted(this.songs.filter((s) => (s.folder || null) === this.folder));
+    return this.sorted(this.folder === null ? this.songs : this.songs.filter((s) => s.folder === this.folder));
   }
 
   private render(scrollToSel = false) {
     const songs = this.shown();
-    const rows: string[] = [];
-    if (!this.query && this.folder !== null) {
-      rows.push(`<button class="hc hc-back" data-back>${ICON.back}<span class="hc-name">${esc(this.folder)}</span><span class="hc-meta">${songs.length} 曲</span></button>`);
+    // 左: フォルダ（選んでいるフォルダには「…」で名前の変更・削除）
+    const fl = [`<button class="hf ${this.folder === null && !this.query ? 'on' : ''}" data-folder=""><span>すべて</span><small>${this.songs.length}</small></button>`];
+    for (const f of [...this.folders].sort((a, b) => a.localeCompare(b, 'ja'))) {
+      const n = this.songs.filter((x) => x.folder === f).length;
+      const on = this.folder === f && !this.query;
+      fl.push(`<div class="hf ${on ? 'on' : ''}" data-folder="${esc(f)}"><span>${esc(f)}</span><small>${n}</small>${on ? `<button class="hf-more" data-fmore="${esc(f)}" aria-label="フォルダの操作">${ICON.more}</button>` : ''}</div>`);
     }
-    if (!this.query && this.folder === null) {
-      for (const f of [...this.folders].sort((a, b) => a.localeCompare(b, 'ja'))) {
-        const n = this.songs.filter((s) => s.folder === f).length;
-        rows.push(`<div class="hc hc-folder" data-folder="${esc(f)}">${ICON.folder}<span class="hc-name">${esc(f)}</span><span class="hc-meta">${n} 曲</span><button class="hc-more" data-fmore="${esc(f)}" aria-label="フォルダの操作">${ICON.more}</button></div>`);
-      }
-    }
-    for (const s of songs) {
-      if (s.id === this.sel) {
-        const courses = s.courses.map((c) => `<span class="hd hd-${esc(c.name.toLowerCase())}">${esc(COURSE_SHORT[c.name] ?? c.name)}<b>${c.level}</b></span>`).join('');
-        rows.push(`<div class="hc hc-song hc-sel" data-song="${s.id}">
-          <div class="hc-jacket">${jacket(s)}</div>
-          <div class="hc-body">
-            <div class="hc-title">${esc(s.title)}</div>
-            <div class="hc-sub">${esc(s.subtitle || 'Unknown artist')}</div>
-            <div class="hc-stat"><span>BPM</span><b>${fmtBpm(s)}</b><span>LENGTH</span><b>${fmtLen(s.length)}</b></div>
-            <div class="hc-diffs">${courses}</div>
-          </div>
-          <div class="hc-acts">
-            <button class="hc-play" data-play="${s.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>プレイ</button>
-            <button class="hc-edit" data-edit="${s.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/></svg>編集</button>
-            <button class="hc-more" data-smore="${s.id}" aria-label="曲の操作">${ICON.more}</button>
-          </div>
-        </div>`);
-      } else {
-        rows.push(`<div class="hc hc-song" data-song="${s.id}"><span class="hc-dot"></span><span class="hc-name">${esc(s.title)}</span><span class="hc-meta">${fmtBpm(s)}</span></div>`);
-      }
-    }
+    fl.push(`<button class="hf hf-add" data-h="folder"><span>＋ 新しいフォルダ</span></button>`);
+    this.foldersEl.innerHTML = fl.join('');
+
+    // 真ん中: 曲の縦の一覧
+    const rows = songs.map((s) => `<div class="hr ${s.id === this.sel ? 'on' : ''}" data-song="${s.id}"><i class="hr-mk"></i><div class="hr-t"><b>${esc(s.title)}</b><small>${esc(s.subtitle || ' ')}</small></div><span class="hr-bpm">${fmtBpm(s)}</span></div>`);
     if (!rows.length) {
-      rows.push(`<div class="hc-empty">${this.query ? '見つかりませんでした' : 'まだ曲がありません。左上の ⤓ で .tja / .zip を読み込むか、＋で新しく作れます'}</div>`);
+      rows.push(`<div class="hr-empty">${this.query ? '見つかりませんでした' : this.folder !== null ? 'このフォルダには曲がありません' : 'まだ曲がありません。左下の読み込み（↓）で .tja・.zip・音源を入れるか、＋で新しく作れます'}</div>`);
     }
     this.list.innerHTML = rows.join('');
+
+    // 右: 選んでいる曲
+    const s = this.songs.find((x) => x.id === this.sel && songs.includes(x));
+    if (s) {
+      const courses = s.courses.map((c) => `<span class="hd hd-${esc(c.name.toLowerCase())}">${esc(COURSE_SHORT[c.name] ?? c.name)}<b>${c.level}</b></span>`).join('');
+      this.detail.innerHTML = `
+        <div class="hdx-jk">${jacket(s)}</div>
+        <div class="hdx-top"><small>選んでいる曲</small><button class="hdx-more" data-smore="${s.id}" aria-label="曲の操作">${ICON.more}</button></div>
+        <h1 class="hdx-title">${esc(s.title)}</h1>
+        <div class="hdx-sub">${esc(s.subtitle || 'アーティスト未設定')}</div>
+        <div class="hdx-bpm">${fmtBpm(s)}<small>BPM</small></div>
+        <div class="hdx-row"><span>長さ ${fmtLen(s.length)}</span><span class="hdx-pv"><button data-h="prev" aria-label="前の曲"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 5v14"/><path d="M19 5 9 12l10 7z"/></svg></button><button data-h="pp" aria-label="試聴"></button><button data-h="next" aria-label="次の曲"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 5v14"/><path d="M5 5l10 7-10 7z"/></svg></button></span></div>
+        <div class="hdx-diffs">${courses}</div>
+        <div class="hdx-acts"><button class="hdx-edit" data-edit="${s.id}">編集</button><button class="hdx-play" data-play="${s.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>プレイ</button></div>`;
+    } else {
+      this.detail.innerHTML = `<div class="hdx-empty"><b>曲を選んでください</b><small>.tja・.zip・音源・リンクから読み込めます</small><button class="hdx-play" data-h="import">読み込む</button></div>`;
+    }
+
     (document.getElementById('homeSort') as HTMLElement).textContent = SORT_LABEL[this.sort];
-    (document.getElementById('homePath') as HTMLElement).textContent = this.query ? `「${this.query}」の検索` : this.folder ?? 'すべてのフォルダ';
-    (document.getElementById('homeCount') as HTMLElement).textContent = String(this.songs.length);
-    if (scrollToSel) this.list.querySelector('.hc-sel')?.scrollIntoView({ block: 'center' });
+    (document.getElementById('homePath') as HTMLElement).textContent = this.query ? `「${this.query}」` : this.folder ?? 'すべて';
+    (document.getElementById('homeCount') as HTMLElement).textContent = `${songs.length} 曲`;
+    if (scrollToSel) this.list.querySelector('.hr.on')?.scrollIntoView({ block: 'center' });
     this.paintPlayer();
   }
 
-  private onListClick(e: MouseEvent) {
+  private onClick(e: MouseEvent) {
     const t = e.target as HTMLElement;
     const d = (sel: string) => t.closest<HTMLElement>(sel);
     let x: HTMLElement | null;
@@ -195,8 +192,17 @@ export class Home {
     if ((x = d('[data-edit]'))) { this.stopPreview(); void this.host.open(x.dataset.edit!, 'edit'); return; }
     if ((x = d('[data-smore]'))) { this.songMenu(x.dataset.smore!, x); return; }
     if ((x = d('[data-fmore]'))) { this.folderMenu(x.dataset.fmore!, x); return; }
-    if (d('[data-back]')) { this.folder = null; this.render(); return; }
-    if ((x = d('[data-folder]'))) { this.folder = x.dataset.folder!; this.render(); this.list.scrollTop = 0; return; }
+    if ((x = d('[data-h]'))) { void this.action(x.dataset.h!); return; }
+    if ((x = d('[data-folder]'))) {
+      const f = x.dataset.folder!;
+      this.folder = f || null;
+      this.query = '';
+      const q = document.getElementById('homeQuery') as HTMLInputElement;
+      q.value = '';
+      document.getElementById('homeSearch')!.classList.add('hidden');
+      this.render(true);
+      return;
+    }
     if ((x = d('[data-song]'))) {
       const id = x.dataset.song!;
       if (this.sel === id) return;
@@ -216,7 +222,7 @@ export class Home {
       if (!name) return;
       await addFolder(name);
       await this.reload();
-      this.folder = null;
+      this.folder = name;
       this.render();
     } else if (a === 'sort') {
       const order: Sort[] = ['updated', 'title', 'bpm'];
@@ -228,10 +234,6 @@ export class Home {
       const q = document.getElementById('homeQuery') as HTMLInputElement;
       if (!box.classList.contains('hidden')) q.focus();
       else { q.value = ''; this.query = ''; this.render(true); }
-    } else if (a === 'root') { this.folder = null; this.query = ''; this.render(); }
-    else if (a === 'recent') {
-      const s = [...this.songs].sort((p, q) => q.updatedAt - p.updatedAt)[0];
-      if (s) void this.select(s.id);
     } else if (a === 'prev' || a === 'next') {
       const list = this.shown();
       if (!list.length) return;
@@ -292,7 +294,8 @@ export class Home {
     this.el.appendChild(pop);
     const r = anchor.getBoundingClientRect();
     const hr = this.el.getBoundingClientRect();
-    pop.style.right = `${Math.max(8, hr.right - r.right)}px`;
+    // ボタンの左端にそろえる（右にはみ出すときは右端にそろえる）
+    pop.style.left = `${Math.max(8, Math.min(r.left - hr.left, hr.width - pop.offsetWidth - 8))}px`;
     pop.style.top = `${Math.min(hr.height - pop.offsetHeight - 8, r.bottom - hr.top + 4)}px`;
     pop.addEventListener('click', (e) => {
       const b = (e.target as HTMLElement).closest<HTMLElement>('[data-i]');
@@ -337,6 +340,7 @@ export class Home {
         const to = prompt('フォルダの名前', name)?.trim();
         if (!to || to === name) return;
         await renameFolder(name, to);
+        if (this.folder === name) this.folder = to;
         await this.reload();
         this.render();
       }],
