@@ -34,11 +34,22 @@ jobs:
           python3 -m pip install -U --quiet "yt-dlp[default]"
           mkdir -p out
           set +e
-          yt-dlp --no-playlist --no-progress -f "bestaudio/best" -x --audio-format vorbis --audio-quality 5 \
-            -o "out/audio.%(ext)s" \
-            --print-to-file "%(title)s" out/title.txt --print-to-file "%(uploader)s" out/artist.txt --no-simulate \
-            "$URL" > out/log.txt 2>&1
-          echo $? > out/status.txt
+          # YouTube はデータセンターからのアクセスを「ボット」と断ることがあるので、取り出し方（クライアント）を変えて何度か試す
+          code=1
+          for client in "" "tv_simply" "web_embedded" "mweb" "tv"; do
+            args=()
+            [ -n "$client" ] && args=(--extractor-args "youtube:player_client=$client")
+            echo "=== try ${client:-default}" >> out/log.txt
+            yt-dlp "${args[@]}" --no-playlist --no-progress -f "bestaudio/best" -x --audio-format vorbis --audio-quality 5 \
+              -o "out/audio.%(ext)s" \
+              --print-to-file "%(title)s" out/title.txt --print-to-file "%(uploader)s" out/artist.txt --no-simulate \
+              "$URL" >> out/log.txt 2>&1
+            code=$?
+            [ $code -eq 0 ] && break
+            case "$URL" in *youtu*) ;; *) break ;; esac
+            rm -f out/title.txt out/artist.txt
+          done
+          echo $code > out/status.txt
           set -e
           tail -n 40 out/log.txt
           ls -la out
