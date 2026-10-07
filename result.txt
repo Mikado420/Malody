@@ -1,0 +1,84 @@
+== https://invidious.f5.si
+HTTP/2 200 
+access-control-allow-origin: *
+140 audio/mp4; codecs="mp4a.40.2" 9655276
+140 audio/mp4; codecs="mp4a.40.2" 9655429
+249 audio/webm; codecs="opus" 3772641
+249 audio/webm; codecs="opus" 3802123
+url: https://invidious.f5.si/videoplayback?expire=1791380059&ei=-_XFatn6KPabvcAPo7vG6QM&ip=106.167.141.154&id=o-AHpKuOrPrCYen
+HTTP/2 200 
+date: Wed, 07 Oct 2026 07:38:32 GMT
+content-type: text/html; charset=utf-8
+cache-control: no-store
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+set-cookie: techaro.lol-anubis-auth-347ddb4a=; Path=/; Expires=Wed, 07 Oct 2026 07:37:32 GMT; Max-Age=0; Secure; SameSite=None; Partitioned
+set-cookie: techaro.lol-anubis-cookie-verification-347ddb4a=01a1154c-bbb6-7e36-ad04-cf3188801b32; Path=/; Expires=Wed, 07 Oct 2026 08:08:32 GMT; Secure; SameSite=None; Partitioned
+cf-cache-status: DYNAMIC
+vary: accept-encoding
+speculation-rules: "/cdn-cgi/speculation"
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=LlUZ3OkLKWDAHEasfFPVV%2Bu5NNl6jafrYtU6M3uwwDFRvUZ5HkAJZJnJ8R8dYofk2BFFfemMwbrJVhBOdr2Q3I%2BT5599VQctxbGaHw84A3U%2BNyMcbatkbsLEwbGaOvm6eAU%3D"}]}
+server: cloudflare
+-rw-r--r-- 1 runner runner 7435 Oct  7 07:38 a.bin
+<!doctype html><html lang="en"><head><title>Making sure you&#39;re not a bot!</title><link rel="stylesheet" href="/.within.website/x/xess/xess.min.css?cachebuster=v1.27.0"><meta name="viewport" conten
+-- latest_version
+HTTP/2 200 
+content-type: text/html; charset=utf-8
+-rw-r--r-- 1 runner runner 7435 Oct  7 07:38 b.bin
+== https://inv.nadeko.net
+HTTP/2 403 
+url: 
+-- latest_version
+HTTP/2 502 
+content-type: text/html; charset=utf-8
+content-length: 2423
+-rw-r--r-- 1 runner runner 2423 Oct  7 07:38 b.bin
+== https://invidious.nerdvpn.de
+HTTP/2 401 
+url: 
+-- latest_version
+HTTP/2 200 
+content-type: text/html; charset=UTF-8
+x-content-type-options: nosniff
+-rw-r--r-- 1 runner runner 12918 Oct  7 07:38 b.bin
+== https://yewtu.be
+HTTP/2 403 
+url: 
+-- latest_version
+HTTP/2 206 
+content-type: text/html
+content-length: 11354
+-rw-r--r-- 1 runner runner 11354 Oct  7 07:38 b.bin
+== https://invidious.privacyredirect.com
+HTTP/1.1 301 Moved Permanently
+url: 
+-- latest_version
+HTTP/1.1 301 Moved Permanently
+Content-Type: text/html
+Content-Length: 162
+Location: https://privacyredirect.com/latest_version?id=YE7VzlLtp-4&itag=140&local=true
+HTTP/2 404 
+content-type: text/html
+content-length: 325
+-rw-r--r-- 1 runner runner 325 Oct  7 07:38 b.bin
+== https://iv.melmac.space
+url: 
+-- latest_version
+-rw-r--r-- 1 runner runner 325 Oct  7 07:38 b.bin
+== https://invidious.materialio.us
+HTTP/2 500 
+access-control-allow-origin: https://app.materialio.us
+url: 
+-- latest_version
+HTTP/2 500 
+access-control-allow-credentials: true
+access-control-allow-headers: User-Agent,Authorization,Content-Type
+access-control-allow-methods: GET,POST,OPTIONS,HEAD,PATCH,PUT,DELETE
+access-control-allow-origin: https://app.materialio.us
+content-type: text/html
+x-content-type-options: nosniff
+content-length: 6069
+-rw-r--r-- 1 runner runner 6069 Oct  7 07:38 b.bin
+== https://inv.tux.pizza
+url: 
+-- latest_version
+-rw-r--r-- 1 runner runner 6069 Oct  7 07:38 b.bin
