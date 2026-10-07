@@ -1,11 +1,15 @@
 # 調査用（一時的）: 公開サーバー（Piped・Invidious）が YouTube の音声を返すか確かめる
 name: check-public
 on: workflow_dispatch
+permissions:
+  contents: write
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - run: |
+          set +e
+          exec > >(tee result.txt) 2>&1
           V=YE7VzlLtp-4
           O="Origin: https://mikado420.github.io"
           echo "== piped list"; curl -s -m 10 -D - https://piped-instances.kavin.rocks/ -H "$O" -o p.json | grep -i "^HTTP\|access-control-allow-origin"; jq -r '.[].api_url' p.json | head -20 > pl.txt; cat pl.txt
@@ -22,3 +26,5 @@ jobs:
             u=$(jq -r '[.adaptiveFormats[]? | select(.type|test("audio/mp4"))][0].url // empty' s.json 2>/dev/null); jq -r '.error // empty' s.json 2>/dev/null | head -c 200; echo
             [ -n "$u" ] && { case "$u" in /*) u="$a$u";; esac; curl -s -m 20 -D h2.txt -H "$O" "$u&range=0-99999" -o a.bin; grep -i "^HTTP\|access-control-allow-origin\|content-length" h2.txt; ls -la a.bin; }
           done
+          sleep 1
+          mkdir o && cp result.txt o/ && cd o && git init -q -b x && git -c user.name=t -c user.email=t@t commit -qm r --allow-empty && git add -A && git -c user.name=t -c user.email=t@t commit -qm r && git push -q --force "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" HEAD:refs/heads/check-out
