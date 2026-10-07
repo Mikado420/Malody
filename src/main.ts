@@ -240,7 +240,37 @@ async function startPlayback() {
   lastTime = from;
   playing = true;
   view.playing = true;
+  hitHorizon = -Infinity;
+  // 始めた位置の音符は、次の画面の書き換えを待たずにすぐ予約する（待つと間に合わず鳴らないことがある）
+  scheduleAhead(from);
   view.invalidate();
+}
+
+/** 打音・メトロノームを予約し終えた時刻 */
+let hitHorizon = -Infinity;
+/** これから 0.3 秒以内に鳴る打音を予約する */
+function scheduleAhead(t: number) {
+  const until = t + 0.3 * settings.rate;
+  while (hitIdx < hitEvents.length && hitEvents[hitIdx].t <= until) {
+    const e = hitEvents[hitIdx++];
+    if (!settings.hitSound) continue;
+    audio.scheduleHit(e.kind, e.t);
+    if (e.pop) audio.scheduleHit('balloon', e.t);
+  }
+  while (metroIdx < metroEvents.length && metroEvents[metroIdx].t <= until) {
+    const e = metroEvents[metroIdx++];
+    if (settings.metronome) audio.scheduleMetro(e.strong, e.t);
+  }
+  hitHorizon = Math.max(hitHorizon, until);
+}
+
+/** 再生中に譜面を変えたら、まだ予約していない打音を作り直す（置いたばかりの音符も鳴るように） */
+function rebuildHits() {
+  if (!playing) return;
+  playable = toPlayable(ed.chart, ed.course).notes;
+  const after = hitHorizon;
+  hitEvents = buildAutoEvents(playable, after).filter((e) => e.t > after);
+  hitIdx = 0;
 }
 
 function stopPlayback() {
@@ -256,17 +286,7 @@ function tickPlayback() {
   if (t < lastTime) return; // 再生開始直後
   view.pos = ed.timing.timeToTick(t);
 
-  // これから 0.3 秒以内に鳴る打音を予約する
-  while (hitIdx < hitEvents.length && hitEvents[hitIdx].t <= t + 0.3 * settings.rate) {
-    const e = hitEvents[hitIdx++];
-    if (!settings.hitSound) continue;
-    audio.scheduleHit(e.kind, e.t);
-    if (e.pop) audio.scheduleHit('balloon', e.t);
-  }
-  while (metroIdx < metroEvents.length && metroEvents[metroIdx].t <= t + 0.3 * settings.rate) {
-    const e = metroEvents[metroIdx++];
-    if (settings.metronome) audio.scheduleMetro(e.strong, e.t);
-  }
+  scheduleAhead(t);
   lastTime = t;
   if (t > endTime()) stopPlayback();
   view.invalidate();
@@ -302,6 +322,7 @@ const TOOL_GROUPS: Record<string, Tool[]> = {
   scroll: ['scroll'],
   bpm: ['bpm'],
   measure: ['measure'],
+  select: ['select'],
 };
 const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   don: { label: 'ドン', cls: 'don' },
@@ -316,9 +337,10 @@ const TOOL_LOOK: Record<Tool, { label: string; cls: string }> = {
   scroll: { label: 'SCROLL・グラデ', cls: 'cmd scroll' },
   bpm: { label: 'BPMCHANGE', cls: 'cmd bpm' },
   measure: { label: 'MEASURE', cls: 'cmd measure' },
+  select: { label: '選択（コピー・切り取り・貼り付け）', cls: 'cmd select' },
 };
 /** 各ボタンが今どちらの音符になっているか */
-const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', gogo: 'gogo', scroll: 'scroll', bpm: 'bpm', measure: 'measure' };
+const groupTool: Record<string, Tool> = { small: 'don', big: 'bigDon', roll: 'roll', balloon: 'balloon', gogo: 'gogo', scroll: 'scroll', bpm: 'bpm', measure: 'measure', select: 'select' };
 const groupOf = (t: Tool) => Object.keys(TOOL_GROUPS).find((g) => TOOL_GROUPS[g].includes(t))!;
 
 function setTool(t: Tool) {
@@ -329,6 +351,9 @@ function setTool(t: Tool) {
   const longs: Tool[] = ['roll', 'bigRoll', 'balloon'];
   const keep = (longs.includes(t) && longs.includes(prevTool)) || (t === 'gogo' && prevTool === 'gogo') || (t === 'scroll' && prevTool === 'scroll');
   if (ed.pendingLong !== null && !keep) ed.pendingLong = null;
+  // 選択ツールをやめたら選んでいる範囲も外す
+  if (t !== 'select') ed.sel = null;
+  updateSelBar();
   document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
     const g = b.dataset.group!;
     const look = TOOL_LOOK[groupTool[g]];
@@ -382,7 +407,6 @@ divMenu.addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-div]');
   if (!b) return;
   if (b.dataset.div === 'free') {
-    closeDivMenu();
     const v = prompt('1 小節を何分割にするか（例: 20, 28, 36, 40, 96）', String(ed.divisor));
     if (v === null) return;
     const n = Math.round(Number(v));
@@ -391,16 +415,13 @@ divMenu.addEventListener('click', (e) => {
       return;
     }
     setDivisor(n);
+    if (!divMenu.classList.contains('hidden')) openDivMenu();
     toast(`グリッドを 1/${n} にしました`);
     return;
   }
+  // 選んでもメニューは出したまま（グリッドのボタンをもう一度押すと閉じる）
   setDivisor(Number(b.dataset.div));
-  closeDivMenu();
-});
-document.addEventListener('pointerdown', (e) => {
-  if (divMenu.classList.contains('hidden')) return;
-  const t = e.target as Node;
-  if (!divMenu.contains(t) && !$('btnDiv').contains(t)) closeDivMenu();
+  openDivMenu();
 });
 
 // ---------- 2 段のメニュー（右のアイコンを押すと、その少し左に項目の一覧を出す） ----------
@@ -516,9 +537,10 @@ view.onPlayToggle = () => (playing ? stopPlayback() : void startPlayback());
 // ---------- 編集 ----------
 
 view.onUserScroll = () => stopPlayback();
-view.onTap = (tick) => {
-  const r = ed.tap(tick);
+view.onTap = (tick, tol) => {
+  const r = ed.tap(tick, tol);
   if (r.message) toast(r.message);
+  updateSelBar();
   if (r.editBalloon) {
     const v = prompt('風船の打数', String(r.editBalloon.hits ?? 5));
     if (v !== null) ed.setBalloonHits(r.editBalloon, Number(v));
@@ -535,6 +557,40 @@ view.onTap = (tick) => {
     openSheet('grad');
   }
 };
+
+// ---------- 選択（コピー・切り取り・貼り付け） ----------
+
+/** 選択ツールのときだけ、ツールの上に操作のボタンを出す */
+function updateSelBar() {
+  const bar = $('selBar');
+  const on = ed.tool === 'select';
+  bar.classList.toggle('hidden', !on);
+  if (!on) return;
+  const n = ed.selectedNotes().length;
+  const has = !!ed.sel;
+  bar.querySelector<HTMLElement>('.sel-info')!.textContent = has ? `${n} 個` : ed.pendingLong !== null ? '終点をタップ' : '始点をタップ';
+  bar.querySelectorAll<HTMLButtonElement>('[data-sel]').forEach((b) => {
+    const k = b.dataset.sel!;
+    b.disabled = k === 'paste' ? !ed.clip : k === 'clear' ? !has && ed.pendingLong === null : !has || !n;
+  });
+}
+function selAction(k: string) {
+  if (k === 'copy') { const n = ed.copySelection(); toast(`${n} 個コピーしました`); }
+  else if (k === 'cut') { const n = ed.cutSelection(); toast(`${n} 個切り取りました`); }
+  else if (k === 'del') { const n = ed.deleteSelection(); toast(`${n} 個消しました`); }
+  else if (k === 'paste') {
+    stopPlayback();
+    const at = Math.max(0, ed.snap(view.pos));
+    const n = ed.paste(at);
+    toast(`判定枠の位置に ${n} 個貼り付けました`);
+  } else if (k === 'clear') ed.clearSelection();
+  updateSelBar();
+  view.invalidate();
+}
+$('selBar').addEventListener('click', (e) => {
+  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-sel]');
+  if (b && !b.disabled) selAction(b.dataset.sel!);
+});
 
 /** 設定画面で編集中のグラデ */
 let gradEdit: { grad: Grad; old?: Grad } | null = null;
@@ -553,6 +609,8 @@ ed.onChange((structural) => {
   view.invalidate();
   updateHeader();
   if (structural) {
+    rebuildHits();
+    updateSelBar();
     clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => void persist(), 600);
     refreshSheet();
@@ -573,6 +631,15 @@ window.addEventListener('keydown', (e) => {
   const mod = e.ctrlKey || e.metaKey;
   if (mod && e.code === 'KeyZ') { e.preventDefault(); e.shiftKey ? ed.redo() : ed.undo(); return; }
   if (mod && e.code === 'KeyY') { e.preventDefault(); ed.redo(); return; }
+  if (mod && (e.code === 'KeyC' || e.code === 'KeyX' || e.code === 'KeyV')) {
+    if (e.code !== 'KeyV' && !ed.sel) return;
+    e.preventDefault();
+    if (e.code === 'KeyV' && ed.tool !== 'select') setTool('select');
+    selAction(e.code === 'KeyC' ? 'copy' : e.code === 'KeyX' ? 'cut' : 'paste');
+    return;
+  }
+  if ((e.code === 'Delete' || e.code === 'Backspace') && ed.sel) { e.preventDefault(); selAction('del'); return; }
+  if (e.code === 'Escape' && ed.sel) { selAction('clear'); return; }
   if (mod) return;
   if (e.code === 'Space') { e.preventDefault(); playing ? stopPlayback() : void startPlayback(); return; }
   if (KEY_TOOLS[e.code]) { setTool(KEY_TOOLS[e.code]); return; }

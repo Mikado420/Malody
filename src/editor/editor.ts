@@ -7,11 +7,11 @@ import type { AudioFile } from '../io/load';
 import { applyGrad, gradMatches, type Grad } from './grad';
 
 /** scroll = #SCROLL（1 か所をタップ×2 でその位置だけ、2 か所でグラデ）、bpm = #BPMCHANGE、measure = #MEASURE */
-export type Tool = NoteType | 'erase' | 'gogo' | 'scroll' | 'bpm' | 'measure';
+export type Tool = NoteType | 'erase' | 'gogo' | 'scroll' | 'bpm' | 'measure' | 'select';
 
 /** 1拍あたりの分割数（Malody の 1/n 表記と同じ） */
 /** グリッド: 1 小節（4/4、全音符）を何分割するか。1/16 なら 16 分音符 */
-export const DIVISORS = [4, 8, 12, 16, 24, 32, 48, 64];
+export const DIVISORS = [8, 12, 16, 24, 32, 48, 64];
 
 export interface TapResult {
   message?: string;
@@ -21,6 +21,8 @@ export interface TapResult {
   newGrad?: { start: number; end: number };
   /** UI 側で設定を変えるグラデ */
   editGrad?: Grad;
+  /** 範囲を選び終えた */
+  selected?: boolean;
   /** UI 側で値を聞く、1 か所の命令（#SCROLL / #BPMCHANGE / #MEASURE） */
   point?: { kind: 'scroll' | 'bpm' | 'measure'; tick: number };
 }
@@ -39,6 +41,10 @@ export class Editor {
   /** 連打・風船・ゴーゴーの始点（終点のタップ待ち） */
   pendingLong: number | null = null;
   timing!: Timing;
+  /** 選んでいる範囲（選択ツール。両端を含む） */
+  sel: { start: number; end: number } | null = null;
+  /** コピーしたノーツ（範囲の始まりからの位置）と範囲の長さ。曲を替えても残る */
+  clip: { notes: ENote[]; span: number } | null = null;
 
   private undoStack: string[] = [];
   private redoStack: string[] = [];
@@ -78,6 +84,7 @@ export class Editor {
     // 指定がなければ一番難しい（最後の）難易度を開く
     this.courseIndex = courseIndex ?? Math.max(0, chart.courses.length - 1);
     this.pendingLong = null;
+    this.sel = null;
     this.undoStack = [];
     this.redoStack = [];
     this.emit(true);
@@ -94,6 +101,7 @@ export class Editor {
     this.chart = o.chart;
     this.courseIndex = o.courseIndex;
     this.pendingLong = null;
+    this.sel = null;
     this.emit(true);
   }
 
@@ -230,12 +238,30 @@ export class Editor {
     if (i >= 0) this.course.notes.splice(i, 1);
   }
 
-  tap(rawTick: number): TapResult {
+  /**
+   * グリッドに乗っていないノーツ（グリッドを変えた後など）のうち、タップした位置に一番近いもの。
+   * tol（tick）以内で、グリッドの点よりもそのノーツの方が近いときだけ
+   */
+  private offGridNear(rawTick: number, tol: number) {
+    const tick = this.snap(rawTick);
+    let best: ENote | undefined;
+    let bd = Infinity;
+    for (const n of this.course.notes) {
+      const d = Math.abs(n.tick - rawTick);
+      if (d > tol || d > Math.abs(tick - rawTick) + 1 || this.snap(n.tick) === n.tick) continue;
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best;
+  }
+
+  tap(rawTick: number, tol = 0): TapResult {
     const tick = this.snap(rawTick);
     const tool = this.tool;
-    const exact = this.noteAt(tick);
+    // グリッドから外れたノーツが、グリッドの点より近くにあればそちらを優先
+    const exact = this.offGridNear(rawTick, tol) ?? this.noteAt(tick);
     const covering = this.longCovering(tick);
 
+    if (tool === 'select') return this.tapSelect(tick, exact);
     if (tool === 'gogo') return this.tapGogo(tick);
     if (tool === 'scroll') return this.tapScroll(tick);
     if (tool === 'bpm') return { point: { kind: 'bpm', tick } };
@@ -282,6 +308,89 @@ export class Editor {
       this.course.notes.push(note);
     });
     return {};
+  }
+
+  // ---------- 範囲の選択・コピー・貼り付け ----------
+
+  /** 選択: 始点と終点をタップして範囲を選ぶ。始点と同じ位置をもう一度タップすると、その位置だけ */
+  private tapSelect(tick: number, exact?: ENote): TapResult {
+    if (this.pendingLong === null) {
+      this.sel = null;
+      this.pendingLong = exact ? exact.tick : tick;
+      this.emit();
+      return { message: '終点をタップ（同じ位置をもう一度タップでそこだけ）' };
+    }
+    const a = this.pendingLong;
+    const b = exact ? exact.tick : tick;
+    this.pendingLong = null;
+    this.sel = { start: Math.min(a, b), end: Math.max(a, b) };
+    this.emit();
+    return { selected: true };
+  }
+
+  /** 選んでいる範囲のノーツ（始点が範囲の中にあるもの） */
+  selectedNotes(): ENote[] {
+    const s = this.sel;
+    if (!s) return [];
+    return this.course.notes.filter((n) => n.tick >= s.start && n.tick <= s.end);
+  }
+
+  clearSelection() {
+    this.sel = null;
+    if (this.tool === 'select') this.pendingLong = null;
+    this.emit();
+  }
+
+  /** 選んでいる範囲をコピーする（コピーした数を返す） */
+  copySelection(): number {
+    const s = this.sel;
+    if (!s) return 0;
+    const notes = this.selectedNotes().map((n) => {
+      const c: ENote = { ...n, tick: n.tick - s.start };
+      if (n.endTick !== undefined) c.endTick = n.endTick - s.start;
+      return c;
+    });
+    this.clip = { notes, span: s.end - s.start };
+    return notes.length;
+  }
+
+  /** 選んでいる範囲のノーツを消す */
+  deleteSelection(): number {
+    const list = this.selectedNotes();
+    if (!list.length) return 0;
+    this.mutate(() => { this.course.notes = this.course.notes.filter((n) => !list.includes(n)); });
+    return list.length;
+  }
+
+  cutSelection(): number {
+    const n = this.copySelection();
+    this.deleteSelection();
+    return n;
+  }
+
+  /** コピーしたノーツを at から貼り付ける（その範囲にあったノーツは置き換える）。貼った範囲を選んだ状態にする */
+  paste(at: number): number {
+    const clip = this.clip;
+    if (!clip) return 0;
+    const start = Math.max(0, at);
+    const end = start + clip.span;
+    const added = clip.notes.map((n) => {
+      const c: ENote = { ...n, tick: n.tick + start };
+      if (n.endTick !== undefined) c.endTick = n.endTick + start;
+      return c;
+    });
+    const lastEnd = Math.max(end, ...added.map((n) => n.endTick ?? n.tick));
+    this.mutate(() => {
+      // 貼る範囲にかかるノーツ（連打の途中も）を消してから置く
+      this.course.notes = this.course.notes.filter((n) => {
+        const nEnd = n.endTick ?? n.tick;
+        return nEnd < start || n.tick > lastEnd;
+      });
+      this.course.notes.push(...added);
+    });
+    this.sel = { start, end };
+    this.emit();
+    return added.length;
   }
 
   /** ゴーゴータイムの区間 [始まり, 終わり]（終わりがなければ Infinity） */
@@ -426,6 +535,7 @@ export class Editor {
   selectCourse(i: number) {
     this.courseIndex = i;
     this.pendingLong = null;
+    this.sel = null;
     this.emit(true);
   }
 

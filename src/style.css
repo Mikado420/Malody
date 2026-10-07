@@ -106,6 +106,26 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .tool.scroll svg { stroke: #c792ea; }
 .tool.bpm svg { stroke: #5cc8f0; }
 .tool.measure svg { stroke: #ffd21f; }
+.tool.select svg { stroke: #7cc4ff; }
+/* 選択ツールの操作（ツールの列の上の右端。小節・BPM の表示を隠さないように） */
+.sel-bar {
+  position: absolute;
+  right: calc(20px * var(--es, 0.45));
+  bottom: calc(44px * var(--es, 0.45) + max(36px, calc(112px * var(--es, 0.45))) + 6px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px 5px 12px;
+  background: rgba(4, 12, 24, 0.92);
+  border: 1px solid #2a5a94;
+  box-shadow: 0 0 12px rgba(30, 136, 255, 0.35);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  z-index: 3;
+}
+.sel-bar.hidden { display: none; }
+.sel-bar .sel-info { color: #7cc4ff; font-weight: 700; font-size: 13px; white-space: nowrap; margin-right: 2px; }
+.sel-bar button { padding: 7px 9px; font-size: 13px; white-space: nowrap; }
+.sel-bar button:disabled { opacity: 0.35; }
 .tool.measure svg text { fill: #ffd21f; stroke: none; font: 900 17px system-ui, sans-serif; }
 
 .tool {

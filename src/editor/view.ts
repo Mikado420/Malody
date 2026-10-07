@@ -139,7 +139,8 @@ export class EditorView {
   duration = 0;
   private wave: { peaks: Float32Array; rate: number } | null = null;
 
-  onTap: (tick: number) => void = () => {};
+  /** tol: そのあたりのノーツとみなす幅（tick。音符の半径ぶん） */
+  onTap: (tick: number, tol: number) => void = () => {};
   /** レーンの下のイベントの文字をタップしたとき（重なってまとめたものは全部） */
   onEventTap: (items: EventItem[]) => void = () => {};
   /** レーンの下に出す種類 */
@@ -420,7 +421,7 @@ export class EditorView {
       if (b) return this.onEventTap(b.items);
     }
     // 曲の頭より前には置けない
-    if (y >= L.laneY - L.r * 0.5 && y <= L.evTop + L.evH && this.tickOf(x) > -this.ed.step / 2) this.onTap(this.tickOf(x));
+    if (y >= L.laneY - L.r * 0.5 && y <= L.evTop + L.evH && this.tickOf(x) > -this.ed.step / 2) this.onTap(this.tickOf(x), (L.r / this.zoom) * TPB);
   }
 
   // ---------- 描画 ----------
@@ -626,6 +627,21 @@ export class EditorView {
     ctx.arc(L.playX, L.cy, R.judgeR2 * s, 0, Math.PI * 2);
     ctx.stroke();
 
+    // 選んでいる範囲（水色の帯。両端の音符が収まるよう少し広げる）
+    if (ed.sel) {
+      const x1 = Math.max(L.colW, this.xOf(ed.sel.start) - L.r * 1.2);
+      const x2 = Math.min(this.w, this.xOf(ed.sel.end) + L.r * 1.2);
+      if (x2 > x1) {
+        ctx.fillStyle = 'rgba(124,196,255,0.16)';
+        ctx.fillRect(x1, L.laneY, x2 - x1, L.laneH);
+        ctx.strokeStyle = 'rgba(124,196,255,0.85)';
+        ctx.lineWidth = Math.max(1, 2 * s);
+        ctx.setLineDash([6 * s, 5 * s]);
+        ctx.strokeRect(x1, L.laneY + 1, x2 - x1, L.laneH - 2);
+        ctx.setLineDash([]);
+      }
+    }
+
     // ノーツ（後ろから描く）
     ctx.save();
     ctx.beginPath();
@@ -650,14 +666,27 @@ export class EditorView {
       }
     }
 
+    // 選んでいるノーツに水色の輪
+    if (ed.sel) {
+      ctx.strokeStyle = '#7cc4ff';
+      ctx.lineWidth = Math.max(1.5, 4 * s);
+      for (const n of ed.selectedNotes()) {
+        if (n.tick < leftTick || n.tick > rightTick) continue;
+        const big = n.type === 'bigDon' || n.type === 'bigKa' || n.type === 'bigRoll';
+        ctx.beginPath();
+        ctx.arc(this.xOf(n.tick), L.cy, (big ? L.bigR : L.r) + 5 * s, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
     // 連打の始点（終点待ち）
     if (ed.pendingLong !== null) {
       const x = this.xOf(ed.pendingLong);
       ctx.setLineDash([8 * s, 8 * s]);
-      ctx.strokeStyle = ed.tool === 'gogo' ? '#ff6e28' : ed.tool === 'scroll' ? '#c792ea' : '#fbbf14';
+      ctx.strokeStyle = ed.tool === 'gogo' ? '#ff6e28' : ed.tool === 'scroll' ? '#c792ea' : ed.tool === 'select' ? '#7cc4ff' : '#fbbf14';
       ctx.lineWidth = Math.max(2, 5 * s);
       ctx.beginPath();
-      if (ed.tool === 'gogo' || ed.tool === 'scroll') {
+      if (ed.tool === 'gogo' || ed.tool === 'scroll' || ed.tool === 'select') {
         // ゴーゴー・グラデの始点は縦の点線
         ctx.moveTo(x, L.laneY);
         ctx.lineTo(x, L.laneY + L.laneH);
@@ -673,8 +702,8 @@ export class EditorView {
       const t = ed.snap(this.tickOf(this.hoverX));
       const x = this.xOf(t);
       ctx.globalAlpha = 0.4;
-      if (ed.tool === 'gogo' || ed.tool === 'scroll' || ed.tool === 'bpm' || ed.tool === 'measure') {
-        ctx.fillStyle = { gogo: '#ff6e28', scroll: '#c792ea', bpm: '#5cc8f0', measure: '#e0a400' }[ed.tool];
+      if (ed.tool === 'gogo' || ed.tool === 'scroll' || ed.tool === 'bpm' || ed.tool === 'measure' || ed.tool === 'select') {
+        ctx.fillStyle = { gogo: '#ff6e28', scroll: '#c792ea', bpm: '#5cc8f0', measure: '#e0a400', select: '#7cc4ff' }[ed.tool];
         ctx.fillRect(x - Math.max(1, 2 * s), L.laneY, Math.max(2, 4 * s), L.laneH);
       } else if (ed.tool === 'erase') {
         ctx.strokeStyle = '#fff';

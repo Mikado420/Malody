@@ -53,7 +53,21 @@
               <text x="24" y="18" text-anchor="middle">3</text>
               <text x="24" y="36" text-anchor="middle">4</text>
             </svg></button>
+            <!-- 選択: 範囲を選んでコピー・切り取り・貼り付け -->
+            <button data-group="select" class="tool cmd select" aria-label="選択（コピー・切り取り・貼り付け）"><svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M5 9h22v18H5z" stroke-width="2.6" stroke-dasharray="4 3.2"/>
+              <path d="M22 20l13 5-6 2-2 6z" stroke-width="2.4" fill="#7cc4ff"/>
+            </svg></button>
           </div>
+        </div>
+        <!-- 選択ツールのときの操作 -->
+        <div id="selBar" class="sel-bar hidden">
+          <span class="sel-info"></span>
+          <button data-sel="copy">コピー</button>
+          <button data-sel="cut">切り取り</button>
+          <button data-sel="paste">貼り付け</button>
+          <button data-sel="del">削除</button>
+          <button data-sel="clear">解除</button>
         </div>
       </div>
       <!-- グリッドのメニュー（右のアイコンバーの少し左に出す） -->
