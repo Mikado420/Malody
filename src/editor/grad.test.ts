@@ -51,4 +51,48 @@ describe('グラデ', () => {
     const s = ed.course.events.filter((e) => e.kind === 'scroll').map((e) => (e as { value: number }).value);
     expect(s).toEqual([1, 1.125, 1.25, 1.375, 0.75, 0.813, 0.875, 0.938, 1]);
   });
+
+  describe('秒数基準', () => {
+    const vals = (ed: Editor) => ed.course.events.filter((e) => e.kind === 'scroll').map((e) => [e.tick, (e as { value: number }).value]);
+
+    it('音符の間隔が不均等でも、秒数で補間する（1→2、1 小節 = 2 秒）', () => {
+      const t = 'TITLE:t\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n11000001,\n0,\n#END\n';
+      const ed = new Editor(parseTJA(t));
+      ed.setGrad({ start: 0, end: M, from: 1, to: 2, mode: 'linear', digits: 3, basis: 'time' });
+      // 位置 0, 1/8, 7/8 → 1, 1.125, 1.875、終点 2
+      expect(vals(ed)).toEqual([[0, 1], [M / 8, 1.125], [(M * 7) / 8, 1.875], [M, 2]]);
+    });
+
+    it('BPM が途中で倍になると、後半は同じ拍でも秒数が短い', () => {
+      // 前半 2 拍 = 1 秒、後半 2 拍（BPM 240）= 0.5 秒、合計 1.5 秒
+      const t = 'TITLE:t\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n11\n#BPMCHANGE 240\n11,\n0,\n#END\n';
+      const ed = new Editor(parseTJA(t));
+      ed.setGrad({ start: 0, end: M, from: 1, to: 2.5, mode: 'linear', digits: 3, basis: 'time', speed: 'scroll' });
+      // 秒数 0, 0.5, 1, 1.25 → t = 0, 1/3, 2/3, 5/6
+      expect(vals(ed)).toEqual([[0, 1], [M / 4, 1.5], [M / 2, 2], [(M * 3) / 4, 2.25], [M, 2.5]]);
+    });
+
+    it('#DELAY で止まっている時間も進んだことにする', () => {
+      // 1 拍目と 2 拍目の間に 1 秒の #DELAY。秒数 0, 0.5+1, 2, 2.5、終点 3
+      const t = 'TITLE:t\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n1\n#DELAY 1\n111,\n0,\n#END\n';
+      const ed = new Editor(parseTJA(t));
+      ed.setGrad({ start: 0, end: M, from: 0, to: 3, mode: 'linear', digits: 3, basis: 'time' });
+      expect(vals(ed)).toEqual([[0, 0], [M / 4, 1.5], [M / 2, 2], [(M * 3) / 4, 2.5], [M, 3]]);
+    });
+
+    it('basis が無い（前に保存した）グラデは、今までどおり数で補間する', () => {
+      const t = 'TITLE:t\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n11000001,\n0,\n#END\n';
+      const ed = new Editor(parseTJA(t));
+      ed.setGrad({ start: 0, end: M, from: 1, to: 2, mode: 'linear', digits: 3 });
+      expect(vals(ed)).toEqual([[0, 1], [M / 8, 1.333], [(M * 7) / 8, 1.667], [M, 2]]);
+    });
+
+    it('TJA を書き戻しても、秒数基準のグラデを引き継ぐ', () => {
+      const t = 'TITLE:t\nBPM:120\nCOURSE:Oni\nLEVEL:1\n#START\n11000001,\n0,\n#END\n';
+      const ed = new Editor(parseTJA(t));
+      ed.setGrad({ start: 0, end: M, from: 1, to: 2, mode: 'linear', digits: 3, basis: 'time' });
+      ed.replaceChart(parseTJA(writeTJA(ed.chart)));
+      expect(ed.course.grads?.[0]?.basis).toBe('time');
+    });
+  });
 });
