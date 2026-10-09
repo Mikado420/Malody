@@ -1,13 +1,18 @@
-import { measures, type ECourse } from '../chart/model';
+import { measures, TPB, type ECourse } from '../chart/model';
 
 /**
  * グラデ（#SCROLL を少しずつ変えて、音符の見た目を滑らかに加速・減速させる）。
  *
  * 決まり:
  * - 対象は範囲 [start, end) の中の「音符（1〜7。連打・風船は始まりだけ。8 は対象外）」と「小節の頭（小節線）」の位置
- * - 対象の数を n として、開始値から終了値までを n 等分し、k 番目（0 から）の対象の直前に値を置く
- *   等差: from + (to - from) * k / n、等比: from * (to / from)^(k / n)
+ * - 対象（n 個）それぞれの直前に、開始値から終了値までを進み具合 t で補間した値を置く
  * - 終点 end には終了値を置く
+ *
+ * 進み具合の基準（basis）:
+ * - 'time': その位置の秒数で決める。t = (位置の秒数 − 始点の秒数) ÷ (終点の秒数 − 始点の秒数)
+ *           秒数は BPM（#BPMCHANGE）と #DELAY から求める（#DELAY で止まっている時間も進んだことにする）
+ * - 'count'（未設定のときも）: 対象の数で決める。k 番目は t = k / n
+ * 等差: from + (to - from) * t、等比: from * (to / from)^t
  *
  * #BPMCHANGE があるときの選び方（speed）:
  * - 'scroll': #SCROLL の値そのものを滑らかに変える（BPM が変わるとそこで見た目の速さが跳ねる）
@@ -28,6 +33,8 @@ export interface Grad {
   mode: 'linear' | 'geometric';
   /** 小数の桁数 */
   digits: number;
+  /** 進み具合の基準。'time' = 秒数、'count' = 対象の数（未設定は前に保存したデータとの互換のため 'count'） */
+  basis?: 'count' | 'time';
   /** #BPMCHANGE があるとき、何を滑らかにするか（無いときは 'scroll'） */
   speed?: 'scroll' | 'visual' | 'visualBase';
   /** （使わない。小節線はいつも対象。前に保存したデータとの互換のため残す） */
@@ -46,6 +53,39 @@ function bpmFn(c: ECourse, baseBpm: number) {
     }
     return b;
   };
+}
+
+/** その位置の秒数を返す関数（BPM と #DELAY から。始点からの差だけを使うので、OFFSET は入れない） */
+function timeFn(c: ECourse, baseBpm: number) {
+  const evs = (c.events.filter((e) => e.kind === 'bpm' || e.kind === 'delay') as { tick: number; kind: 'bpm' | 'delay'; value: number }[])
+    .slice()
+    .sort((a, b) => a.tick - b.tick);
+  return (tick: number) => {
+    let time = 0;
+    let t = 0;
+    let b = baseBpm > 0 ? baseBpm : 120;
+    for (const e of evs) {
+      // 位置と同じ tick の #DELAY は、その音符より前に止まるので入れる
+      if (e.tick > tick) break;
+      time += ((e.tick - t) / TPB) * (60 / b);
+      t = e.tick;
+      if (e.kind === 'bpm' && e.value > 0) b = e.value;
+      if (e.kind === 'delay') time += e.value;
+    }
+    return time + ((tick - t) / TPB) * (60 / b);
+  };
+}
+
+/** 各位置の進み具合（0 以上 1 未満）。秒数の幅が 0 以下のときは数で決める */
+function gradProgress(c: ECourse, g: Grad, ts: number[], baseBpm: number): number[] {
+  const n = ts.length;
+  if (g.basis === 'time') {
+    const time = timeFn(c, baseBpm);
+    const t0 = time(g.start);
+    const span = time(g.end) - t0;
+    if (span > 0) return ts.map((tick) => Math.min(1, Math.max(0, (time(tick) - t0) / span)));
+  }
+  return ts.map((_, k) => k / n);
 }
 
 /** 値を置く位置（tick、重なりなし・昇順） */
@@ -75,17 +115,17 @@ const interp = (mode: Grad['mode'], a: number, b: number, t: number) =>
 /** このグラデで置く #SCROLL（終点の終了値を含む） */
 export function gradScrolls(c: ECourse, g: Grad, baseBpm: number): { tick: number; value: number }[] {
   const ts = gradTargets(c, g);
-  const n = ts.length;
+  const p = gradProgress(c, g, ts, baseBpm);
   const out: { tick: number; value: number }[] = [];
   if (g.speed === 'visual' || g.speed === 'visualBase') {
     // 見た目の速さ（BPM × SCROLL）を滑らかにする
     const bpm = bpmFn(c, baseBpm);
     const v0 = g.from * bpm(g.start);
     const v1 = g.to * (g.speed === 'visualBase' ? bpm(g.start) : bpm(g.end));
-    ts.forEach((tick, k) => out.push({ tick, value: round(interp(g.mode, v0, v1, k / n) / bpm(tick), g.digits) }));
+    ts.forEach((tick, k) => out.push({ tick, value: round(interp(g.mode, v0, v1, p[k]) / bpm(tick), g.digits) }));
     out.push({ tick: g.end, value: round(v1 / bpm(g.end), g.digits) });
   } else {
-    ts.forEach((tick, k) => out.push({ tick, value: round(interp(g.mode, g.from, g.to, k / n), g.digits) }));
+    ts.forEach((tick, k) => out.push({ tick, value: round(interp(g.mode, g.from, g.to, p[k]), g.digits) }));
     out.push({ tick: g.end, value: round(g.to, g.digits) });
   }
   return out;

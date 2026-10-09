@@ -549,7 +549,7 @@ view.onTap = (tick, tol) => {
   if (r.point) openPoint(r.point.kind, r.point.tick);
   if (r.newGrad) {
     const from = ed.timing.scrollAt(r.newGrad.start);
-    gradEdit = { grad: { ...r.newGrad, from, to: from * 2, mode: 'linear', digits: 3, speed: 'visual' } };
+    gradEdit = { grad: { ...r.newGrad, from, to: from * 2, mode: 'linear', digits: 3, speed: 'visual', basis: 'time' } };
     openSheet('grad');
   }
   if (r.editGrad) {
@@ -1444,6 +1444,8 @@ function renderGradSheet(body: HTMLElement) {
         <label class="field"><span>開始値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="from" value="${g.from}"></label>
         <label class="field"><span>終了値</span><input type="text" autocapitalize="off" autocomplete="off" data-g="to" value="${g.to}"></label>
         ${seg('mode', [['linear', '等差'], ['geometric', '等比']], g.mode)}
+        <h3>進み方の基準</h3>
+        ${seg('basis', [['time', '秒数'], ['count', '個数']], g.basis ?? 'count')}
         <label class="field"><span>小数の桁数</span><input type="number" min="0" max="6" step="1" inputmode="numeric" data-g="digits" value="${g.digits}"></label>
         <h3>#BPMCHANGE${hasBpm ? '' : '（この範囲にはなし）'}</h3>
         ${seg('speed', [['visual', '見た目(終点)'], ['visualBase', '見た目(始点)'], ['scroll', 'SCROLL値']], g.speed ?? 'scroll')}
@@ -1481,6 +1483,7 @@ function renderGradSheet(body: HTMLElement) {
       const v = b.dataset.v!;
       if (key === 'mode') g.mode = v as Grad['mode'];
       else if (key === 'speed') g.speed = v as Grad['speed'];
+      else if (key === 'basis') g.basis = v as Grad['basis'];
       body.querySelectorAll<HTMLButtonElement>(`[data-gset="${key}"]`).forEach((x) => x.classList.toggle('primary', x === b));
       preview();
     });
