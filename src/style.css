@@ -886,9 +886,8 @@ html:has(body.tja-open), body.tja-open { background: #000; }
 
 /* 左: ロゴ・フォルダ・下に読み込み／新規／設定 */
 .home-nav { position: relative; z-index: 1; min-height: 0; display: flex; flex-direction: column; background: #000; border-right: 1px solid var(--line); }
-.home-logo { padding: 12px 14px 12px; font: italic 900 clamp(24px, 7.5vh, 34px)/0.95 var(--fd); letter-spacing: -0.5px; position: relative; }
-.home-logo b { color: var(--accent-hi); font-weight: 900; }
-.home-logo::after { content: ''; display: block; width: 56%; height: 5px; margin-top: 6px; background: linear-gradient(90deg, #fff 0 60%, var(--accent) 60%); clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%); }
+.home-logo { margin: 0; padding: clamp(6px, 2vh, 12px) 10px clamp(4px, 1.5vh, 10px); }
+.home-logo img { display: block; width: 100%; max-height: clamp(40px, 13vh, 70px); object-fit: contain; object-position: left center; user-select: none; -webkit-user-drag: none; }
 .home-folders { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; scrollbar-width: none; padding: 2px 0 6px; }
 .home-folders::-webkit-scrollbar { display: none; }
 .home .hf { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 40px; padding: 0 12px 0 14px; text-align: left; font-size: 13px; font-weight: 700; color: rgba(255, 255, 255, 0.62); cursor: pointer; position: relative; }
@@ -976,7 +975,6 @@ html:has(body.tja-open), body.tja-open { background: #000; }
 .home-pop button.bad { font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
 @media (max-height: 360px) {
   .hdx-diffs { display: none; }
-  .home-logo::after { display: none; }
 }
 /* ツールの台がエディタの幅に収まるよう、ボタンの幅をエディタの幅に合わせて抑える */
 .stage { container-type: inline-size; }

@@ -1,5 +1,5 @@
 /**
- * Malody Web Editor を Expo Go の中で動かすためのアプリ（Expo Snack 用の 1 ファイル）
+ * TJAtelier を Expo Go の中で動かすためのアプリ（Expo Snack 用の 1 ファイル）
  *
  * iPhone の Safari（WebKit）は、両手交互で速く叩いて「指が 1 本も触れていない瞬間」に
  * 次の指が触れると、そのタッチをページに届けないことがある。

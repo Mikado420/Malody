@@ -1,7 +1,7 @@
 // 動作確認用のオリジナル譜面（曲なし・メトロノームで遊ぶ）
 export const DEMO_TJA = `TITLE:デモ譜面
 GENRE:ポップス
-SUBTITLE:--web-taiko sample
+SUBTITLE:--TJAtelier sample
 BPM:140
 OFFSET:-1.0
 
