@@ -2777,39 +2777,44 @@ async function importLink(url: string, target: 'home' | 'editor') {
 }
 
 // ---------- 音源の切り貼り ----------
-// FL Studio Mobile のプレイリストのように、音源をクリップにして、分ける・消す・複製・動かす・端を詰める。
-// 音量は FL Studio のオートメーションのように、点を線でつないで描く。
-// 画面のスクロールは上の小節のバー（ルーラー）をドラッグ（再生中も勝手には動かさない）。
+// FL Studio Mobile のプレイリストのように、音源をクリップにして並べる。トラックを足して重ねられ、別の音源も足せる。
+// 画面の横のスクロールは上の小節のバー（ルーラー）をドラッグ（再生中も勝手には動かさない）。縦はトラックの空き所をドラッグ。
 // ルーラーをタップすると切り取りのマーク（黄色）がそこへ、マークを長押ししてから動かしても動く。
-// マークを下へドラッグして離すと、そこでクリップを切る。マーク・クリップの移動・端・音量の点はグリッドに合わせる。
-// 2 本指で横に拡大・縮小、縦に開くと波形の高さを拡大・縮小。
-// 「反映」で並べた音を .ogg にして、譜面の OFFSET を合わせる
+// マークを下へドラッグして、切りたいトラックの上で離すと、そこでクリップを切る。
+// マーク・クリップの移動・端・音量の点はグリッドに合わせる。2 本指で横に拡大・縮小、縦に開くとトラックの高さ。
+// 小節は譜面の 1 小節目を 1 として、その前は 0・-1…。「反映」で並べた音を .ogg にし、1 小節目の所に OFFSET を合わせる
 
 /** グリッド: -1 = 小節の頭、0 = なし、n = 1 小節（4/4）を n 分割（エディタのグリッドと同じ数え方） */
 const ARR_GRIDS = [-1, 2, 4, 8, 16, 32, 0];
 const arrGridLabel = (g: number) => (g === -1 ? '小節' : g === 0 ? 'なし' : `1/${g}`);
 type ArrTool = 'move' | 'auto';
+/** 音源（0 = 譜面の音源、ほかは足した音源） */
+interface ArrSource { name: string; buf: AudioBuffer }
+let arrSources: ArrSource[] = [];
 const arrState = {
   clips: [] as Clip[],
+  /** トラックの数 */
+  tracks: 1,
   /** 選んでいるクリップ（-1 は無し） */
   sel: -1,
-  /** 元の音源の長さ */
+  /** 譜面の音源の長さ */
   dur: 0,
   viewAt: 0,
   span: 1,
+  /** 縦のスクロール（px） */
+  vscroll: 0,
+  /** トラックの高さの倍率（1 = 画面に収まる高さ） */
+  vz: 1,
   /** 切り取りのマーク（再生もここから） */
   play: 0,
   /** グリッド（初めて開いたときはエディタのグリッド） */
   grid: NaN,
   tool: 'move' as ArrTool,
-  /** グリッドのメニューを出しているか */
   gridMenu: false,
   /** マークを長押しして掴んでいるか（表示用） */
   markHold: false,
-  /** マークを下へドラッグ中（離すと切る）。その指の y（トラックの中の座標）。-1 は無し */
+  /** マークを下へドラッグ中（離すと切る）。その指の y（キャンバスの中）。-1 は無し */
   cutDrag: -1,
-  /** 波形の縦の拡大（1 = 上下に少し余白を残す高さ） */
-  vz: 1,
   undo: [] as string[],
   redo: [] as string[],
 };
@@ -2822,9 +2827,11 @@ function openCut() {
   if (!buf) { toast('先に音源を読み込んでください'); return; }
   const d = Math.round(buf.duration * 1000) / 1000;
   if (Number.isNaN(arrState.grid)) arrState.grid = [2, 4, 8, 16, 32].includes(ed.divisor) ? ed.divisor : 4;
+  arrSources = [{ name: ed.audio?.name ?? '音源', buf }];
   Object.assign(arrState, {
-    clips: [{ src: 0, len: d, pos: 0, env: [] }],
-    sel: -1, dur: d, viewAt: d / 2, span: d * 1.04, play: 0, undo: [], redo: [], gridMenu: false, markHold: false, cutDrag: -1, tool: 'move',
+    clips: [{ src: 0, len: d, pos: 0, env: [], track: 0, srcId: 0 }],
+    tracks: 1, sel: -1, dur: d, viewAt: d / 2, span: d * 1.04, vscroll: 0, vz: 1, play: 0,
+    undo: [], redo: [], gridMenu: false, markHold: false, cutDrag: -1, tool: 'move',
   });
   arrCache = null;
   openSheet('cut');
@@ -2837,24 +2844,29 @@ const parseCut = (v: string) => {
   return m ? Number(m[1]) * 60 + Number(m[2]) : Number(v);
 };
 
-const arrSnap = () => JSON.stringify({ clips: arrState.clips, sel: arrState.sel });
+const arrSnap = () => JSON.stringify({ clips: arrState.clips, sel: arrState.sel, tracks: arrState.tracks });
 function arrPush() {
   arrState.undo.push(arrSnap());
   if (arrState.undo.length > 200) arrState.undo.shift();
   arrState.redo = [];
 }
 function arrRestore(s: string) {
-  const v = JSON.parse(s) as { clips: Clip[]; sel: number };
+  const v = JSON.parse(s) as { clips: Clip[]; sel: number; tracks: number };
   arrState.clips = v.clips;
   arrState.sel = v.sel;
+  arrState.tracks = v.tracks;
 }
 
-/** 表示に使う長さ（元の音源より短くしても、元の長さまでは見えるように） */
+/** 表示に使う長さ（譜面の音源より短くしても、その長さまでは見えるように） */
 const arrTotal = () => Math.max(arrangeLength(arrState.clips), arrState.dur);
+const srcDur = (c: Clip) => arrSources[c.srcId]?.buf.duration ?? arrState.dur;
+
+/** 譜面の 1 小節目の頭の、新しい音源での時刻（OFFSET はこれのマイナス） */
+const arrBar1 = () => -ed.chart.offset + refShift(arrState.clips, -ed.chart.offset);
 
 /**
  * 譜面の小節とグリッドの線（新しい音源の時刻）。div: -1 = 小節の頭だけ、n = 1 小節（4/4）を n 分割。
- * 譜面の頭の音を使っているクリップに合わせて動く
+ * 1 小節目は譜面の 1 小節目で、その前は最初の小節の長さ・BPM で 0・-1… と続ける
  */
 function arrGrid(t0: number, t1: number, div: number): { t: number; bar: boolean; beat: boolean; n: number }[] {
   const sh = refShift(arrState.clips, -ed.chart.offset);
@@ -2863,7 +2875,6 @@ function arrGrid(t0: number, t1: number, div: number): { t: number; bar: boolean
   const endTick = Math.max(0, tm.timeToTick(t1 - sh)) + TPB * 8;
   const step = div > 0 ? (TPB * 4) / div : Infinity;
   const ms = ed.measuresUntil(endTick);
-  // 譜面の頭より前（新しい音源の頭のほう）にも、最初の小節の長さ・BPM で線を伸ばす
   if (ms.length) {
     const m0 = ms[0];
     const h0 = tm.tickToTime(0) + sh;
@@ -2874,8 +2885,9 @@ function arrGrid(t0: number, t1: number, div: number): { t: number; bar: boolean
     for (let k = 1; dt > 0 && h0 - k * dt >= t0 - 0.5 && k < 100000; k++) {
       const t = h0 - k * dt;
       if (t > t1 + 0.5) continue;
-      const tick = (((-k * st) % m0.length) + m0.length) % m0.length;
-      pre.push({ t, bar: tick === 0, beat: Math.abs(tick / beat0 - Math.round(tick / beat0)) < 1e-6, n: 0 });
+      const back = k * st;
+      const tick = (((-back) % m0.length) + m0.length) % m0.length;
+      pre.push({ t, bar: tick === 0, beat: Math.abs(tick / beat0 - Math.round(tick / beat0)) < 1e-6, n: Math.floor(-back / m0.length) + 1 });
     }
     out.push(...pre.reverse());
   }
@@ -2910,6 +2922,9 @@ function arrQuantize(t: number, tol: number, except = -1, withMark = true): numb
   return e !== t && Math.abs(e - t) < gd ? e : g;
 }
 
+/** 並べた音（チャンネルごと） */
+const arrRender = () => renderClips(arrSources.map((s) => bufferChannels(s.buf)), arrSources[0].buf.sampleRate, arrState.clips);
+
 function stopArrPlay() {
   if (!arrPlay.on) return;
   arrPlay.on = false;
@@ -2917,14 +2932,13 @@ function stopArrPlay() {
 }
 /** 並べた音を作って（変わっていなければ前に作ったものを使って）、from 秒から鳴らす */
 async function startArrPlay(from: number) {
-  const buf = audio.buffer;
-  if (!buf) return;
+  if (!arrSources.length) return;
   stopPlayback();
   stopArrPlay();
-  const key = JSON.stringify(arrState.clips);
+  const key = JSON.stringify(arrState.clips) + arrSources.length;
   if (!arrCache || arrCache.key !== key) {
-    const chs = renderClips(bufferChannels(buf), buf.sampleRate, arrState.clips);
-    const b = audio.ctx.createBuffer(chs.length, chs[0].length, buf.sampleRate);
+    const chs = arrRender();
+    const b = audio.ctx.createBuffer(chs.length, chs[0].length, arrSources[0].buf.sampleRate);
     chs.forEach((d, i) => b.getChannelData(i).set(d));
     arrCache = { key, buf: b };
   }
@@ -2943,27 +2957,38 @@ function tickArrPlay() {
   drawArr(now);
 }
 
-/** ルーラーの高さ・クリップの見出しの高さ・上下のすき間 */
+/** ルーラーの高さ・クリップの見出しの高さ・上下のすき間・「トラックを足す」の行の高さ */
 const A_RULER = 26;
 const A_HEAD = 16;
-const A_PAD = 6;
-/** オートメーションの線を引く範囲（クリップの見出しの下） */
-const arrEnvBox = (H: number) => ({ top: A_PAD + A_HEAD + 6, h: H - A_PAD * 2 - A_HEAD - 12 });
+const A_PAD = 4;
+const A_ADD = 40;
 
-/** クリップの中の波形（元の音源の src から、オートメーションの音量を掛けて） */
+/** トラックの高さと、縦にスクロールできる量（キャンバスの高さ HH から） */
+function arrLanes(HH: number) {
+  const a = arrState;
+  const avail = Math.max(60, HH - A_RULER - A_ADD);
+  const fit = Math.max(64, avail / Math.max(1, a.tracks));
+  const laneH = Math.max(44, Math.min(avail * 2, fit * a.vz));
+  const content = a.tracks * laneH + A_ADD;
+  const maxScroll = Math.max(0, content - (HH - A_RULER));
+  a.vscroll = Math.max(0, Math.min(maxScroll, a.vscroll));
+  /** トラック i の上端（キャンバスの中） */
+  const top = (i: number) => A_RULER + i * laneH - a.vscroll;
+  return { laneH, top, maxScroll };
+}
+/** オートメーションの線を引く範囲（トラックの上端 y0 から） */
+const arrEnvBox = (y0: number, laneH: number) => ({ top: y0 + A_PAD + A_HEAD + 5, h: Math.max(8, laneH - A_PAD * 2 - A_HEAD - 10) });
+
+/** クリップの中の波形（その音源の src から、オートメーションの音量を掛けて。上下に余白を残す） */
 function drawClipWave(ctx: CanvasRenderingContext2D, c: Clip, x0: number, x1: number, y0: number, h: number, W: number) {
-  const buf = audio.buffer!;
+  const buf = arrSources[c.srcId]?.buf;
+  if (!buf) return;
   const chs = bufferChannels(buf);
   const sr = buf.sampleRate;
   const a = arrState;
   const t0 = a.viewAt - a.span / 2;
   const mid = y0 + h / 2;
-  // ふだんは上下に余白を残す（FL Studio のように）。縦に拡大すると、はみ出した分はクリップの枠で切れる
-  const amp = (h / 2) * 0.7 * a.vz;
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(x0, y0, x1 - x0, h);
-  ctx.clip();
+  const amp = (h / 2) * 0.78;
   for (let x = Math.max(0, Math.floor(x0)); x < Math.min(W, Math.ceil(x1)); x++) {
     const ta = t0 + (x / W) * a.span;
     const tb = t0 + ((x + 1) / W) * a.span;
@@ -2976,13 +3001,18 @@ function drawClipWave(ctx: CanvasRenderingContext2D, c: Clip, x0: number, x1: nu
     const g = envAt(c.env, c.src + ta - c.pos);
     ctx.fillRect(x, mid - mx * amp * g, 1, Math.max(1, mx * amp * 2 * g));
   }
-  ctx.restore();
 }
+
+/** トラックの色（音源ごとに少し変える） */
+const arrColor = (srcId: number, on: boolean) => {
+  const hues = [196, 168, 226, 140, 250];
+  const h = hues[srcId % hues.length];
+  return { head: on ? `hsl(${h}, 55%, 76%)` : `hsl(${h}, 45%, 52%)`, body: `hsla(${h}, 45%, 52%, ${on ? 0.42 : 0.28})`, wave: on ? `hsl(${h}, 60%, 88%)` : `hsl(${h}, 45%, 70%)` };
+};
 
 function drawArr(playhead = -1) {
   const a = arrState;
-  if (!audio.buffer) return;
-  const total = arrTotal();
+  if (!arrSources.length) return;
   const len = arrangeLength(a.clips);
   const lcd = document.getElementById('arrLcdPos');
   if (lcd) {
@@ -2991,42 +3021,20 @@ function drawArr(playhead = -1) {
     const g = arrGrid(t - 30, t + 0.001, 4).filter((x) => x.t <= t + 1e-6);
     const bars = g.filter((x) => x.bar);
     const bar = bars[bars.length - 1];
-    $('arrLcdBar').textContent = bar ? `小節 ${bar.n} 拍 ${g.filter((x) => x.beat && x.t >= bar.t - 1e-6).length}` : '曲の頭より前';
+    $('arrLcdBar').textContent = bar ? `小節 ${bar.n} 拍 ${g.filter((x) => x.beat && x.t >= bar.t - 1e-6).length}` : '—';
   }
   const info = document.getElementById('arrLen');
   if (info) info.textContent = fmtCut(len);
   const off = document.getElementById('arrOff');
-  if (off) off.textContent = `${ed.chart.offset.toFixed(3)} → ${(ed.chart.offset - refShift(a.clips, -ed.chart.offset)).toFixed(3)}`;
+  if (off) off.textContent = `${ed.chart.offset.toFixed(3)} → ${(-arrBar1()).toFixed(3)}`;
 
-  // ---- 全体（上の帯） ----
-  const ovc = document.getElementById('arrOv') as HTMLCanvasElement | null;
-  if (ovc) {
-    const { ctx, W, H } = fitCanvas(ovc);
-    ctx.fillStyle = '#1d2023';
-    ctx.fillRect(0, 0, W, H);
-    const xs = (t: number) => (t / total) * W;
-    a.clips.forEach((c, i) => {
-      ctx.fillStyle = i === a.sel ? '#93cde2' : '#4d9fbe';
-      ctx.fillRect(xs(c.pos), 3, Math.max(1, xs(c.len)), H - 6);
-      ctx.fillStyle = '#1d2023';
-      ctx.fillRect(xs(c.pos), 3, 1, H - 6);
-    });
-    const v0 = xs(a.viewAt - a.span / 2);
-    const v1 = xs(a.viewAt + a.span / 2);
-    ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(Math.max(1, v0), 1, Math.max(3, Math.min(W - 1, v1) - Math.max(1, v0)), H - 2);
-    ctx.fillStyle = PLAYHEAD;
-    ctx.fillRect(xs(playhead >= 0 ? playhead : a.play) - 1, 0, 2, H);
-  }
-
-  // ---- 拡大したトラック ----
   const cv = document.getElementById('arrWave') as HTMLCanvasElement | null;
   if (!cv) return;
   const { ctx, W, H: HH } = fitCanvas(cv);
   const t0 = a.viewAt - a.span / 2;
   const t1 = t0 + a.span;
   const xOf = (t: number) => ((t - t0) / a.span) * W;
+  const L = arrLanes(HH);
   ctx.fillStyle = '#1d2023';
   ctx.fillRect(0, 0, W, HH);
   // グリッド（なしのときは拍を薄く）
@@ -3034,47 +3042,50 @@ function drawArr(playhead = -1) {
   const grid = arrGrid(t0, t1, div);
   const fine = grid.filter((g) => !g.bar);
   const pxGrid = fine.length > 1 ? Math.abs(xOf(fine[1].t) - xOf(fine[0].t)) : 99;
-  // ルーラー: 小節の番号（詰まるときは間引く）。ここをドラッグすると画面が動く
-  let lastLabel = -1e9;
-  const marks = grid.filter((g) => g.bar || pxGrid >= 5).map((g) => {
-    const x = xOf(g.t);
-    const m: { x: number; major: boolean; label?: string } = { x, major: g.bar };
-    if (g.bar && x - lastLabel >= 34) { m.label = String(g.n); lastLabel = x; }
-    return m;
-  });
-  drawRuler(ctx, W, A_RULER, marks);
+  // トラック（下に描いてから、上にルーラー）
   ctx.save();
-  ctx.translate(0, A_RULER);
-  const H = HH - A_RULER;
   ctx.beginPath();
-  ctx.rect(0, 0, W, H);
+  ctx.rect(0, A_RULER, W, HH - A_RULER);
   ctx.clip();
+  for (let i = 0; i < a.tracks; i++) {
+    const y = L.top(i);
+    ctx.fillStyle = i % 2 ? '#202326' : '#1d2023';
+    ctx.fillRect(0, y, W, L.laneH);
+    ctx.fillStyle = 'rgba(255,255,255,0.07)';
+    ctx.fillRect(0, y + L.laneH - 1, W, 1);
+  }
   for (const g of grid) {
     if (!g.bar && pxGrid < 5) continue;
-    ctx.fillStyle = g.bar ? 'rgba(255,255,255,0.16)' : g.beat ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)';
-    ctx.fillRect(Math.round(xOf(g.t)), 0, 1, H);
+    ctx.fillStyle = g.bar ? (g.n === 1 ? 'rgba(147,205,226,0.55)' : 'rgba(255,255,255,0.16)') : g.beat ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.04)';
+    ctx.fillRect(Math.round(xOf(g.t)), A_RULER, g.n === 1 && g.bar ? 2 : 1, a.tracks * L.laneH - a.vscroll);
   }
   if (xOf(len) < W) {
-    ctx.fillStyle = 'rgba(0,0,0,0.28)';
-    ctx.fillRect(Math.max(0, xOf(len)), 0, W, H);
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(Math.max(0, xOf(len)), A_RULER, W, a.tracks * L.laneH - a.vscroll);
   }
   if (t0 < 0) {
     ctx.fillStyle = '#16181b';
-    ctx.fillRect(0, 0, xOf(0), H);
+    ctx.fillRect(0, A_RULER, xOf(0), a.tracks * L.laneH - a.vscroll);
+  }
+  // トラックの番号（左の端に薄く）
+  ctx.font = '700 11px system-ui, sans-serif';
+  for (let i = 0; i < a.tracks; i++) {
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    ctx.fillText(`トラック ${i + 1}`, 6, L.top(i) + L.laneH - 8);
   }
   // クリップ（下から順に）
-  const y0 = A_PAD;
-  const ch = H - A_PAD * 2;
-  const eb = arrEnvBox(H);
   const autoMode = a.tool === 'auto';
   a.clips.forEach((c, i) => {
     const xa = xOf(c.pos);
     const xb = xOf(clipEnd(c));
-    if (xb < -2 || xa > W + 2) return;
+    const y0 = L.top(c.track) + A_PAD;
+    const ch = L.laneH - A_PAD * 2;
+    if (xb < -2 || xa > W + 2 || y0 + ch < A_RULER || y0 > HH) return;
     const on = i === a.sel;
-    ctx.fillStyle = on ? 'rgba(77,159,190,0.42)' : 'rgba(77,159,190,0.28)';
+    const col = arrColor(c.srcId, on);
+    ctx.fillStyle = col.body;
     ctx.fillRect(xa, y0, xb - xa, ch);
-    ctx.fillStyle = on ? '#93cde2' : '#4d9fbe';
+    ctx.fillStyle = col.head;
     ctx.fillRect(xa, y0, xb - xa, A_HEAD);
     ctx.save();
     ctx.beginPath();
@@ -3082,14 +3093,15 @@ function drawArr(playhead = -1) {
     ctx.clip();
     ctx.fillStyle = on ? '#1d2023' : '#fff';
     ctx.font = '700 11px system-ui, sans-serif';
-    ctx.fillText(`${i + 1}  ${fmtCut(c.src)}〜${fmtCut(c.src + c.len)}`, Math.max(xa, 0) + 6, y0 + 12);
-    ctx.fillStyle = on ? '#cdeaf4' : '#8cc4d6';
-    drawClipWave(ctx, c, xa, xb, y0 + A_HEAD + 2, ch - A_HEAD - 4, W);
+    const nm = c.srcId ? `${arrSources[c.srcId]?.name ?? ''} ` : '';
+    ctx.fillText(`${nm}${fmtCut(c.src)}〜${fmtCut(c.src + c.len)}`, Math.max(xa, 0) + 6, y0 + 12);
+    ctx.fillStyle = col.wave;
+    drawClipWave(ctx, c, xa, xb, y0 + A_HEAD + 1, ch - A_HEAD - 2, W);
     // オートメーションの線（音量）。上が 100%、下が 0%。線より上を暗くして、下がっている所を見せる
     if (c.env.length || (autoMode && on)) {
-      const pts: [number, number][] = [];
+      const eb = arrEnvBox(L.top(c.track), L.laneH);
       const yv = (v: number) => eb.top + (1 - v) * eb.h;
-      pts.push([xa, yv(envAt(c.env, c.src))]);
+      const pts: [number, number][] = [[xa, yv(envAt(c.env, c.src))]];
       for (const p of c.env) if (p.s > c.src && p.s < c.src + c.len) pts.push([xOf(c.pos + p.s - c.src), yv(p.v)]);
       pts.push([xb, yv(envAt(c.env, c.src + c.len))]);
       ctx.fillStyle = 'rgba(0,0,0,0.32)';
@@ -3131,7 +3143,7 @@ function drawArr(playhead = -1) {
   // 選んでいるクリップの端のつまみ（丸）。オートメーションのときは出さない
   const s = a.clips[a.sel];
   if (s && !autoMode) {
-    const cy = y0 + ch / 2;
+    const cy = L.top(s.track) + L.laneH / 2;
     for (const x of [xOf(s.pos), xOf(clipEnd(s))]) {
       ctx.fillStyle = '#fff';
       ctx.beginPath();
@@ -3142,7 +3154,28 @@ function drawArr(playhead = -1) {
       ctx.fillRect(x + 1.5, cy - 5, 1.5, 10);
     }
   }
+  // トラックを足す（いちばん下の行）
+  const ay = L.top(a.tracks);
+  if (ay < HH) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 4]);
+    ctx.strokeRect(8, ay + 6, Math.min(W - 16, 220), A_ADD - 12);
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = '800 13px system-ui, sans-serif';
+    ctx.fillText('＋ トラックを足す', 20, ay + A_ADD / 2 + 5);
+  }
   ctx.restore();
+  // ルーラー: 小節の番号（1 小節目より前は 0・-1…。詰まるときは間引く）。ここをドラッグすると画面が動く
+  let lastLabel = -1e9;
+  const marks = grid.filter((g) => g.bar || pxGrid >= 5).map((g) => {
+    const x = xOf(g.t);
+    const m: { x: number; major: boolean; label?: string } = { x, major: g.bar };
+    if (g.bar && (x - lastLabel >= 34 || g.n === 1)) { m.label = String(g.n); lastLabel = x; }
+    return m;
+  });
+  drawRuler(ctx, W, A_RULER, marks);
   // 切り取りのマーク（再生もここから）: 縦の線と、ルーラーの中の三角 1 つ。長押しで掴んでいる間は大きく
   const mx = xOf(a.play);
   ctx.fillStyle = playhead >= 0 ? 'rgba(255,201,77,0.55)' : PLAYHEAD;
@@ -3160,11 +3193,12 @@ function drawArr(playhead = -1) {
     ctx.lineWidth = 2;
     ctx.stroke();
   }
-  // マークを下へドラッグ中: 切る所を見せる（クリップの上まで来たら、離すとそこで切る）
+  // マークを下へドラッグ中: 切る所を見せる（トラックのクリップの上で離すと、そこで切る）
   if (a.cutDrag >= 0) {
-    const ready = a.cutDrag > A_RULER + 24;
-    const ci = clipAt(a.clips, a.play);
-    ctx.strokeStyle = ready && ci >= 0 ? '#ff7a6a' : 'rgba(255,255,255,0.7)';
+    const tk = Math.floor((a.cutDrag - A_RULER + a.vscroll) / L.laneH);
+    const ci = a.cutDrag > A_RULER + 10 && tk >= 0 && tk < a.tracks ? clipAt(a.clips, a.play, tk) : -1;
+    const ready = ci >= 0;
+    ctx.strokeStyle = ready ? '#ff7a6a' : 'rgba(255,255,255,0.7)';
     ctx.lineWidth = 3;
     ctx.setLineDash([7, 5]);
     ctx.beginPath();
@@ -3172,29 +3206,30 @@ function drawArr(playhead = -1) {
     ctx.lineTo(mx, Math.min(HH, Math.max(A_RULER, a.cutDrag)));
     ctx.stroke();
     ctx.setLineDash([]);
-    const label = ci < 0 ? 'ここにクリップがありません' : ready ? '✂ 離すとここで切る' : '下へドラッグで切る';
+    const label = ready ? `✂ 離すとトラック ${tk + 1} をここで切る` : a.cutDrag > A_RULER + 10 ? 'ここにクリップがありません' : '下へドラッグで切る';
     ctx.font = '800 13px system-ui, sans-serif';
     const lw = ctx.measureText(label).width + 16;
     const lx = Math.max(4, Math.min(W - lw - 4, mx + 10));
     const ly = Math.min(HH - 30, Math.max(A_RULER + 6, a.cutDrag - 14));
-    ctx.fillStyle = ready && ci >= 0 ? '#ff7a6a' : 'rgba(29,32,35,0.92)';
+    ctx.fillStyle = ready ? '#ff7a6a' : 'rgba(29,32,35,0.92)';
     ctx.fillRect(lx, ly, lw, 26);
     ctx.fillStyle = '#fff';
     ctx.fillText(label, lx + 8, ly + 18);
   }
   // 再生中の位置
   if (playhead >= 0) drawPlayhead(ctx, xOf(playhead), HH, A_RULER);
-  // クリップの上の操作ボタン（選んでいるとき・オートメーションでないとき。クリップの真ん中の上）
+  // クリップの上の操作ボタン（選んでいるとき・オートメーションでないとき）
   const bub = document.getElementById('arrBub');
   if (bub) {
     const sc = a.clips[a.sel];
-    const vis = !!sc && !autoMode && xOf(clipEnd(sc)) > 0 && xOf(sc.pos) < W && playhead < 0;
+    const by = sc ? L.top(sc.track) + A_PAD + A_HEAD + 6 : 0;
+    const vis = !!sc && !autoMode && xOf(clipEnd(sc)) > 0 && xOf(sc.pos) < W && playhead < 0 && by > A_RULER && by + 34 < HH;
     bub.classList.toggle('hidden', !vis);
     if (vis && sc) {
       const cx = Math.max(xOf(sc.pos), 0) / 2 + Math.min(xOf(clipEnd(sc)), W) / 2;
       const bw = bub.offsetWidth;
       bub.style.left = `${Math.max(4, Math.min(W - bw - 4, cx - bw / 2))}px`;
-      bub.style.top = `${cv.offsetTop + A_RULER + y0 + A_HEAD + 8}px`;
+      bub.style.top = `${cv.offsetTop + by}px`;
       bub.querySelector<HTMLButtonElement>('[data-abub="split"]')!.disabled = !(a.play > sc.pos + MIN_LEN && a.play < clipEnd(sc) - MIN_LEN);
     }
   }
@@ -3205,15 +3240,45 @@ const ARR_IC = {
   grid: '<path d="M4 4v16M10 4v16M16 4v16M20 4v16"/><path d="M2 20h20"/>',
 };
 
+/** 別の音源を読み込んで、新しいトラックのマークの所に置く */
+function arrAddSource(onDone: () => void) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'audio/*,.ogg,.mp3,.wav,.m4a,.aac,.flac';
+  inp.addEventListener('change', async () => {
+    const f = inp.files?.[0];
+    if (!f) return;
+    try {
+      busy(`「${f.name}」を読み込んでいます…`);
+      const buf = await audio.ctx.decodeAudioData(await f.arrayBuffer());
+      busyEnd();
+      const a = arrState;
+      arrPush();
+      arrSources.push({ name: f.name.replace(/\.[^.]+$/, ''), buf });
+      a.tracks += 1;
+      a.clips = [...a.clips, { src: 0, len: Math.round(buf.duration * 1000) / 1000, pos: a.play, env: [], track: a.tracks - 1, srcId: arrSources.length - 1 }];
+      a.sel = a.clips.length - 1;
+      toast(`「${f.name}」をトラック ${a.tracks} に置きました`);
+      onDone();
+    } catch {
+      busyEnd();
+      toast(`「${f.name}」は読み込めませんでした`);
+    }
+  });
+  inp.click();
+}
+
 function renderCutSheet(body: HTMLElement) {
   $('sheetTitle').textContent = '音源の切り貼り';
   const a = arrState;
   a.sel = a.sel < a.clips.length ? a.sel : -1;
   const sel = a.clips[a.sel];
+  const usedTracks = new Set(a.clips.map((c) => c.track));
+  const emptyTracks = Array.from({ length: a.tracks }, (_, i) => i).filter((i) => !usedTracks.has(i));
   const insp = (() => {
     if (a.tool === 'auto') {
       return `
-        <div class="dv dv-info dv-sec" style="--c:#93cde2"><span class="dv-l">音量（オートメーション）</span><b>${sel ? `クリップ ${a.sel + 1}` : '—'}</b></div>
+        <div class="dv dv-info dv-sec" style="--c:#93cde2"><span class="dv-l">音量（オートメーション）</span><b>${sel ? `トラック ${sel.track + 1}` : '—'}</b></div>
         <div class="daw-acts">
           <button data-aenv="in" ${sel ? '' : 'disabled'}>フェードイン</button>
           <button data-aenv="out" ${sel ? '' : 'disabled'}>フェードアウト</button>
@@ -3223,7 +3288,7 @@ function renderCutSheet(body: HTMLElement) {
     }
     if (sel) {
       return `
-        <div class="dv dv-info dv-sec dv-narrow" style="--c:#93cde2"><span class="dv-l">クリップ</span><b>${a.sel + 1}/${a.clips.length}</b></div>
+        <div class="dv dv-info dv-sec dv-narrow" style="--c:#93cde2"><span class="dv-l">トラック</span><b>${sel.track + 1}</b></div>
         ${valueBoxHtml('pos', '位置')}
         ${valueBoxHtml('len', '長さ')}
         ${valueBoxHtml('src', '元の音源の位置')}
@@ -3236,12 +3301,14 @@ function renderCutSheet(body: HTMLElement) {
     }
     return `
         <div class="dv dv-info"><span class="dv-l">新しい長さ</span><b id="arrLen"></b></div>
-        <div class="dv dv-info"><span class="dv-l">OFFSET（自動で直します）</span><b id="arrOff"></b></div>
-        <div class="daw-acts">
+        <div class="dv dv-info"><span class="dv-l">OFFSET（1 小節目の所）</span><b id="arrOff"></b></div>
+        <div class="daw-acts three">
           <button data-asplitplay>✂ マークで分割</button>
+          <button data-aaddtrack>＋ トラック</button>
+          <button data-aaddsrc>＋ 別の音源</button>
+          <button data-adelempty ${emptyTracks.length && a.tracks > 1 ? '' : 'disabled'}>空のトラックを消す</button>
           <button data-areset ${a.undo.length ? '' : 'disabled'}>最初に戻す</button>
-        </div>
-        <p class="arr-hint">上の小節のバー: ドラッグで移動・タップでマーク・マークを下へドラッグで切る。2 本指で拡大（縦に開くと波形の高さ）</p>`;
+        </div>`;
   })();
   body.innerHTML = `<div class="daw">
     <header class="daw-top">
@@ -3262,7 +3329,6 @@ function renderCutSheet(body: HTMLElement) {
     <div class="daw-main">
       ${a.gridMenu ? `<div class="arr-gridmenu">${ARR_GRIDS.map((g) => `<button data-agridset="${g}" class="${g === a.grid ? 'on' : ''}">${arrGridLabel(g)}</button>`).join('')}</div>` : ''}
       <div class="daw-stage">
-        <canvas id="arrOv" class="daw-ov"></canvas>
         <canvas id="arrWave" class="daw-wave"></canvas>
         <div id="arrBub" class="arr-bub hidden">
           <button data-abub="split">✂ 分割</button><button data-abub="dup">⧉ 複製</button><button data-abub="del">削除</button>
@@ -3286,24 +3352,13 @@ function renderCutSheet(body: HTMLElement) {
   let refreshBoxes = () => {};
   const update = () => { drawArr(arrPlay.on ? audio.now() : -1); refreshBoxes(); };
 
-  // ---- 全体の帯: タップ・ドラッグでそこを表示 ----
-  const ov = $<HTMLCanvasElement>('arrOv');
-  bindTimeline(ov, {
-    single: (x) => {
-      const go = (xx: number) => { a.viewAt = (xx / Math.max(1, ov.clientWidth)) * arrTotal(); clampView(); update(); };
-      go(x);
-      return { move: (xx) => go(xx), end: () => {} };
-    },
-    pan: () => {},
-    zoom: () => {},
-  });
-
-  // ---- トラック ----
   const cv = $<HTMLCanvasElement>('arrWave');
   const W = () => Math.max(1, cv.clientWidth);
-  const Hc = () => Math.max(1, cv.clientHeight) - A_RULER;
+  const lanes = () => arrLanes(Math.max(1, cv.clientHeight));
   const tAt = (x: number) => a.viewAt - a.span / 2 + (x / W()) * a.span;
   const xAt = (t: number) => ((t - (a.viewAt - a.span / 2)) / a.span) * W();
+  /** キャンバスの y にあるトラック（-1 はルーラー、tracks は「トラックを足す」の行より下） */
+  const trackAt = (y: number) => Math.floor((y - A_RULER + a.vscroll) / lanes().laneH);
   const tol = () => (12 / W()) * a.span;
   const snap = (t: number, except = -1, withMark = true) => arrQuantize(t, tol(), except, withMark);
   /** 動かし始めたら 1 回だけ元に戻すの記録を取る */
@@ -3314,7 +3369,7 @@ function renderCutSheet(body: HTMLElement) {
       const t = tAt(x);
       if (y < A_RULER) {
         // ルーラー: ドラッグで画面を動かす。タップでマークをそこへ（グリッドに合わせる）。
-        // マークを長押ししてから横に動かすとマークが動き、マークを下へドラッグして離すとそこで切る
+        // マークを長押ししてから横に動かすとマークが動き、マークを下へドラッグしてトラックの上で離すとそこで切る
         const v0 = a.viewAt;
         const nearMark = Math.abs(x - xAt(a.play)) < 24;
         let hold = false;
@@ -3338,10 +3393,11 @@ function renderCutSheet(body: HTMLElement) {
             clearTimeout(timer);
             a.markHold = false;
             if (mode === 'cut') {
-              const ready = a.cutDrag > A_RULER + 24;
+              const yy = a.cutDrag;
               a.cutDrag = -1;
-              if (ready) {
-                const i = clipAt(a.clips, a.play);
+              const tk = trackAt(yy);
+              if (yy > A_RULER + 10 && tk >= 0 && tk < a.tracks) {
+                const i = clipAt(a.clips, a.play, tk);
                 if (i < 0) toast('マークの所にクリップがありません');
                 else {
                   const res = splitClip(a.clips, i, a.play);
@@ -3358,21 +3414,25 @@ function renderCutSheet(body: HTMLElement) {
           cancel: () => { clearTimeout(timer); a.markHold = false; a.cutDrag = -1; update(); },
         };
       }
-      const yy = y - A_RULER;
+      const tk = trackAt(y);
+      // 「トラックを足す」の行
+      if (tk === a.tracks && x < 240) {
+        return { move: () => {}, end: (moved) => { if (!moved) { arrPush(); a.tracks += 1; rerender(); } } };
+      }
       const s = a.clips[a.sel];
-      const hit = clipAt(a.clips, t);
+      const hit = tk >= 0 && tk < a.tracks ? clipAt(a.clips, t, tk) : -1;
       if (a.tool === 'auto') {
         // オートメーション: 選んでいるクリップの線の上で、点を足す・動かす・消す
         if (!s || hit !== a.sel) {
           return { move: () => {}, end: (moved) => { if (!moved) { a.sel = hit; rerender(); } } };
         }
-        const eb = arrEnvBox(Hc());
+        const eb = arrEnvBox(lanes().top(s.track), lanes().laneH);
         const vAt = (yyy: number) => Math.max(0, Math.min(1, 1 - (yyy - eb.top) / eb.h));
         const ptX = (p: EnvPoint) => xAt(s.pos + p.s - s.src);
         const ptY = (p: EnvPoint) => eb.top + (1 - p.v) * eb.h;
         let k = -1;
         let best = 18;
-        s.env.forEach((p, i) => { const d = Math.hypot(ptX(p) - x, ptY(p) - yy); if (d < best) { best = d; k = i; } });
+        s.env.forEach((p, i) => { const d = Math.hypot(ptX(p) - x, ptY(p) - y); if (d < best) { best = d; k = i; } });
         const push = once();
         const sAt = (xx: number) => {
           const c = a.clips[a.sel];
@@ -3383,11 +3443,12 @@ function renderCutSheet(body: HTMLElement) {
           move: (xx, yyy) => {
             push();
             const c = a.clips[a.sel];
-            const v = vAt(yyy - A_RULER);
+            const v = vAt(yyy);
             if (k < 0) {
               // 何も無い所からドラッグ: 点を作ってそのまま動かす
-              c.env = sortEnv([...c.env, { s: sAt(xx), v }]);
-              k = c.env.findIndex((p) => Math.abs(p.s - sAt(xx)) < 1e-6 && Math.abs(p.v - v) < 1e-3);
+              const s0 = sAt(xx);
+              c.env = sortEnv([...c.env, { s: s0, v }]);
+              k = c.env.findIndex((p) => Math.abs(p.s - Math.round(s0 * 1000) / 1000) < 1e-6);
             }
             const lo = k > 0 ? c.env[k - 1].s + 0.001 : -Infinity;
             const hi = k + 1 < c.env.length ? c.env[k + 1].s - 0.001 : Infinity;
@@ -3408,7 +3469,7 @@ function renderCutSheet(body: HTMLElement) {
               } else {
                 // 線のあたりをタップ: 点を足す
                 arrPush();
-                c.env = sortEnv([...c.env, { s: sAt(x), v: vAt(yy) }]);
+                c.env = sortEnv([...c.env, { s: sAt(x), v: vAt(y) }]);
                 lastPointTap = { at: 0, k: -1 };
               }
             }
@@ -3416,7 +3477,7 @@ function renderCutSheet(body: HTMLElement) {
           },
         };
       }
-      if (s && a.tool === 'move') {
+      if (s && s.track === tk) {
         // 端（丸いつまみ・縦の辺）: 詰める・伸ばす
         const nearA = Math.abs(x - xAt(s.pos)) < 16;
         const nearB = Math.abs(x - xAt(clipEnd(s))) < 16;
@@ -3428,7 +3489,7 @@ function renderCutSheet(body: HTMLElement) {
               push();
               const c = a.clips[a.sel];
               const tt = snap(tAt(xx), a.sel);
-              a.clips[a.sel] = left ? trimStart(c, tt) : trimEnd(c, tt, a.dur);
+              a.clips[a.sel] = left ? trimStart(c, tt) : trimEnd(c, tt, srcDur(c));
               update();
             },
             end: (moved) => { if (moved) rerender(); },
@@ -3436,12 +3497,12 @@ function renderCutSheet(body: HTMLElement) {
         }
       }
       if (hit >= 0) {
-        // クリップ: タップで選ぶ、ドラッグで動かす（左の端か右の端を、近いほうの吸い付く先へ）
+        // クリップ: タップで選ぶ、ドラッグで動かす（横はグリッドに合わせる、縦はトラックを移る）
         const c0 = a.clips[hit];
         const push = once();
         let idx = hit;
         return {
-          move: (_xx, _y, dx) => {
+          move: (_xx, yy, dx) => {
             if (idx === hit) {
               push();
               const r = bringToTop(a.clips, hit);
@@ -3453,7 +3514,8 @@ function renderCutSheet(body: HTMLElement) {
             const sa = snap(pos, idx);
             const sb = snap(pos + c0.len, idx) - c0.len;
             pos = Math.abs(sa - pos) <= Math.abs(sb - pos) ? sa : sb;
-            a.clips[idx] = { ...a.clips[idx], pos: Math.max(0, Math.round(pos * 1000) / 1000) };
+            const track = Math.max(0, Math.min(a.tracks - 1, trackAt(yy)));
+            a.clips[idx] = { ...a.clips[idx], pos: Math.max(0, Math.round(pos * 1000) / 1000), track };
             update();
           },
           end: (moved) => {
@@ -3462,8 +3524,12 @@ function renderCutSheet(body: HTMLElement) {
           },
         };
       }
-      // 何も無い所: タップで選ぶのをやめる（画面を動かすのは上の小節のバー）
-      return { move: () => {}, end: (moved) => { if (!moved && a.sel >= 0) { a.sel = -1; rerender(); } } };
+      // 何も無い所: 縦にドラッグでトラックを上下に動かす、タップで選ぶのをやめる
+      const vs0 = a.vscroll;
+      return {
+        move: (_xx, yy) => { a.vscroll = vs0 - (yy - y); update(); },
+        end: (moved) => { if (!moved && a.sel >= 0) { a.sel = -1; rerender(); } },
+      };
     },
     pan: (dx) => { a.viewAt -= (dx / W()) * a.span; clampView(); update(); },
     zoom: (k, x) => {
@@ -3474,8 +3540,8 @@ function renderCutSheet(body: HTMLElement) {
       clampView();
       update();
     },
-    // 縦に開く・閉じる: 波形の高さ
-    vzoom: (k) => { a.vz = Math.max(0.5, Math.min(12, a.vz * k)); update(); },
+    // 縦に開く・閉じる: トラックの高さ
+    vzoom: (k) => { a.vz = Math.max(0.5, Math.min(4, a.vz * k)); update(); },
   });
 
   // ---- 値の箱（選んでいるクリップ） ----
@@ -3495,8 +3561,8 @@ function renderCutSheet(body: HTMLElement) {
   let pushed = false;
   refreshBoxes = sel && a.tool !== 'auto' ? bindValueBoxes(body, {
     pos: timeBox('pos', (c) => c.pos, (c, v) => ({ ...c, pos: Math.max(0, v) })),
-    len: timeBox('len', (c) => c.len, (c, v) => trimEnd(c, c.pos + v, a.dur)),
-    src: timeBox('src', (c) => c.src, (c, v) => ({ ...c, src: Math.max(0, Math.min(a.dur - c.len, v)) })),
+    len: timeBox('len', (c) => c.len, (c, v) => trimEnd(c, c.pos + v, srcDur(c))),
+    src: timeBox('src', (c) => c.src, (c, v) => ({ ...c, src: Math.max(0, Math.min(srcDur(c) - c.len, v)) })),
   }, {
     begin: () => { if (!pushed) { arrPush(); pushed = true; } },
     end: () => { pushed = false; },
@@ -3514,9 +3580,20 @@ function renderCutSheet(body: HTMLElement) {
   on('[data-aredo]', () => { const s = a.redo.pop(); if (!s) return; a.undo.push(arrSnap()); arrRestore(s); });
   on('[data-ahome]', () => { a.play = 0; if (a.viewAt - a.span / 2 > 0) a.viewAt = a.span * 0.45; });
   on('[data-adesel]', () => { a.sel = -1; });
+  on('[data-aaddtrack]', () => { arrPush(); a.tracks += 1; });
+  body.querySelector('[data-aaddsrc]')?.addEventListener('click', () => arrAddSource(rerender));
+  on('[data-adelempty]', () => {
+    // 空のトラックを消して、残ったトラックを詰める（トラック 1 は残す）
+    const used = [...new Set(a.clips.map((c) => c.track))].sort((x, y) => x - y);
+    if (!used.length) return;
+    arrPush();
+    a.clips = a.clips.map((c) => ({ ...c, track: used.indexOf(c.track) }));
+    a.tracks = Math.max(1, used.length);
+  });
   on('[data-areset]', () => {
     arrPush();
-    a.clips = [{ src: 0, len: a.dur, pos: 0, env: [] }];
+    a.clips = [{ src: 0, len: a.dur, pos: 0, env: [], track: 0, srcId: 0 }];
+    a.tracks = 1;
     a.sel = -1;
   });
   // フェードの長さ: 1 小節（譜面の頭の BPM で）、クリップの半分まで
@@ -3536,9 +3613,19 @@ function renderCutSheet(body: HTMLElement) {
     a.sel = i + 1;
   };
   on('[data-asplitplay]', () => {
-    const i = clipAt(a.clips, a.play);
-    if (i < 0) toast('マークの所にクリップがありません');
-    else splitAtMark(i);
+    // どのトラックも、マークの所の上のクリップを切る
+    let n = 0;
+    for (let tk = 0; tk < a.tracks; tk++) {
+      const i = clipAt(a.clips, a.play, tk);
+      if (i < 0) continue;
+      const res = splitClip(a.clips, i, a.play);
+      if (!res) continue;
+      if (!n) arrPush();
+      a.clips = res;
+      n++;
+    }
+    if (!n) toast('マークの所に切れるクリップがありません');
+    a.sel = -1;
   });
   on('[data-abub]', (b) => {
     const i = a.sel;
@@ -3572,15 +3659,14 @@ function renderCutSheet(body: HTMLElement) {
   }));
 }
 
-/** 反映: 並べた音を .ogg にして音源を入れ替え、譜面の頭の音を使っているクリップに合わせて OFFSET と DEMOSTART を直す */
+/** 反映: 並べた音を .ogg にして音源を入れ替え、譜面の 1 小節目の所に OFFSET を、DEMOSTART もその音の所に合わせる */
 async function applyCut() {
   const a = arrState;
-  const buf = audio.buffer;
-  if (!buf) return;
+  if (!arrSources.length) return;
   const c0 = a.clips[0];
-  if (a.clips.length === 1 && c0.pos === 0 && c0.src === 0 && Math.abs(c0.len - a.dur) < 0.002 && !c0.env.length) return; // 変えていない
-  const sr = buf.sampleRate;
-  const chs = renderClips(bufferChannels(buf), sr, a.clips);
+  if (a.clips.length === 1 && arrSources.length === 1 && c0.pos === 0 && c0.src === 0 && Math.abs(c0.len - a.dur) < 0.002 && !c0.env.length) return; // 変えていない
+  const sr = arrSources[0].buf.sampleRate;
+  const chs = arrRender();
   try {
     busy('切り貼りした音源を .ogg にしています…', 0);
     const data = await pcmToOgg(chs, sr, (p) => busy('切り貼りした音源を .ogg にしています…', p));

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addFadeIn, addFadeOut, arrangeLength, bringToTop, clipAt, envAt, mapTime, refShift, renderClips, snapTo, splitClip, trimEnd, trimStart, type Clip, type EnvPoint } from './arrange';
 
-const clip = (src: number, len: number, pos: number, env: EnvPoint[] = []): Clip => ({ src, len, pos, env });
+const clip = (src: number, len: number, pos: number, env: EnvPoint[] = [], track = 0, srcId = 0): Clip => ({ src, len, pos, env, track, srcId });
 
 describe('音源の切り貼り', () => {
   it('分けると、前と後ろのクリップになる（オートメーションは元の音源の時刻のまま両方へ）', () => {
@@ -36,7 +36,7 @@ describe('音源の切り貼り', () => {
   it('並べた音を作る: 重なりは上の音、すき間は無音', () => {
     const sr = 10;
     const src = new Float32Array(100).map((_, i) => i);
-    const [out] = renderClips([src], sr, [clip(0, 1, 0), clip(5, 0.5, 0.5), clip(2, 0.3, 2)]);
+    const [out] = renderClips([[src]], sr, [clip(0, 1, 0), clip(5, 0.5, 0.5), clip(2, 0.3, 2)]);
     expect(out.length).toBe(23);
     expect(Array.from(out.slice(0, 10))).toEqual([0, 1, 2, 3, 4, 50, 51, 52, 53, 54]);
     expect(Array.from(out.slice(10, 20))).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
@@ -47,7 +47,7 @@ describe('音源の切り貼り', () => {
     const sr = 10;
     const a = new Float32Array(40).fill(1);
     a.fill(3, 20);
-    const [out] = renderClips([a], sr, [clip(0, 2, 0), addFadeIn(clip(2, 1, 1), 0.5)]);
+    const [out] = renderClips([[a]], sr, [clip(0, 2, 0), addFadeIn(clip(2, 1, 1), 0.5)]);
     // 1.0〜1.5 秒は 1 → 3 へ
     expect(Array.from(out.slice(10, 16)).map((v) => Math.round(v * 10) / 10)).toEqual([1, 1.4, 1.8, 2.2, 2.6, 3]);
   });
@@ -80,7 +80,23 @@ describe('音源の切り貼り', () => {
   });
 
   it('オートメーションの音量が掛かる', () => {
-    const [out] = renderClips([new Float32Array(20).fill(1)], 10, [clip(0, 2, 0, [{ s: 0, v: 0 }, { s: 1, v: 1 }])]);
+    const [out] = renderClips([[new Float32Array(20).fill(1)]], 10, [clip(0, 2, 0, [{ s: 0, v: 0 }, { s: 1, v: 1 }])]);
     expect(Array.from(out.slice(0, 6)).map((v) => Math.round(v * 10) / 10)).toEqual([0, 0.1, 0.2, 0.3, 0.4, 0.5]);
+  });
+
+  it('トラックどうしは足し合わせる。別の音源も使える（モノラルはステレオの両方へ）', () => {
+    const main = [new Float32Array(10).fill(1), new Float32Array(10).fill(2)];
+    const other = [new Float32Array(10).fill(10)];
+    const out = renderClips([main, other], 10, [clip(0, 1, 0), clip(0, 0.5, 0.5, [], 1, 1)]);
+    expect(Array.from(out[0])).toEqual([1, 1, 1, 1, 1, 11, 11, 11, 11, 11]);
+    expect(Array.from(out[1])).toEqual([2, 2, 2, 2, 2, 12, 12, 12, 12, 12]);
+  });
+
+  it('トラックを指定して上のクリップを探す。譜面の頭のずれは譜面の音源のクリップだけで決める', () => {
+    const cs = [clip(0, 10, 0), clip(0, 10, 2, [], 1, 1)];
+    expect(clipAt(cs, 5, 0)).toBe(0);
+    expect(clipAt(cs, 5, 1)).toBe(1);
+    expect(clipAt(cs, 5)).toBe(1);
+    expect(refShift(cs, 3)).toBe(0);
   });
 });

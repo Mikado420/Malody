@@ -1,8 +1,10 @@
 /**
  * 音源の切り貼り（クリップを並べて、新しい音源を作る）。
  *
- * クリップ = 元の音源の src 秒から len 秒ぶんを、新しい音源の pos 秒の所に置いたもの。
- * 配列の後ろのクリップほど上にあり、重なった所は上のクリップの音になる。
+ * クリップ = 音源 srcId の src 秒から len 秒ぶんを、トラック track の、新しい音源の pos 秒の所に置いたもの。
+ * 音源 0 は譜面の音源（譜面の OFFSET はこの音源の時刻で決める）。ほかは足した音源。
+ * トラックどうしは足し合わせる（FL Studio のように重ねられる）。
+ * 同じトラックの中では、配列の後ろのクリップほど上にあり、重なった所は上のクリップの音になる。
  * 音量はクリップごとのオートメーション（点を線でつないだもの、FL Studio のオートメーションのように）。
  * 点の時刻は元の音源の時刻で持つので、分けても端を詰めても音と点の位置は変わらない。
  * 上のクリップの音量が 1 より小さい所は、下の音と混ぜる（フェードインを重ねればクロスフェード）。
@@ -22,6 +24,10 @@ export interface Clip {
   len: number;
   /** 新しい音源の中の位置（秒） */
   pos: number;
+  /** トラック（0 から） */
+  track: number;
+  /** 音源（0 = 譜面の音源） */
+  srcId: number;
   /** 音量のオートメーション（s の順。空なら音量 1 のまま） */
   env: EnvPoint[];
 }
@@ -73,9 +79,12 @@ export function addFadeOut(c: Clip, d: number): Clip {
   return { ...c, env: sortEnv([...c.env.filter((p) => p.s < a - 1e-6 || p.s > b + 1e-6), { s: a, v: top }, { s: b, v: 0 }]) };
 }
 
-/** 新しい音源の t 秒で、上にあるクリップの番号（無ければ -1） */
-export function clipAt(clips: Clip[], t: number): number {
-  for (let i = clips.length - 1; i >= 0; i--) if (t >= clips[i].pos && t < clipEnd(clips[i])) return i;
+/** 新しい音源の t 秒で、上にあるクリップの番号（track を渡すとそのトラックの中だけ。無ければ -1） */
+export function clipAt(clips: Clip[], t: number, track = -1): number {
+  for (let i = clips.length - 1; i >= 0; i--) {
+    const c = clips[i];
+    if ((track < 0 || c.track === track) && t >= c.pos && t < clipEnd(c)) return i;
+  }
   return -1;
 }
 
@@ -110,11 +119,11 @@ export function trimEnd(c: Clip, t: number, dur: number): Clip {
   return { ...c, len: r3(len) };
 }
 
-/** 元の音源の t 秒が、新しい音源の何秒になるか（その音を使っている上のクリップで。使っていなければ null） */
+/** 譜面の音源の t 秒が、新しい音源の何秒になるか（その音を使っている上のクリップで。使っていなければ null） */
 export function mapTime(clips: Clip[], t: number): number | null {
   for (let i = clips.length - 1; i >= 0; i--) {
     const c = clips[i];
-    if (t >= c.src && t < c.src + c.len) return c.pos + (t - c.src);
+    if (c.srcId === 0 && t >= c.src && t < c.src + c.len) return c.pos + (t - c.src);
   }
   return null;
 }
@@ -129,23 +138,44 @@ export function refShift(clips: Clip[], t: number): number {
   let best = Infinity;
   let shift = 0;
   for (const c of clips) {
+    if (c.srcId !== 0) continue;
     const d = t < c.src ? c.src - t : t - (c.src + c.len);
     if (d < best) { best = d; shift = c.pos - c.src; }
   }
   return shift;
 }
 
-/** クリップを並べた新しい音源を作る（チャンネルごと） */
-export function renderClips(chs: Float32Array[], sr: number, clips: Clip[]): Float32Array[] {
+/**
+ * クリップを並べた新しい音源を作る（チャンネルごと）。sources[音源][チャンネル]、どれも同じサンプリング周波数。
+ * トラックごとに作ってから足し合わせる。モノラルの音源はステレオの両方に入れる
+ */
+export function renderClips(sources: Float32Array[][], sr: number, clips: Clip[]): Float32Array[] {
   const n = Math.max(1, Math.ceil(arrangeLength(clips) * sr));
-  const out = chs.map(() => new Float32Array(n));
-  for (const c of clips) {
+  const used = new Set(clips.map((c) => c.srcId));
+  const nch = Math.max(1, ...[...used].map((i) => Math.min(2, sources[i]?.length ?? 1)));
+  const out = Array.from({ length: nch }, () => new Float32Array(n));
+  const tracks = [...new Set(clips.map((c) => c.track))].sort((x, y) => x - y);
+  for (const tr of tracks) {
+    const tb = tracks.length === 1 ? out : Array.from({ length: nch }, () => new Float32Array(n));
+    for (const c of clips) {
+      if (c.track !== tr) continue;
+      writeClip(tb, sources[c.srcId] ?? [], sr, c, n);
+    }
+    if (tb !== out) for (let k = 0; k < nch; k++) { const o = out[k]; const t = tb[k]; for (let i = 0; i < n; i++) o[i] += t[i]; }
+  }
+  return out;
+}
+
+/** 1 つのクリップを書き込む（重なった所は上書き、音量が 1 より小さい所は混ぜる） */
+function writeClip(out: Float32Array[], chs: Float32Array[], sr: number, c: Clip, n: number) {
+  {
     const s0 = Math.round(c.src * sr);
     const p0 = Math.round(c.pos * sr);
     const L = Math.round(c.len * sr);
-    for (let k = 0; k < chs.length; k++) {
-      const src = chs[k];
+    for (let k = 0; k < out.length; k++) {
+      const src = chs[k] ?? chs[0];
       const dst = out[k];
+      if (!src) continue;
       for (let i = 0; i < L; i++) {
         const o = p0 + i;
         if (o < 0 || o >= n) continue;
@@ -156,7 +186,6 @@ export function renderClips(chs: Float32Array[], sr: number, clips: Clip[]): Flo
       }
     }
   }
-  return out;
 }
 
 /** t にいちばん近い候補（tol 秒以内）。無ければ t のまま */
