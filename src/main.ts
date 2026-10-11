@@ -25,7 +25,7 @@ import { getCurrentId, listSongs, loadSongAudio, loadSongData, newId, saveSong, 
 import { Home } from './home/home';
 import { writeZip } from './io/zip';
 import { PlayMode } from './play/playmode';
-import { fitRoot, localPoint } from './orient';
+import { fitRoot, localPoint, typing } from './orient';
 import { BUILD_ID, startAutoUpdate } from './update';
 
 fitRoot();
@@ -1422,7 +1422,9 @@ if (new URLSearchParams(location.search).has('debug')) {
 }
 
 startAutoUpdate({
-  canReload: () => !play.isActive && !playing,
+  // テストプレイ・再生中、設定や BPM 測定などの画面を開いている間、読み込み・書き出し中、文字を入力中は待つ
+  // （閉じたら、待っていた更新がすぐ入る）
+  canReload: () => !play.isActive && !playing && !sheet && !typing() && $('busy').classList.contains('hidden'),
   beforeReload: async () => {
     if (currentSongId) await persist();
   },
@@ -1897,9 +1899,6 @@ function nearestBeat(p: TempoPlan, t: number): number {
   return planTimeAt(p, TPB, sec.s + Math.round((tick - sec.s) / TPB) * TPB);
 }
 
-/** その tick の小節の長さ（拍） */
-const barBeatsAt = (p: TempoPlan, tick: number) => { const m = meterAtTick(p, Math.max(0, tick)); return (m.num * 4) / m.den; };
-
 /** 波形の上のルーラー（小節の番号）の高さ */
 const T_RULER = 22;
 /** 置く・動かすツール（FL Studio Mobile のように、左の列で選ぶ） */
@@ -2174,7 +2173,7 @@ function renderTempoSheet(body: HTMLElement) {
     if (!(b >= 10 && b <= 2000)) { toast('BPM は 10〜2000 で入れてください'); return; }
     tempoEditPlan((p) => setBpm(p, TPB, st.sel, b));
   };
-  const stepTick = (p: TempoPlan, tick: number, dir: number) => tick + dir * TPB;
+  const stepTick = (tick: number, dir: number) => tick + dir * TPB;
   const box = (k: string) => body.querySelector<HTMLElement>(`[data-dv="${k}"]`)!;
   const nudgeFine = (d: number) => {
     // 手で直した案では案の OFFSET を動かし、表示用に動かした量も数えておく
@@ -2206,7 +2205,7 @@ function renderTempoSheet(body: HTMLElement) {
         for (let k = 0; k < Math.abs(n); k++) {
           const i = st.sel;
           tempoEditPlan((p) => {
-            const q = setStart(p, TPB, i, stepTick(p, editSections(p)[i].s, Math.sign(n)));
+            const q = setStart(p, TPB, i, stepTick(editSections(p)[i].s, Math.sign(n)));
             // またいで区間が減ったら、選ぶ区間も前へ
             st.sel = Math.min(i, editSections(q).length - 1) - (editSections(p).length - editSections(q).length);
             return q;
@@ -2221,7 +2220,7 @@ function renderTempoSheet(body: HTMLElement) {
       step: (n) => {
         for (let k = 0; k < Math.abs(n); k++) {
           const i = st.sel;
-          tempoEditPlan((p) => { const e = editSections(p)[i].e; return e === Infinity ? null : setEnd(p, TPB, i, stepTick(p, e, Math.sign(n))); });
+          tempoEditPlan((p) => { const e = editSections(p)[i].e; return e === Infinity ? null : setEnd(p, TPB, i, stepTick(e, Math.sign(n))); });
         }
       },
       px: 16,
