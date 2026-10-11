@@ -28,11 +28,12 @@ const FONT = "'M PLUS Rounded 1c', 'Hiragino Maru Gothic ProN', 'Arial Rounded M
 
 const JUDGE_TEXT: Record<Judge, string> = { good: '良', ok: '可', bad: '不可' };
 const COURSE_LABEL: Record<string, [string, string]> = {
-  Easy: ['かんたん', '#f08a24'],
-  Normal: ['ふつう', '#5cae3a'],
-  Hard: ['むずかしい', '#7c8aa6'],
-  Oni: ['おに', '#7b3fd1'],
-  Edit: ['おに', '#4a2a96'],
+  // 難易度の色（CSS の --c-easy など と同じ）: かんたん 朱色・ふつう 黄緑・むずかしい 青緑・おに 赤紫・裏おに 紫
+  Easy: ['かんたん', '#e8603c'],
+  Normal: ['ふつう', '#8cc63e'],
+  Hard: ['むずかしい', '#1fa59a'],
+  Oni: ['おに', '#c8337e'],
+  Edit: ['おに', '#7b4bd0'],
 };
 
 interface Fx { t: number }

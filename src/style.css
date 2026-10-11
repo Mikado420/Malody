@@ -24,6 +24,12 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   --sk: calc(40px * var(--tan));
   --stripes: repeating-linear-gradient(calc(var(--tilt) - 90deg), rgba(255, 255, 255, 0.045) 0 2px, transparent 2px 16px);
   --fd: 'Barlow Semi Condensed', system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
+  /* 難易度の色: かんたん 朱色・ふつう 黄緑・むずかしい 青緑・おに 赤紫・裏おに 紫（renderer.ts の COURSE_LABEL と同じ） */
+  --c-easy: #e8603c;
+  --c-normal: #8cc63e;
+  --c-hard: #1fa59a;
+  --c-oni: #c8337e;
+  --c-edit: #7b4bd0;
   --don: #f2442b;
   --ka: #5ec4d4;
   --roll: #fbbf14;
@@ -663,9 +669,9 @@ html:has(body.tja-open), body.tja-open { background: #020810; }
 .tempo-wave-bar { flex-wrap: wrap; }
 /* BPM・OFFSET の画面（画面いっぱい。上から: 操作のボタン・曲全体の帯・区間のボタン・拡大した波形・操作の行） */
 .sheet.tempo { align-items: stretch; }
-.sheet.tempo .sheet-panel { width: 100%; max-height: none; height: 100%; border-radius: 0; padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l); }
+.sheet.tempo .sheet-panel { width: 100%; max-height: none; height: 100%; border-radius: 0; padding: 0; }
 .sheet.tempo .sheet-head { display: none; }
-.sheet.tempo .sheet-body { flex: 1; min-height: 0; padding: 8px 12px 10px; gap: 6px; overflow-y: auto; }
+.sheet.tempo .sheet-body { flex: 1; min-height: 0; padding: 0; gap: 0; overflow: hidden; display: flex; flex-direction: column; }
 .tempo-top { display: flex; align-items: center; gap: 6px; flex: none; }
 .tempo-title { font-size: 16px; margin-right: 6px; }
 .tempo-sp { flex: 1; }
@@ -697,7 +703,6 @@ html:has(body.tja-open), body.tja-open { background: #020810; }
 .tempo-insp input { width: 84px; height: 36px; font-size: 20px; font-weight: 800; text-align: center; background: #020810; color: #fff; border: 1px solid var(--accent); border-radius: 9px; font-variant-numeric: tabular-nums; }
 /* 背の低い画面（スマホの横向きなど）では、帯やボタンを小さくしてスクロールを減らす */
 @media (max-height: 520px) {
-  .sheet.tempo .sheet-body { gap: 4px; padding: 4px 10px 6px; }
   .tempo-top button { padding: 3px 10px; }
   .tempo-title { font-size: 14px; }
   .tempo-ov { height: 36px; }
@@ -882,10 +887,11 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
   overflow: hidden;
   display: grid;
   /* 右の青い面は、左の辺を --tilt で斜めに切る。切る幅（上の端でのずれ）= 面の高さ × --tan。その分だけ列を広げる */
-  --det-sk: calc((100vh - var(--safe-t) - var(--safe-b)) * var(--tan));
-  --det-sk: calc((100dvh - var(--safe-t) - var(--safe-b)) * var(--tan));
-  grid-template-columns: clamp(118px, 17%, 200px) minmax(0, 1fr) calc(clamp(250px, 37%, 430px) + var(--det-sk));
-  padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);
+  --det-sk: calc(100vh * var(--tan));
+  --det-sk: calc(100dvh * var(--tan));
+  /* 背景（左の列・青い面）は画面の端（ノッチ・ホームバーの所）まで塗り、中身だけ安全な範囲の内側に置く */
+  grid-template-columns: calc(clamp(118px, 17%, 200px) + var(--safe-l)) minmax(0, 1fr) calc(clamp(250px, 37%, 430px) + var(--det-sk) + var(--safe-r));
+  padding: 0;
   font-family: system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
 }
 .home.hidden { display: none; }
@@ -895,7 +901,7 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .home-bg { position: absolute; inset: 0; pointer-events: none; background: var(--stripes) fixed; }
 
 /* 左: ロゴ・フォルダ・下に読み込み／新規／設定 */
-.home-nav { position: relative; z-index: 1; min-height: 0; display: flex; flex-direction: column; background: var(--deep); border-right: 1px solid var(--line); }
+.home-nav { position: relative; z-index: 1; min-height: 0; display: flex; flex-direction: column; background: var(--deep); border-right: 1px solid var(--line); padding: var(--safe-t) 0 var(--safe-b) var(--safe-l); }
 .home-logo { margin: 0; padding: clamp(6px, 2vh, 12px) 10px clamp(4px, 1.5vh, 10px); }
 .home-logo img { display: block; width: 100%; max-height: clamp(40px, 13vh, 70px); object-fit: contain; object-position: left center; user-select: none; -webkit-user-drag: none; }
 .home-folders { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; scrollbar-width: none; padding: 2px 0 6px; }
@@ -914,7 +920,7 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .home-navb svg, .home-mh svg { width: 21px; height: 21px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
 /* 真ん中: 曲の一覧 */
-.home-mid { position: relative; z-index: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.home-mid { position: relative; z-index: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; padding-top: var(--safe-t); }
 .home-mh { flex: none; height: 46px; display: flex; align-items: center; gap: 8px; padding: 0 8px 0 16px; border-bottom: 3px solid #fff; }
 .home-mh b { font-size: 16px; font-weight: 900; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .home-mh > small { color: var(--sub); font: 700 14px var(--fd); white-space: nowrap; }
@@ -923,7 +929,7 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .home-mh button small { font-size: 11px; font-weight: 700; color: rgba(255, 255, 255, 0.8); white-space: nowrap; }
 .home-search { flex: none; padding: 8px 12px 0; }
 .home-search input { width: 100%; height: 36px; padding: 0 12px; background: #161616; border: 0; border-left: 3px solid var(--accent); color: #fff; font-size: 16px; outline: none; border-radius: 0; }
-.home-list { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; padding: 4px 0 18px; scrollbar-width: thin; scrollbar-color: var(--accent) transparent; }
+.home-list { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; padding: 4px 0 calc(18px + var(--safe-b)); scrollbar-width: thin; scrollbar-color: var(--accent) transparent; }
 .hr { position: relative; isolation: isolate; display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 0 18px 0 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); cursor: pointer; }
 .hr:active { background: rgba(255, 255, 255, 0.06); }
 .hr-mk { width: 10px; height: 10px; flex: none; border: 2px solid rgba(255, 255, 255, 0.5); transform: skewX(calc(-1 * var(--tilt))); }
@@ -947,7 +953,7 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 12px 16px 12px calc(var(--det-sk) + 14px);
+  padding: calc(12px + var(--safe-t)) calc(16px + var(--safe-r)) calc(12px + var(--safe-b)) calc(var(--det-sk) + 14px);
   color: #fff;
   background: var(--stripes) fixed, var(--accent);
   clip-path: polygon(var(--det-sk) 0, 100% 0, 100% 100%, 0 100%);
@@ -969,7 +975,15 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .hdx-diffs { position: relative; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .hd { display: inline-flex; align-items: baseline; gap: 4px; height: 24px; padding: 3px 12px 0; font-size: 11px; font-weight: 800; background: var(--deep); --sk: calc(24px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); }
 .hd b { font: italic 800 15px var(--fd); }
-.hd-oni, .hd-edit { background: #fff; color: #000; }
+.hd-easy { background: var(--c-easy); }
+.hd-normal { background: var(--c-normal); color: #1d2023; }
+.hd-hard { background: var(--c-hard); }
+.hd-oni { background: var(--c-oni); }
+.hd-edit { background: var(--c-edit); }
+/* 曲・難易度の情報の一覧: 左の線を難易度の色に */
+.list .course-item { box-shadow: inset 4px 0 0 var(--cc, var(--accent)); }
+.list .course-item.current { box-shadow: inset 4px 0 0 var(--cc, var(--accent)), inset 0 0 0 1.5px var(--cc, var(--accent)); }
+.cd-easy { --cc: var(--c-easy); } .cd-normal { --cc: var(--c-normal); } .cd-hard { --cc: var(--c-hard); } .cd-oni { --cc: var(--c-oni); } .cd-edit { --cc: var(--c-edit); }
 .hdx-acts { position: relative; margin-top: auto; padding-top: 8px; display: grid; grid-template-columns: 1fr 1.7fr; gap: 8px; }
 .hdx-acts button, .hdx-empty button { --bh: clamp(40px, 12vh, 50px); height: var(--bh); display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 15px; font-weight: 900; --sk: calc(var(--bh) * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); }
 .hdx-edit { background: var(--deep) !important; color: #fff; }
@@ -992,3 +1006,90 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 /* プレイ画面は今までの見た目のまま */
 .play, .overlay { --bg: #000; --panel: #08111e; --line: #1d3352; --text: #f4f8ff; --sub: #8ea6c4; --accent: #1e88ff; --btn: #0f1f36; --btn-on: #12345e; }
 .play button, .overlay button { border-radius: 10px; }
+
+/* =====================================================================
+   BPM・OFFSET と 音源カット: FL Studio Mobile のような作り
+   上: 閉じる・元に戻す・再生・位置の表示・決定 / 左: ツール / 真ん中: 曲全体の帯とルーラー付きの波形 /
+   下: 値の箱（上下にドラッグで変える・‹ › で 1 つずつ・タップで入力）
+   帯の背景は画面の端まで、中身は安全な範囲の内側
+   ===================================================================== */
+.sheet .daw { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
+.sheet .daw :where(button) { border-radius: 0; color: #fff; clip-path: none; background: transparent; }
+.sheet .daw button:disabled { opacity: 0.32; }
+.sheet .daw svg { display: block; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.sheet .daw svg .fill { fill: currentColor; stroke: none; }
+.sheet .daw-top {
+  flex: none; display: flex; align-items: center; gap: 2px;
+  height: calc(46px + var(--safe-t)); padding: var(--safe-t) calc(8px + var(--safe-r)) 0 calc(6px + var(--safe-l));
+  background: var(--deep); border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.sheet .daw-ic { width: 40px; height: 38px; padding: 0; display: grid; place-items: center; background: transparent; }
+.sheet .daw-ic:active { background: rgba(255, 255, 255, 0.08); }
+.sheet .daw-play { color: var(--c-normal) !important; }
+.sheet .daw-play.on { color: #ff7a6a !important; }
+.sheet .daw-title { font: italic 800 17px var(--fd), sans-serif; margin: 0 8px 0 2px; white-space: nowrap; }
+.sheet .daw-sep { flex: none; width: 1px; height: 24px; background: rgba(255, 255, 255, 0.14); margin: 0 6px; }
+.sheet .daw-sp { flex: 1; }
+.sheet .daw-lcd { display: flex; flex-direction: column; justify-content: center; min-width: 104px; height: 36px; margin-left: 6px; padding: 0 10px; background: #111315; border: 1px solid rgba(255, 255, 255, 0.1); line-height: 1.05; }
+.sheet .daw-lcd b { font: italic 800 17px var(--fd), sans-serif; color: var(--accent-hi); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sheet .daw-lcd small { font: 600 10px ui-monospace, Menlo, monospace; color: var(--sub); white-space: nowrap; }
+.sheet .daw .tempo-tag { margin-left: 8px; }
+.sheet .daw-btn { padding: 8px 14px; font-size: 13px; font-weight: 700; background: var(--btn); --sk: calc(36px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); white-space: nowrap; }
+.sheet .daw-ok { display: flex; align-items: center; gap: 4px; margin-left: 6px; padding: 7px 18px 7px 14px; font-weight: 800; font-size: 14px; background: var(--accent); --sk: calc(36px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); }
+.sheet .daw-ok svg { width: 18px; height: 18px; stroke-width: 2.6; }
+.sheet .daw-main { flex: 1; min-height: 0; display: flex; }
+.sheet .daw-tools { flex: none; width: calc(56px + var(--safe-l)); padding: 4px 0 4px var(--safe-l); display: flex; flex-direction: column; gap: 2px; background: var(--deep); border-right: 1px solid rgba(255, 255, 255, 0.08); overflow-y: auto; scrollbar-width: none; }
+.sheet .daw-tools button { flex: none; width: 100%; min-height: 48px; padding: 4px 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; background: transparent; }
+.sheet .daw-tools button small { font-size: 10px; font-weight: 700; color: rgba(255, 255, 255, 0.75); }
+.sheet .daw-tools button.on { background: var(--accent); }
+.sheet .daw-tools button.on small { color: #fff; }
+.sheet .daw-tools button:active { background: rgba(255, 255, 255, 0.1); }
+.sheet .daw-stage { flex: 1; min-width: 0; display: flex; flex-direction: column; padding-right: var(--safe-r); background: #1d2023; }
+.sheet .daw-ov { flex: none; display: block; width: 100%; height: 34px; touch-action: none; cursor: pointer; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+.sheet .daw-wave { flex: 1; min-height: 0; display: block; width: 100%; touch-action: none; cursor: grab; }
+.sheet .daw-wait { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 12px; padding: 20px calc(24px + var(--safe-r)) 20px calc(24px + var(--safe-l)); color: var(--sub); }
+.sheet .daw-insp {
+  flex: none; display: flex; align-items: stretch; gap: 6px;
+  padding: 6px calc(8px + var(--safe-r)) calc(6px + var(--safe-b)) calc(8px + var(--safe-l));
+  background: var(--deep); border-top: 3px solid var(--c, var(--accent));
+  overflow-x: auto; touch-action: pan-x; scrollbar-width: none;
+}
+.sheet .daw-insp::-webkit-scrollbar { display: none; }
+.sheet .daw-vsep { flex: none; width: 1px; margin: 4px 2px; background: rgba(255, 255, 255, 0.12); }
+/* 値の箱 */
+.sheet .dv { flex: none; display: flex; flex-direction: column; justify-content: center; gap: 3px; min-width: 96px; padding: 4px 5px 5px; background: var(--panel); }
+.sheet .dv-l { padding-left: 3px; font-size: 10px; font-weight: 800; color: var(--sub); white-space: nowrap; }
+.sheet .dv-row { display: flex; align-items: center; gap: 2px; }
+.sheet .daw .dv-s { flex: none; width: 24px; height: 32px; padding: 0; background: transparent; color: rgba(255, 255, 255, 0.6); font-size: 22px; line-height: 1; }
+.sheet .daw .dv-s:active { background: rgba(255, 255, 255, 0.1); color: #fff; }
+.sheet .dv-v { flex: 1; min-width: 62px; height: 32px; padding: 0 6px; text-align: center; font: italic 800 18px/32px var(--fd), sans-serif; font-variant-numeric: tabular-nums; white-space: nowrap; background: #16181b; border-bottom: 2px solid var(--accent); cursor: ns-resize; touch-action: none; }
+.sheet .dv.drag .dv-v { background: var(--accent-tint); color: #fff; }
+.sheet .dv.off { opacity: 0.4; }
+.sheet .dv.off .dv-v { cursor: default; }
+.sheet .dv-big .dv-v { min-width: 76px; font-size: 21px; }
+.sheet .dv-sec { box-shadow: inset 4px 0 0 var(--c, var(--accent)); padding-left: 8px; }
+.sheet .dv-x { display: flex; gap: 3px; }
+.sheet .daw .dv-x button { flex: 1; padding: 2px 0; font: 700 12px var(--fd), sans-serif; background: var(--btn); }
+.sheet .dv select { height: 34px; padding: 0 6px; background: #16181b; color: #fff; border: 0; border-bottom: 2px solid var(--accent); border-radius: 0; font: italic 800 16px var(--fd), sans-serif; }
+.sheet .dv-in { width: 92px; height: 32px; padding: 0 4px; text-align: center; font: italic 800 18px var(--fd), sans-serif; background: #000; color: #fff; border: 1px solid var(--accent); border-radius: 0; outline: none; }
+.sheet .dv-info b { padding: 0 4px; font: italic 800 17px/32px var(--fd), sans-serif; white-space: nowrap; }
+.sheet .daw-acts { flex: none; display: grid; grid-auto-flow: column; grid-template-rows: 1fr 1fr; gap: 4px; }
+.sheet .daw-acts button { padding: 3px 12px; font-size: 12px; font-weight: 700; background: var(--btn); white-space: nowrap; }
+.sheet .daw-acts button.on { background: var(--accent); }
+.sheet .daw-acts button.bad { color: #ff9a8a; }
+/* 背の低い画面（スマホの横向き） */
+@media (max-height: 430px) {
+  .sheet .daw-top { height: calc(40px + var(--safe-t)); }
+  .sheet .daw-ic { height: 34px; width: 36px; }
+  .sheet .daw-lcd { height: 32px; min-width: 92px; }
+  .sheet .daw-lcd b { font-size: 15px; }
+  .sheet .daw-tools button { min-height: 42px; }
+  .sheet .daw-ov { height: 28px; }
+  .sheet .daw-insp { padding-top: 4px; padding-bottom: calc(4px + var(--safe-b)); gap: 5px; }
+  .sheet .dv { min-width: 88px; padding: 3px 4px 4px; gap: 2px; }
+  .sheet .dv-v, .sheet .dv-s { height: 28px; }
+  .sheet .dv-v { font-size: 16px; line-height: 28px; min-width: 56px; }
+  .sheet .dv-big .dv-v { font-size: 18px; min-width: 70px; }
+  .sheet .dv select { height: 30px; font-size: 14px; }
+  .sheet .daw-acts button { padding: 2px 10px; }
+}
