@@ -29,15 +29,14 @@ const fmtBpm = (e: SongEntry) => {
 };
 const COURSE_SHORT: Record<string, string> = { Easy: 'かんたん', Normal: 'ふつう', Hard: 'むずかしい', Oni: 'おに', Edit: 'うら' };
 
-/** 曲名から決まる、ジャケットの代わりの斜線の模様 */
+/** 曲名から決まる、ジャケットの代わりの斜線の模様（傾きは CSS の --tilt と同じ 8°。曲ごとに変わるのは太さ・間隔・色） */
 function jacket(e: SongEntry) {
   let h = 0;
   for (const ch of e.title) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   const w = 5 + (h % 5);
   const gap = 8 + ((h >> 4) % 10);
-  const ang = [-60, -45, -30][h % 3];
-  const bands = Array.from({ length: 14 }, (_, k) => `<rect x="${-60 + k * (w + gap)}" y="-40" width="${w}" height="200" fill="${k % 3 === (h >> 8) % 3 ? '#fff' : '#000'}" opacity="${k % 3 === (h >> 8) % 3 ? 0.9 : 0.55}"/>`).join('');
-  return `<svg class="hj" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g transform="rotate(${ang + 90} 50 50)">${bands}</g></svg>`;
+  const bands = Array.from({ length: 14 }, (_, k) => `<rect x="${-60 + k * (w + gap)}" y="-40" width="${w}" height="200" fill="${k % 3 === (h >> 8) % 3 ? '#fff' : '#1d2023'}" opacity="${k % 3 === (h >> 8) % 3 ? 0.9 : 0.55}"/>`).join('');
+  return `<svg class="hj" viewBox="0 0 100 100" preserveAspectRatio="xMidYMid slice" aria-hidden="true"><g transform="rotate(8 50 50)">${bands}</g></svg>`;
 }
 
 const ICON = {

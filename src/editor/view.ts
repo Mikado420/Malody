@@ -41,20 +41,23 @@ const R = {
   posLabel: { x: 205, y: 650 },
 };
 
+/** 斜めの形の傾き（CSS の --tan = tan(8°) と同じ） */
+const TILT_TAN = 0.1405;
+
 const C = {
-  bg: '#000000',
-  col: 'rgba(0,0,0,0.94)',
-  colLine: '#1e6bff',
-  lane: '#0b1626',
-  laneEdge: '#4f9bf0',
+  bg: '#2a2d31',
+  col: 'rgba(29,32,35,0.94)',
+  colLine: '#4d9fbe',
+  lane: '#22313a',
+  laneEdge: '#7fc0d8',
   gogo: 'rgba(255,110,40,0.16)',
   measure: 'rgba(255,255,255,0.8)',
   text: '#f4f4f4',
   sub: '#9a9aa2',
-  btn: '#1c1c1c',
+  btn: '#3b4045',
   btnEdge: '#ffffff',
-  play: '#1e6bff',
-  wave: '#2f6fe8',
+  play: '#4d9fbe',
+  wave: '#4d9fbe',
   event: '#c27dff',
 };
 
@@ -450,7 +453,7 @@ export class EditorView {
     ctx.clearRect(0, 0, this.w, this.h);
 
     // 波形
-    ctx.fillStyle = 'rgba(0,0,0,0.9)';
+    ctx.fillStyle = 'rgba(29,32,35,0.9)';
     ctx.fillRect(L.waveX, L.waveY, this.w - L.waveX, L.waveH);
     this.drawWave(L);
 
@@ -628,7 +631,7 @@ export class EditorView {
     ctx.stroke();
     ctx.restore();
     ctx.lineWidth = Math.max(1, 3 * s);
-    ctx.strokeStyle = '#1e88ff';
+    ctx.strokeStyle = '#4d9fbe';
     ctx.beginPath();
     ctx.arc(L.playX, L.cy, R.judgeR2 * s, 0, Math.PI * 2);
     ctx.stroke();
@@ -638,9 +641,9 @@ export class EditorView {
       const x1 = Math.max(L.colW, this.xOf(ed.sel.start) - L.r * 1.2);
       const x2 = Math.min(this.w, this.xOf(ed.sel.end) + L.r * 1.2);
       if (x2 > x1) {
-        ctx.fillStyle = 'rgba(124,196,255,0.16)';
+        ctx.fillStyle = 'rgba(147,205,226,0.16)';
         ctx.fillRect(x1, L.laneY, x2 - x1, L.laneH);
-        ctx.strokeStyle = 'rgba(124,196,255,0.85)';
+        ctx.strokeStyle = 'rgba(147,205,226,0.85)';
         ctx.lineWidth = Math.max(1, 2 * s);
         ctx.setLineDash([6 * s, 5 * s]);
         ctx.strokeRect(x1, L.laneY + 1, x2 - x1, L.laneH - 2);
@@ -674,7 +677,7 @@ export class EditorView {
 
     // 選んでいるノーツに水色の輪
     if (ed.sel) {
-      ctx.strokeStyle = '#7cc4ff';
+      ctx.strokeStyle = '#93cde2';
       ctx.lineWidth = Math.max(1.5, 4 * s);
       for (const n of ed.selectedNotes()) {
         if (n.tick < leftTick || n.tick > rightTick) continue;
@@ -862,13 +865,14 @@ export class EditorView {
       // 左端からはみ出さないよう、少し右に寄せる
       const hw = b.r * 0.84;
       const hh = b.r * 0.8;
-      const sk = b.r * 0.26;
-      ctx.translate(Math.max(b.x, hw + sk * 0.2 + 2), b.y);
+      // 傾きは CSS の --tilt（8°）と同じ。上下の辺を高さ × tan だけずらす
+      const sk = hh * 2 * TILT_TAN;
+      ctx.translate(Math.max(b.x, hw + sk / 2 + 2), b.y);
       ctx.beginPath();
-      ctx.moveTo(-hw + sk, -hh);
-      ctx.lineTo(hw + sk * 0.2, -hh);
-      ctx.lineTo(hw - sk, hh);
-      ctx.lineTo(-hw - sk * 0.2, hh);
+      ctx.moveTo(-hw + sk / 2, -hh);
+      ctx.lineTo(hw + sk / 2, -hh);
+      ctx.lineTo(hw - sk / 2, hh);
+      ctx.lineTo(-hw - sk / 2, hh);
       ctx.closePath();
       const isPlay = label === 'play' || label === 'pause';
       ctx.fillStyle = isPlay ? C.play : C.btn;

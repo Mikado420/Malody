@@ -1,23 +1,28 @@
 /* iPhone の横向きで、入力欄以外の文字だけが勝手に大きくなるのを止める（入力欄と色付きの文字がずれる原因） */
 html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
 :root {
-  /* ACS カラー: 白・青・黒だけ */
-  --bg: #000;
-  --bar: #000;
-  --panel: #0b0b0b;
+  /* ロゴに合わせた色: 灰色寄りの下地と、淡い青 */
+  --bg: #2a2d31;
+  --bar: #2a2d31;
+  --panel: #303439;
+  --deep: #1d2023; /* いちばん暗い所（前の黒） */
+  --inp: #383c41; /* 入力欄・一覧の行 */
   --line: rgba(255, 255, 255, 0.16);
   --text: #fff;
   --sub: rgba(255, 255, 255, 0.6);
-  --accent: #1e6bff;
-  --accent-hi: #5c93ff;
+  --accent: #4d9fbe;
+  --accent-hi: #93cde2;
   --accent-ink: #fff;
-  --btn: #1a1a1a;
-  --btn-on: #102b66;
+  --accent-tint: #34505c; /* 青みのある灰色（選んでいる入力欄など） */
+  --btn: #3b4045;
+  --btn-on: #35677a;
   --glow-b: none;
-  /* 斜めの形（平行四辺形）。--sk は傾きの幅 */
-  --sk: 8px;
-  --para: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
-  --stripes: repeating-linear-gradient(-60deg, rgba(255, 255, 255, 0.045) 0 2px, transparent 2px 16px);
+  /* 斜めの角度は全部これに揃える（下地の斜線・青い面の辺・帯・ボタン）。
+     --tan = tan(--tilt)。平行四辺形のずらし幅 --sk は「高さ × --tan」（高さは使う所で決める） */
+  --tilt: 8deg;
+  --tan: 0.1405;
+  --sk: calc(40px * var(--tan));
+  --stripes: repeating-linear-gradient(calc(var(--tilt) - 90deg), rgba(255, 255, 255, 0.045) 0 2px, transparent 2px 16px);
   --fd: 'Barlow Semi Condensed', system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
   --don: #f2442b;
   --ka: #5ec4d4;
@@ -113,7 +118,7 @@ button.icon { min-width: 40px; height: 40px; padding: 0 10px; font-size: 18px; }
 .tool.scroll svg { stroke: #c792ea; }
 .tool.bpm svg { stroke: #5cc8f0; }
 .tool.measure svg { stroke: #ffd21f; }
-.tool.select svg { stroke: #7cc4ff; }
+.tool.select svg { stroke: #93cde2; }
 /* 選択ツールの操作（ツールの列の上の右端。小節・BPM の表示を隠さないように） */
 .sel-bar {
   position: absolute;
@@ -746,8 +751,8 @@ button { border-radius: 0; }
 .stage {
   background:
     var(--stripes),
-    linear-gradient(118deg, transparent 0 64%, rgba(30, 107, 255, 0.14) 64% 100%),
-    #000;
+    linear-gradient(calc(90deg + var(--tilt)), transparent 0 64%, rgba(77, 159, 190, 0.14) 64% 100%),
+    var(--bg);
 }
 /* ツール: 下に浮かぶ斜めの台 */
 .tools {
@@ -755,54 +760,55 @@ button { border-radius: 0; }
   bottom: calc(44px * var(--es, 0.45) - 6px);
   height: calc(max(36px, calc(112px * var(--es, 0.45))) + 12px);
   padding: 6px 24px;
-  background: rgba(0, 0, 0, 0.9);
-  clip-path: polygon(18px 0, 100% 0, calc(100% - 18px) 100%, 0 100%);
+  background: rgba(29, 32, 35, 0.92);
+  --sk: calc((max(36px, calc(112px * var(--es, 0.45))) + 12px) * var(--tan));
+  clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
   pointer-events: auto;
 }
 .tool {
-  background: #1c1c1c;
+  background: var(--btn);
   border: 0;
-  clip-path: var(--para);
+  --sk: calc(max(36px, calc(112px * var(--es, 0.45))) * var(--tan));
+  clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
   box-shadow: none;
 }
 .tool.active { background: var(--accent); border: 0; box-shadow: none; }
-.tool i { box-shadow: 0 0 0 1.5px #000; }
+.tool i { box-shadow: 0 0 0 1.5px var(--deep); }
 /* 選択ツールの操作 */
-.sel-bar { background: #000; border: 0; box-shadow: none; clip-path: polygon(12px 0, 100% 0, calc(100% - 12px) 100%, 0 100%); padding: 5px 18px; }
+.sel-bar { background: var(--deep); border: 0; box-shadow: none; --sk: calc(44px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); padding: 5px 18px; }
 .sel-bar .sel-info { color: #fff; }
-.sel-bar button { clip-path: var(--para); background: #1c1c1c; padding: 7px 12px; }
+.sel-bar button { --sk: calc(34px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); background: var(--btn); padding: 7px 12px; }
 /* 右のメニュー: 青い四角の列 */
 .side { background: var(--accent); border-left: 0; box-shadow: none; }
 .side > button, .side > .divbtn { border-radius: 0; }
 .side svg { filter: none; stroke: #fff; }
 .side small { color: rgba(255, 255, 255, 0.9); font-family: var(--fd); font-weight: 700; font-size: 11px; }
-.side > *:active { background: rgba(0, 0, 0, 0.3); }
-.side .on, .side .open { background: #000; }
+.side > *:active { background: rgba(0, 0, 0, 0.18); }
+.side .on, .side .open { background: var(--deep); }
 .side .on svg { stroke: #fff; filter: none; }
 /* グリッド・2 段のメニュー */
-.div-menu { background: #000; border: 1.5px solid #fff; border-radius: 0; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.7); }
+.div-menu { background: var(--panel); border: 1.5px solid #fff; border-radius: 0; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.7); }
 .div-menu button { border-radius: 0; font-family: var(--fd); font-weight: 700; font-size: 16px; }
 .fly-menu button { font-family: inherit; font-weight: 500; font-size: 15px; }
 .div-menu button.on, .fly-menu button.on { background: var(--accent); color: #fff; }
 .fly-menu button.primary:not(.on) { color: var(--accent-hi); }
 .fly-menu h4 { color: var(--sub); }
 .div-menu hr { border-top-color: var(--line); }
-.side .open { background: #000; }
 
 /* ---------- トースト・処理中 ---------- */
-.toast { background: #000; border: 0; border-left: 4px solid var(--accent); border-radius: 0; font-weight: 700; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6); }
-.busy { background: rgba(0, 0, 0, 0.75); }
-.busy-panel { background: #000; border: 0; border-top: 4px solid var(--accent); box-shadow: none; clip-path: none; }
+.toast { background: var(--panel); border: 0; border-left: 4px solid var(--accent); border-radius: 0; font-weight: 700; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6); }
+.busy { background: rgba(20, 22, 25, 0.72); }
+.busy-panel { background: var(--panel); border: 0; border-top: 4px solid var(--accent); box-shadow: none; clip-path: none; }
 .busy-spin { border-color: rgba(255, 255, 255, 0.2); border-top-color: #fff; border-right-color: var(--accent); }
-.busy-bar { background: #1a1a1a; }
+.busy-bar { background: var(--btn); }
 .busy-bar i { background: var(--accent); box-shadow: none; }
 
 /* ---------- 設定などの画面（シート）: 真ん中に出す、見出しは斜めに切った青い帯 ---------- */
-.sheet { align-items: center; background: rgba(0, 0, 0, 0.62); }
+.sheet { align-items: center; background: rgba(20, 22, 25, 0.6); }
 .sheet-panel {
   width: min(600px, calc(100% - 24px));
   max-height: calc(100% - 16px);
-  background: #0b0b0b;
+  background: var(--panel);
   border: 1.5px solid rgba(255, 255, 255, 0.22);
   border-radius: 0;
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
@@ -818,53 +824,53 @@ button { border-radius: 0; }
 }
 .sheet-head::after { display: none; }
 .sheet-head h2 { font-family: var(--fd), sans-serif; font-style: italic; font-weight: 800; font-size: 19px; text-shadow: none; }
-#sheetClose { background: #000; color: #fff; clip-path: var(--para); min-width: 46px; }
+#sheetClose { background: var(--deep); color: #fff; --sk: calc(40px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); min-width: 46px; }
 .sheet-body h3 { color: #fff; font-weight: 800; font-size: 12px; border-left: 3px solid var(--accent); padding-left: 8px; }
-.sheet-body button { clip-path: var(--para); background: #1c1c1c; }
+.sheet-body button { --sk: calc(36px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); background: var(--btn); }
 .sheet-body button.primary { background: var(--accent); }
 .sheet-body button.danger, .danger { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
 .field > span { color: var(--sub); font-weight: 700; font-size: 12px; }
 .field input[type='text'], .field input[type='number'], .field input[type='url'], .field input[type='password'], .field select {
-  background: #161616; border: 0; border-left: 3px solid rgba(255, 255, 255, 0.35); border-radius: 0; color: #fff;
+  background: var(--inp); border: 0; border-left: 3px solid rgba(255, 255, 255, 0.35); border-radius: 0; color: #fff;
 }
-.field input:focus, .field select:focus { outline: none; border-left-color: var(--accent); background: #0d1a33; }
+.field input:focus, .field select:focus { outline: none; border-left-color: var(--accent); background: var(--accent-tint); }
 input[type='range'], input[type='checkbox'] { accent-color: var(--accent); }
-.list .item { background: #161616; border-radius: 0; }
-.list .item.current { outline: 0; box-shadow: inset 3px 0 0 var(--accent); background: #0d1a33; }
-.ev-row { background: #161616; border-radius: 0; }
-.src-pick button { border: 0; background: #161616; clip-path: none; border-left: 4px solid var(--accent); }
+.list .item { background: var(--inp); border-radius: 0; }
+.list .item.current { outline: 0; box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-tint); }
+.ev-row { background: var(--inp); border-radius: 0; }
+.src-pick button { border: 0; background: var(--inp); clip-path: none; border-left: 4px solid var(--accent); }
 .link-setup summary { color: var(--accent-hi); font-weight: 700; }
 /* 全画面のシート（TJA・グラデ・BPM 測定・カット）は見出しを斜めにしない */
 .sheet.tja .sheet-panel, .sheet.grad .sheet-panel, .sheet.tempo .sheet-panel { width: 100%; max-height: none; border: 0; box-shadow: none; }
 .sheet.tja .sheet-head, .sheet.grad .sheet-head { clip-path: none; padding-bottom: 8px; }
 .sheet.tja .sheet-body button, .sheet.grad .sheet-body button { clip-path: none; }
-.tja-wrap, .grad-tja { background: #000; border-color: var(--line); border-radius: 0; }
-.tja-gutter { background: #0e0e0e; }
-.tja-status { border-radius: 0; background: rgba(0, 0, 0, 0.85); }
-html:has(body.tja-open), body.tja-open { background: #000; }
+.tja-wrap, .grad-tja { background: var(--deep); border-color: var(--line); border-radius: 0; }
+.tja-gutter { background: #25282c; }
+.tja-status { border-radius: 0; background: rgba(29, 32, 35, 0.9); }
+html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .bold-toggle.on { background: var(--accent); }
 
 /* BPM・OFFSET の画面 */
-.sheet.tempo .sheet-panel { background: var(--stripes), #000; }
+.sheet.tempo .sheet-panel { background: var(--stripes), var(--bg); }
 .tempo-top { border-bottom: 2px solid var(--accent); padding-bottom: 6px; }
 .tempo-title { font-family: var(--fd), sans-serif; font-style: italic; font-weight: 800; font-size: 17px; }
-.tempo-tag { border-radius: 0; background: var(--btn-on); color: #fff; clip-path: var(--para); padding: 2px 12px; }
+.tempo-tag { border-radius: 0; background: var(--btn-on); color: #fff; --sk: calc(24px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); padding: 2px 12px; }
 .tempo-ov, .tempo-wave { border-radius: 0; border-color: var(--line); }
-.tempo-chip-list button { border-left: 0; background: #161616; box-shadow: inset 0 -4px 0 var(--c); font-family: var(--fd), sans-serif; font-style: italic; font-size: 17px; padding: 3px 14px 6px; }
+.tempo-chip-list button { border-left: 0; background: var(--inp); box-shadow: inset 0 -4px 0 var(--c); font-family: var(--fd), sans-serif; font-style: italic; font-size: 17px; padding: 3px 14px 6px; }
 .tempo-chip-list button small { font-style: normal; font-family: system-ui, sans-serif; }
 .tempo-chip-list button.on { background: #fff; color: #000; outline: 0; box-shadow: inset 0 -4px 0 var(--accent); }
 .tempo-chip-list button.on small { color: rgba(0, 0, 0, 0.6); }
-.tempo-row button { background: #161616; }
+.tempo-row button { background: var(--inp); }
 .tempo-row button.primary { background: var(--accent); }
 .tempo-row .tempo-play { color: var(--accent-hi); }
 .tempo-row button.bad { color: #fff; text-decoration: underline; text-underline-offset: 3px; }
-.tempo-grp { background: #0d0d0d; border-radius: 0; }
-.tempo-insp { background: #0b0b0b; border-radius: 0; border-left: 3px solid var(--accent); }
-.tempo-insp select { background: #000; border-radius: 0; border-color: var(--line); }
-.tempo-insp input { background: #000; border-radius: 0; border-color: var(--accent); font-family: var(--fd), sans-serif; font-style: italic; font-size: 22px; }
+.tempo-grp { background: var(--deep); border-radius: 0; }
+.tempo-insp { background: var(--deep); border-radius: 0; border-left: 3px solid var(--accent); }
+.tempo-insp select { background: var(--deep); border-radius: 0; border-color: var(--line); }
+.tempo-insp input { background: var(--deep); border-radius: 0; border-color: var(--accent); font-family: var(--fd), sans-serif; font-style: italic; font-size: 22px; }
 .tempo-val { font-family: var(--fd), sans-serif; font-weight: 700; font-size: 15px; }
 .tempo-sep { background: var(--line); }
-.tempo-progress { border-radius: 0; background: #1a1a1a; }
+.tempo-progress { border-radius: 0; background: var(--btn); }
 
 /* ---------- 最初の画面（曲選択） ----------
    左: ロゴとフォルダ / 真ん中: 曲の縦の一覧 / 右: 選んだ曲（青い面、左の辺を斜めに切る） */
@@ -872,20 +878,24 @@ html:has(body.tja-open), body.tja-open { background: #000; }
   position: absolute;
   inset: 0;
   z-index: 9;
-  background: #000;
+  background: var(--bg);
   overflow: hidden;
   display: grid;
-  grid-template-columns: clamp(118px, 17%, 200px) minmax(0, 1fr) clamp(250px, 37%, 430px);
+  /* 右の青い面は、左の辺を --tilt で斜めに切る。切る幅（上の端でのずれ）= 面の高さ × --tan。その分だけ列を広げる */
+  --det-sk: calc((100vh - var(--safe-t) - var(--safe-b)) * var(--tan));
+  --det-sk: calc((100dvh - var(--safe-t) - var(--safe-b)) * var(--tan));
+  grid-template-columns: clamp(118px, 17%, 200px) minmax(0, 1fr) calc(clamp(250px, 37%, 430px) + var(--det-sk));
   padding: var(--safe-t) var(--safe-r) var(--safe-b) var(--safe-l);
   font-family: system-ui, -apple-system, 'Hiragino Sans', 'Noto Sans JP', sans-serif;
 }
 .home.hidden { display: none; }
 .home svg { display: block; }
 .home button { background: transparent; border-radius: 0; padding: 0; color: inherit; }
-.home-bg { position: absolute; inset: 0; pointer-events: none; background: var(--stripes); }
+/* 斜線は画面に固定して、青い面の斜線と線の位置をつなげる */
+.home-bg { position: absolute; inset: 0; pointer-events: none; background: var(--stripes) fixed; }
 
 /* 左: ロゴ・フォルダ・下に読み込み／新規／設定 */
-.home-nav { position: relative; z-index: 1; min-height: 0; display: flex; flex-direction: column; background: #000; border-right: 1px solid var(--line); }
+.home-nav { position: relative; z-index: 1; min-height: 0; display: flex; flex-direction: column; background: var(--deep); border-right: 1px solid var(--line); }
 .home-logo { margin: 0; padding: clamp(6px, 2vh, 12px) 10px clamp(4px, 1.5vh, 10px); }
 .home-logo img { display: block; width: 100%; max-height: clamp(40px, 13vh, 70px); object-fit: contain; object-position: left center; user-select: none; -webkit-user-drag: none; }
 .home-folders { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; scrollbar-width: none; padding: 2px 0 6px; }
@@ -893,13 +903,13 @@ html:has(body.tja-open), body.tja-open { background: #000; }
 .home .hf { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 40px; padding: 0 12px 0 14px; text-align: left; font-size: 13px; font-weight: 700; color: rgba(255, 255, 255, 0.62); cursor: pointer; position: relative; }
 .hf span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hf small { font: 700 13px var(--fd); opacity: 0.8; }
-.home .hf.on { color: #000; background: #fff; clip-path: polygon(0 0, 100% 0, calc(100% - 12px) 100%, 0 100%); padding-right: 18px; }
+.home .hf.on { color: #000; background: #fff; clip-path: polygon(0 0, 100% 0, calc(100% - 40px * var(--tan)) 100%, 0 100%); padding-right: 18px; }
 .hf.on::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--accent); }
 .hf-more { width: 28px; height: 28px; display: grid; place-items: center; flex: none; }
 .hf-more svg { width: 18px; height: 18px; fill: currentColor; stroke: currentColor; }
 .hf-add { color: var(--accent-hi); font-weight: 700; }
 .home-navb { display: flex; gap: 6px; padding: 8px 10px 10px; }
-.home-navb button { flex: 1; height: 40px; max-width: 54px; display: grid; place-items: center; background: #1c1c1c; clip-path: var(--para); }
+.home-navb button { flex: 1; height: 40px; max-width: 54px; display: grid; place-items: center; background: var(--btn); --sk: calc(40px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); }
 .home-navb button:first-child { background: var(--accent); }
 .home-navb svg, .home-mh svg { width: 21px; height: 21px; fill: none; stroke: #fff; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 
@@ -916,14 +926,14 @@ html:has(body.tja-open), body.tja-open { background: #000; }
 .home-list { flex: 1; min-height: 0; overflow-y: auto; touch-action: pan-y; padding: 4px 0 18px; scrollbar-width: thin; scrollbar-color: var(--accent) transparent; }
 .hr { position: relative; isolation: isolate; display: flex; align-items: center; gap: 12px; min-height: 54px; padding: 0 18px 0 16px; border-bottom: 1px solid rgba(255, 255, 255, 0.1); cursor: pointer; }
 .hr:active { background: rgba(255, 255, 255, 0.06); }
-.hr-mk { width: 10px; height: 10px; flex: none; border: 2px solid rgba(255, 255, 255, 0.5); transform: skewX(-14deg); }
+.hr-mk { width: 10px; height: 10px; flex: none; border: 2px solid rgba(255, 255, 255, 0.5); transform: skewX(calc(-1 * var(--tilt))); }
 .hr-t { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .hr-t b { font-size: 14px; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hr-t small { font-size: 11px; color: var(--sub); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hr-bpm { font: italic 800 16px var(--fd); color: rgba(255, 255, 255, 0.8); white-space: nowrap; }
 /* 選んでいる曲: 白い斜めの帯 */
 .hr.on { color: #000; border-bottom-color: transparent; }
-.hr.on::before { content: ''; position: absolute; inset: 3px 8px 3px 4px; z-index: -1; background: #fff; transform: skewX(-14deg); }
+.hr.on::before { content: ''; position: absolute; inset: 3px 8px 3px 4px; z-index: -1; background: #fff; transform: skewX(calc(-1 * var(--tilt))); }
 .hr.on .hr-t small { color: rgba(0, 0, 0, 0.6); }
 .hr.on .hr-mk { background: var(--accent); border-color: var(--accent); }
 .hr.on .hr-bpm { color: #000; }
@@ -937,12 +947,12 @@ html:has(body.tja-open), body.tja-open { background: #000; }
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 12px 16px 12px 40px;
+  padding: 12px 16px 12px calc(var(--det-sk) + 14px);
   color: #fff;
-  background: var(--stripes), var(--accent);
-  clip-path: polygon(30px 0, 100% 0, 100% 100%, 0 100%);
+  background: var(--stripes) fixed, var(--accent);
+  clip-path: polygon(var(--det-sk) 0, 100% 0, 100% 100%, 0 100%);
 }
-.hdx-jk { position: absolute; right: -40px; bottom: -40px; width: 230px; height: 230px; opacity: 0.22; pointer-events: none; clip-path: polygon(30% 0, 100% 0, 70% 100%, 0 100%); }
+.hdx-jk { position: absolute; right: -40px; bottom: -40px; width: 230px; height: 230px; opacity: 0.22; pointer-events: none; clip-path: polygon(calc(230px * var(--tan)) 0, 100% 0, calc(100% - 230px * var(--tan)) 100%, 0 100%); }
 .hdx-jk .hj { width: 100%; height: 100%; }
 .hdx-top { display: flex; align-items: center; justify-content: space-between; position: relative; }
 .hdx-top small { font-size: 11px; font-weight: 800; opacity: 0.85; }
@@ -954,22 +964,22 @@ html:has(body.tja-open), body.tja-open { background: #000; }
 .hdx-bpm small { font-size: 14px; letter-spacing: 0; margin-left: 6px; font-weight: 800; }
 .hdx-row { position: relative; display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding-top: 5px; border-top: 1px solid rgba(255, 255, 255, 0.5); font-size: 12px; font-weight: 800; }
 .hdx-pv { display: flex; gap: 4px; }
-.hdx-pv button { width: 36px; height: 30px; display: grid; place-items: center; background: #000; clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%); }
+.hdx-pv button { width: 36px; height: 30px; display: grid; place-items: center; background: var(--deep); --sk: calc(30px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); }
 .hdx-pv svg { width: 16px; height: 16px; fill: #fff; stroke: #fff; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .hdx-diffs { position: relative; display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-.hd { display: inline-flex; align-items: baseline; gap: 4px; padding: 3px 12px; font-size: 11px; font-weight: 800; background: #000; clip-path: polygon(5px 0, 100% 0, calc(100% - 5px) 100%, 0 100%); }
+.hd { display: inline-flex; align-items: baseline; gap: 4px; height: 24px; padding: 3px 12px 0; font-size: 11px; font-weight: 800; background: var(--deep); --sk: calc(24px * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); }
 .hd b { font: italic 800 15px var(--fd); }
 .hd-oni, .hd-edit { background: #fff; color: #000; }
 .hdx-acts { position: relative; margin-top: auto; padding-top: 8px; display: grid; grid-template-columns: 1fr 1.7fr; gap: 8px; }
-.hdx-acts button, .hdx-empty button { height: clamp(40px, 12vh, 50px); display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 15px; font-weight: 900; clip-path: polygon(12px 0, 100% 0, calc(100% - 12px) 100%, 0 100%); }
-.hdx-edit { background: #000 !important; color: #fff; }
+.hdx-acts button, .hdx-empty button { --bh: clamp(40px, 12vh, 50px); height: var(--bh); display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 15px; font-weight: 900; --sk: calc(var(--bh) * var(--tan)); clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%); }
+.hdx-edit { background: var(--deep) !important; color: #fff; }
 .hdx-play { background: #fff !important; color: #000 !important; }
 .hdx-play svg { width: 16px; height: 16px; fill: #000; }
 .hdx-empty { margin: auto 0; display: flex; flex-direction: column; gap: 8px; }
 .hdx-empty b { font-size: 18px; }
 .hdx-empty small { font-size: 12px; opacity: 0.85; }
 .hdx-empty button { width: 70%; }
-.home-pop { position: absolute; z-index: 3; min-width: 200px; padding: 4px; background: #000; border: 1.5px solid #fff; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8); }
+.home-pop { position: absolute; z-index: 3; min-width: 200px; padding: 4px; background: var(--panel); border: 1.5px solid #fff; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8); }
 .home-pop button { display: block; width: 100%; text-align: left; padding: 11px 12px; font-size: 14px; color: #fff; }
 .home-pop button:active { background: var(--accent); }
 .home-pop button.bad { font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
