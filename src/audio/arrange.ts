@@ -2,10 +2,18 @@
  * 音源の切り貼り（クリップを並べて、新しい音源を作る）。
  *
  * クリップ = 元の音源の src 秒から len 秒ぶんを、新しい音源の pos 秒の所に置いたもの。
- * 配列の後ろのクリップほど上にあり、重なった所は上のクリップの音になる
- * （上のクリップのフェードの間は、下の音と混ぜて入れ替える＝クロスフェード）。
+ * 配列の後ろのクリップほど上にあり、重なった所は上のクリップの音になる。
+ * 音量はクリップごとのオートメーション（点を線でつないだもの、FL Studio のオートメーションのように）。
+ * 点の時刻は元の音源の時刻で持つので、分けても端を詰めても音と点の位置は変わらない。
+ * 上のクリップの音量が 1 より小さい所は、下の音と混ぜる（フェードインを重ねればクロスフェード）。
  * クリップの無い所は無音（頭を空ければ「頭に無音」）。
  */
+
+/** オートメーションの点: 元の音源の s 秒で音量 v（0〜1） */
+export interface EnvPoint {
+  s: number;
+  v: number;
+}
 
 export interface Clip {
   /** 元の音源の、使い始めの位置（秒） */
@@ -14,8 +22,8 @@ export interface Clip {
   len: number;
   /** 新しい音源の中の位置（秒） */
   pos: number;
-  fadeIn: number;
-  fadeOut: number;
+  /** 音量のオートメーション（s の順。空なら音量 1 のまま） */
+  env: EnvPoint[];
 }
 
 /** クリップのいちばん短い長さ（秒） */
@@ -30,10 +38,39 @@ export function arrangeLength(clips: Clip[]) {
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
 
-/** フェードを長さの半分までにそろえる */
-export function fixFades(c: Clip): Clip {
-  const h = c.len / 2;
-  return { ...c, fadeIn: Math.max(0, Math.min(h, c.fadeIn)), fadeOut: Math.max(0, Math.min(h, c.fadeOut)) };
+/** 元の音源の s 秒での音量（点のあいだは直線、最初の点より前・最後の点より後ろはその点の音量） */
+export function envAt(env: EnvPoint[], s: number): number {
+  if (!env.length) return 1;
+  if (s <= env[0].s) return env[0].v;
+  for (let i = 1; i < env.length; i++) {
+    const b = env[i];
+    if (s <= b.s) {
+      const a = env[i - 1];
+      return b.s - a.s < 1e-9 ? b.v : a.v + ((b.v - a.v) * (s - a.s)) / (b.s - a.s);
+    }
+  }
+  return env[env.length - 1].v;
+}
+
+/** 点を時刻の順に並べ、音量を 0〜1 に */
+export function sortEnv(env: EnvPoint[]): EnvPoint[] {
+  return env.map((p) => ({ s: r3(p.s), v: Math.round(Math.max(0, Math.min(1, p.v)) * 1000) / 1000 })).sort((a, b) => a.s - b.s);
+}
+
+/** フェードイン: クリップの頭から d 秒で 0 → 今の音量（その間にあった点は消す） */
+export function addFadeIn(c: Clip, d: number): Clip {
+  const a = c.src;
+  const b = c.src + Math.min(d, c.len);
+  const top = envAt(c.env, b);
+  return { ...c, env: sortEnv([...c.env.filter((p) => p.s < a - 1e-6 || p.s > b + 1e-6), { s: a, v: 0 }, { s: b, v: top }]) };
+}
+
+/** フェードアウト: クリップの終わりの d 秒前から 今の音量 → 0 */
+export function addFadeOut(c: Clip, d: number): Clip {
+  const b = c.src + c.len;
+  const a = b - Math.min(d, c.len);
+  const top = envAt(c.env, a);
+  return { ...c, env: sortEnv([...c.env.filter((p) => p.s < a - 1e-6 || p.s > b + 1e-6), { s: a, v: top }, { s: b, v: 0 }]) };
 }
 
 /** 新しい音源の t 秒で、上にあるクリップの番号（無ければ -1） */
@@ -48,8 +85,9 @@ export function splitClip(clips: Clip[], i: number, t: number): Clip[] | null {
   if (!c) return null;
   const d = r3(t - c.pos);
   if (d < MIN_LEN || c.len - d < MIN_LEN) return null;
-  const a = fixFades({ ...c, len: d, fadeOut: 0 });
-  const b = fixFades({ ...c, src: r3(c.src + d), pos: r3(c.pos + d), len: r3(c.len - d), fadeIn: 0 });
+  // オートメーションは元の音源の時刻で持っているので、両方にそのまま写す
+  const a = { ...c, len: d, env: c.env.map((p) => ({ ...p })) };
+  const b = { ...c, src: r3(c.src + d), pos: r3(c.pos + d), len: r3(c.len - d), env: c.env.map((p) => ({ ...p })) };
   return [...clips.slice(0, i), a, b, ...clips.slice(i + 1)];
 }
 
@@ -63,13 +101,13 @@ export function bringToTop(clips: Clip[], i: number): { clips: Clip[]; index: nu
 export function trimStart(c: Clip, t: number): Clip {
   let d = t - c.pos;
   d = Math.max(-c.src, Math.min(c.len - MIN_LEN, d));
-  return fixFades({ ...c, pos: r3(c.pos + d), src: r3(c.src + d), len: r3(c.len - d) });
+  return { ...c, pos: r3(c.pos + d), src: r3(c.src + d), len: r3(c.len - d) };
 }
 
 /** 右の端を新しい音源の t 秒へ */
 export function trimEnd(c: Clip, t: number, dur: number): Clip {
   const len = Math.max(MIN_LEN, Math.min(dur - c.src, t - c.pos));
-  return fixFades({ ...c, len: r3(len) });
+  return { ...c, len: r3(len) };
 }
 
 /** 元の音源の t 秒が、新しい音源の何秒になるか（その音を使っている上のクリップで。使っていなければ null） */
@@ -97,14 +135,6 @@ export function refShift(clips: Clip[], t: number): number {
   return shift;
 }
 
-/** フェードの音量（クリップの中の位置 x 秒） */
-function fadeGain(c: Clip, x: number) {
-  let g = 1;
-  if (c.fadeIn > 0 && x < c.fadeIn) g = x / c.fadeIn;
-  if (c.fadeOut > 0 && x > c.len - c.fadeOut) g = Math.min(g, (c.len - x) / c.fadeOut);
-  return Math.max(0, Math.min(1, g));
-}
-
 /** クリップを並べた新しい音源を作る（チャンネルごと） */
 export function renderClips(chs: Float32Array[], sr: number, clips: Clip[]): Float32Array[] {
   const n = Math.max(1, Math.ceil(arrangeLength(clips) * sr));
@@ -121,7 +151,7 @@ export function renderClips(chs: Float32Array[], sr: number, clips: Clip[]): Flo
         if (o < 0 || o >= n) continue;
         const si = s0 + i;
         const v = si >= 0 && si < src.length ? src[si] : 0;
-        const g = fadeGain(c, i / sr);
+        const g = c.env.length ? envAt(c.env, c.src + i / sr) : 1;
         dst[o] = g >= 1 ? v : dst[o] * (1 - g) + v * g;
       }
     }
