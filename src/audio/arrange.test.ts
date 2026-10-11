@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addFadeIn, addFadeOut, arrangeLength, bringToTop, clipAt, envAt, mapTime, refShift, renderClips, snapTo, splitClip, trimEnd, trimStart, type Clip, type EnvPoint } from './arrange';
+import { addFadeIn, addFadeOut, arrangeLength, arrangeStart, bringToTop, clipAt, envAt, mapTime, refShift, renderClips, snapTo, splitClip, trimEnd, trimStart, type Clip, type EnvPoint } from './arrange';
 
 const clip = (src: number, len: number, pos: number, env: EnvPoint[] = [], track = 0, srcId = 0): Clip => ({ src, len, pos, env, track, srcId });
 
@@ -98,5 +98,13 @@ describe('音源の切り貼り', () => {
     expect(clipAt(cs, 5, 1)).toBe(1);
     expect(clipAt(cs, 5)).toBe(1);
     expect(refShift(cs, 3)).toBe(0);
+  });
+
+  it('0 より前に置くと、新しい音源はそこから始まる', () => {
+    const src = new Float32Array(30).map((_, i) => i);
+    const cs = [clip(0, 1, 0), clip(2, 0.5, -0.5)];
+    expect(arrangeStart(cs)).toBe(-0.5);
+    const [out] = renderClips([[src]], 10, cs);
+    expect(Array.from(out)).toEqual([20, 21, 22, 23, 24, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   });
 });

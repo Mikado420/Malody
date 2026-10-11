@@ -9,6 +9,8 @@
  * 点の時刻は元の音源の時刻で持つので、分けても端を詰めても音と点の位置は変わらない。
  * 上のクリップの音量が 1 より小さい所は、下の音と混ぜる（フェードインを重ねればクロスフェード）。
  * クリップの無い所は無音（頭を空ければ「頭に無音」）。
+ * 並べる時刻（pos）は 0 より前にもできる。新しい音源は 0 秒か、いちばん前のクリップのどちらか前から始まる
+ * （arrangeStart。0 より前に置いた分だけ音源が前に伸びる）。
  */
 
 /** オートメーションの点: 元の音源の s 秒で音量 v（0〜1） */
@@ -37,9 +39,14 @@ export const MIN_LEN = 0.05;
 
 export const clipEnd = (c: Clip) => c.pos + c.len;
 
-/** 新しい音源の長さ（いちばん後ろのクリップの終わり） */
+/** 並べた時刻での、いちばん後ろのクリップの終わり */
 export function arrangeLength(clips: Clip[]) {
   return clips.reduce((m, c) => Math.max(m, clipEnd(c)), 0);
+}
+
+/** 新しい音源の頭の、並べた時刻（0 か、0 より前に置いたいちばん前のクリップ） */
+export function arrangeStart(clips: Clip[]) {
+  return clips.reduce((m, c) => Math.min(m, c.pos), 0);
 }
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -150,7 +157,8 @@ export function refShift(clips: Clip[], t: number): number {
  * トラックごとに作ってから足し合わせる。モノラルの音源はステレオの両方に入れる
  */
 export function renderClips(sources: Float32Array[][], sr: number, clips: Clip[]): Float32Array[] {
-  const n = Math.max(1, Math.ceil(arrangeLength(clips) * sr));
+  const origin = arrangeStart(clips);
+  const n = Math.max(1, Math.ceil((arrangeLength(clips) - origin) * sr));
   const used = new Set(clips.map((c) => c.srcId));
   const nch = Math.max(1, ...[...used].map((i) => Math.min(2, sources[i]?.length ?? 1)));
   const out = Array.from({ length: nch }, () => new Float32Array(n));
@@ -159,7 +167,7 @@ export function renderClips(sources: Float32Array[][], sr: number, clips: Clip[]
     const tb = tracks.length === 1 ? out : Array.from({ length: nch }, () => new Float32Array(n));
     for (const c of clips) {
       if (c.track !== tr) continue;
-      writeClip(tb, sources[c.srcId] ?? [], sr, c, n);
+      writeClip(tb, sources[c.srcId] ?? [], sr, { ...c, pos: c.pos - origin }, n);
     }
     if (tb !== out) for (let k = 0; k < nch; k++) { const o = out[k]; const t = tb[k]; for (let i = 0; i < n; i++) o[i] += t[i]; }
   }

@@ -1132,4 +1132,11 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 @media (max-width: 760px) {
   .sheet .daw-top .daw-title { display: none; }
 }
+/* BPM 測定・切り貼りの画面: 長押しで文字が選ばれたり、メニューが出たりしないように（入力欄は別） */
+.sheet .daw, .sheet .daw * { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+.sheet .daw .dv-in { -webkit-user-select: text; user-select: text; }
+/* 音源の切り貼り: 左のトラックの見出し（ノッチの所まで塗る）と、トラック */
+.sheet .arr-row { flex: 1; min-height: 0; display: flex; }
+.sheet .arr-head { flex: none; display: block; width: calc(46px + var(--safe-l)); height: 100%; touch-action: none; }
+.sheet .arr-row .daw-wave { flex: 1; min-width: 0; width: auto; height: 100%; }
 
