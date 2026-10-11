@@ -7,7 +7,8 @@ import { tjaGutterHtml, tjaLinesHtml, tjaMarks } from './editor/tjaHighlight';
 import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { buildAutoEvents, type AutoEvent } from './play/auto';
-import { bindTimeline, bindValueBoxes, drawPlayhead, drawRuler, inlineInput, niceStep, PLAYHEAD, valueBoxHtml } from './ui/daw';
+import { bindTimeline, bindValueBoxes, drawPlayhead, drawRuler, inlineInput, PLAYHEAD, valueBoxHtml, type ValueBox } from './ui/daw';
+import { arrangeLength, bringToTop, clipAt, clipEnd, fixFades, mapTime, MIN_LEN, refShift, renderClips, snapTo, splitClip, trimEnd, trimStart, type Clip } from './audio/arrange';
 import { analyzeTempo, computeMeters, planBars, planBeatTimes, planTimeAt, tempoPlan, type Meter, type TempoOptions, type TempoPlan, type TempoResult } from './audio/tempo';
 import { meterAt as meterAtTick, moveBoundary, nudge, removeSection, sectionAtTime, sections as editSections, setBpm, setEnd, setMeter, setStart, shiftDownbeat, splitAt, tickAtTime } from './editor/tempoEdit';
 import { applyGrad, gradValid, type Grad } from './editor/grad';
@@ -296,7 +297,7 @@ function tickPlayback() {
 function loop() {
   if (playing && !play.isActive) tickPlayback();
   if (tempoPreview.on) tickTempoPreview();
-  if (cutPlay.on) tickCutPlay();
+  if (arrPlay.on) tickArrPlay();
   // プレイ画面を出している間は、隠れているエディタを描き直さない
   if (!document.body.classList.contains('playing')) view.frame();
   requestAnimationFrame(loop);
@@ -450,7 +451,7 @@ function flyItems(kind: string): FlyItem[] {
       { head: '読み込み' },
       { label: '読み込み（.tja / .zip / 音源）', primary: true, run: () => void fileAction('open') },
       { label: '音源を読み込む（ファイル / リンク）', run: () => void fileAction('audio') },
-      { label: '音源をカット', run: () => void fileAction('cut') },
+      { label: '音源の切り貼り', run: () => void fileAction('cut') },
       { label: '新規作成', run: () => void fileAction('new') },
       { label: 'サンプル譜面', run: () => void fileAction('sample') },
       { head: '書き出し' },
@@ -693,7 +694,7 @@ function openSheet(kind: SheetKind) {
 }
 function closeSheet() {
   stopTempoPreview();
-  stopCutPlay();
+  stopArrPlay();
   sheet = null;
   document.body.classList.remove('tja-open');
   $('sheet').classList.add('hidden');
@@ -2775,264 +2776,408 @@ async function importLink(url: string, target: 'home' | 'editor') {
   }
 }
 
-// ---------- 音源のカット ----------
+// ---------- 音源の切り貼り ----------
+// FL Studio Mobile のプレイリストのように、音源をクリップにして、分ける・消す・複製・動かす・端を詰める・フェード。
+// 小節・拍のグリッド（譜面の BPM と OFFSET から）に吸い付く。「反映」で並べた音を .ogg にして、譜面の OFFSET を合わせる
 
-/** start〜end を残す。fadeIn / fadeOut は秒、pad は頭に足す無音（秒）。viewAt / span は波形の表示、cursor は再生する所 */
-const cutState = { start: 0, end: 0, fadeIn: 0, fadeOut: 0, pad: 0, dur: 0, viewAt: 0, span: 1, cursor: 0 };
-/** 確認再生（until 秒で止める） */
-const cutPlay = { on: false, until: 0 };
+type ArrSnap = 'bar' | 'beat' | 'off';
+const ARR_SNAP_LABEL: Record<ArrSnap, string> = { bar: '小節', beat: '拍', off: 'なし' };
+const arrState = {
+  clips: [] as Clip[],
+  /** 選んでいるクリップ（-1 は無し） */
+  sel: -1,
+  /** 元の音源の長さ */
+  dur: 0,
+  viewAt: 0,
+  span: 1,
+  /** 再生を始める所（黄色の線） */
+  play: 0,
+  snap: 'bar' as ArrSnap,
+  tool: 'move' as 'move' | 'split',
+  undo: [] as string[],
+  redo: [] as string[],
+};
+/** 確認再生（並べた音を作って鳴らす。until 秒で止める） */
+const arrPlay = { on: false, until: 0 };
+let arrCache: { key: string; buf: AudioBuffer } | null = null;
 
 function openCut() {
   const buf = audio.buffer;
   if (!buf) { toast('先に音源を読み込んでください'); return; }
-  const d = buf.duration;
-  Object.assign(cutState, { start: 0, end: d, fadeIn: 0, fadeOut: 0, pad: 0, dur: d, viewAt: d / 2, span: d * 1.04, cursor: 0 });
+  const d = Math.round(buf.duration * 1000) / 1000;
+  Object.assign(arrState, {
+    clips: [{ src: 0, len: d, pos: 0, fadeIn: 0, fadeOut: 0 }],
+    sel: -1, dur: d, viewAt: d / 2, span: d * 1.04, play: 0, undo: [], redo: [],
+  });
+  arrCache = null;
   openSheet('cut');
 }
 
-const fmtCut = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(2).padStart(5, '0')}`;
+const fmtCut = (t: number) => `${t < 0 ? '-' : ''}${Math.floor(Math.abs(t) / 60)}:${(Math.abs(t) % 60).toFixed(2).padStart(5, '0')}`;
 /** 「1:23.45」「83.45」を秒に */
 const parseCut = (v: string) => {
   const m = v.match(/^(\d+):(\d+(?:\.\d*)?)$/);
   return m ? Number(m[1]) * 60 + Number(m[2]) : Number(v);
 };
 
-function stopCutPlay() {
-  if (!cutPlay.on) return;
-  cutPlay.on = false;
+const arrSnap = () => JSON.stringify({ clips: arrState.clips, sel: arrState.sel });
+function arrPush() {
+  arrState.undo.push(arrSnap());
+  if (arrState.undo.length > 200) arrState.undo.shift();
+  arrState.redo = [];
+}
+function arrRestore(s: string) {
+  const v = JSON.parse(s) as { clips: Clip[]; sel: number };
+  arrState.clips = v.clips;
+  arrState.sel = v.sel;
+}
+
+/** 新しい音源の長さ（表示に使う長さ。元の音源より短くても、元の長さまでは見えるように） */
+const arrTotal = () => Math.max(arrangeLength(arrState.clips), arrState.dur);
+
+/** 譜面の小節・拍の線（新しい音源の時刻）。譜面の頭の音を使っているクリップに合わせて動く */
+function arrGrid(t0: number, t1: number): { t: number; bar: boolean; n: number }[] {
+  const sh = refShift(arrState.clips, -ed.chart.offset);
+  const tm = ed.timing;
+  const out: { t: number; bar: boolean; n: number }[] = [];
+  const endTick = Math.max(0, tm.timeToTick(t1 - sh)) + TPB * 8;
+  for (const m of ed.measuresUntil(endTick)) {
+    const head = tm.tickToTime(m.start) + sh;
+    if (head > t1 + 0.5) break;
+    const beat = (TPB * 4) / m.den;
+    for (let k = 0; k * beat < m.length - 1e-6; k++) {
+      const t = tm.tickToTime(m.start + k * beat) + sh;
+      if (t >= t0 - 0.5 && t <= t1 + 0.5) out.push({ t, bar: k === 0, n: m.index + 1 });
+    }
+  }
+  return out;
+}
+
+/** 吸い付く先: グリッド（小節か拍）・ほかのクリップの端・再生を始める所・0 秒 */
+function arrSnapCands(t: number, span: number, except = -1): number[] {
+  if (arrState.snap === 'off') return [];
+  const g = arrGrid(t - span, t + span).filter((x) => arrState.snap === 'beat' || x.bar).map((x) => x.t);
+  const edges = arrState.clips.flatMap((c, i) => (i === except ? [] : [c.pos, clipEnd(c)]));
+  return [...g, ...edges, arrState.play, 0];
+}
+
+function stopArrPlay() {
+  if (!arrPlay.on) return;
+  arrPlay.on = false;
   audio.stop();
 }
-async function startCutPlay(from: number, to: number) {
+/** 並べた音を作って（変わっていなければ前に作ったものを使って）、from 秒から鳴らす */
+async function startArrPlay(from: number) {
+  const buf = audio.buffer;
+  if (!buf) return;
   stopPlayback();
-  stopCutPlay();
-  await audio.startAt(from, 1);
-  Object.assign(cutPlay, { on: true, until: to });
+  stopArrPlay();
+  const key = JSON.stringify(arrState.clips);
+  if (!arrCache || arrCache.key !== key) {
+    const chs = renderClips(bufferChannels(buf), buf.sampleRate, arrState.clips);
+    const b = audio.ctx.createBuffer(chs.length, chs[0].length, buf.sampleRate);
+    chs.forEach((d, i) => b.getChannelData(i).set(d));
+    arrCache = { key, buf: b };
+  }
+  await audio.startAt(from, 1, arrCache.buf);
+  Object.assign(arrPlay, { on: true, until: arrangeLength(arrState.clips) });
 }
-function tickCutPlay() {
-  if (sheet !== 'cut') { stopCutPlay(); return; }
+function tickArrPlay() {
+  if (sheet !== 'cut') { stopArrPlay(); return; }
   const now = audio.now();
-  const c = cutState;
-  if (now >= cutPlay.until) {
-    stopCutPlay();
+  const a = arrState;
+  if (now >= arrPlay.until) {
+    stopArrPlay();
     renderSheet();
     return;
   }
   // 再生位置が表示の外へ出たら、ページをめくる
-  if (now > c.viewAt + c.span / 2 || now < c.viewAt - c.span / 2) c.viewAt = now + c.span * 0.4;
-  drawCut(now);
+  if (now > a.viewAt + a.span / 2 || now < a.viewAt - a.span / 2) a.viewAt = now + a.span * 0.4;
+  drawArr(now);
 }
 
-/** 波形の上のルーラーの高さ・カット範囲の帯の高さ */
-const C_RULER = 22;
-const C_HEAD = 16;
+/** 波形の上のルーラーの高さ・クリップの見出しの高さ */
+const A_RULER = 22;
+const A_HEAD = 16;
+const A_PAD = 8;
 
-function drawCut(playhead = -1) {
-  const buf = audio.buffer;
-  const c = cutState;
-  if (!buf) return;
-  const lcdPos = document.getElementById('cutLcdPos');
-  if (lcdPos) {
-    lcdPos.textContent = fmtCut(playhead >= 0 ? playhead : c.cursor);
-    $('cutLcdLen').textContent = `長さ ${fmtCut(c.end - c.start + c.pad)}`;
+/** クリップの中の波形（元の音源の src から） */
+function drawClipWave(ctx: CanvasRenderingContext2D, c: Clip, x0: number, x1: number, y0: number, h: number, W: number) {
+  const buf = audio.buffer!;
+  const chs = bufferChannels(buf);
+  const sr = buf.sampleRate;
+  const a = arrState;
+  const t0 = a.viewAt - a.span / 2;
+  const mid = y0 + h / 2;
+  const amp = h / 2 - 2;
+  for (let x = Math.max(0, Math.floor(x0)); x < Math.min(W, Math.ceil(x1)); x++) {
+    const ta = t0 + (x / W) * a.span;
+    const tb = t0 + ((x + 1) / W) * a.span;
+    const s0 = Math.floor((c.src + ta - c.pos) * sr);
+    const s1 = Math.floor((c.src + tb - c.pos) * sr);
+    if (s1 <= 0 || s0 >= buf.length) continue;
+    let mx = 0;
+    const step = Math.max(1, Math.floor((s1 - s0) / 160));
+    for (let i = Math.max(0, s0); i < Math.min(buf.length, s1); i += step) for (const ch of chs) { const v = Math.abs(ch[i]); if (v > mx) mx = v; }
+    // フェードで小さくなる分
+    const xi = ta - c.pos;
+    let g = 1;
+    if (c.fadeIn > 0 && xi < c.fadeIn) g = Math.max(0, xi / c.fadeIn);
+    if (c.fadeOut > 0 && xi > c.len - c.fadeOut) g = Math.min(g, Math.max(0, (c.len - xi) / c.fadeOut));
+    ctx.fillRect(x, mid - mx * amp * g, 1, Math.max(1, mx * amp * 2 * g));
   }
-  const info = document.getElementById('cutInfo');
-  if (info) info.textContent = `${ed.chart.offset.toFixed(3)} → ${(ed.chart.offset + c.start - c.pad).toFixed(3)}`;
-  // ---- 曲全体（上の帯） ----
-  const ovc = document.getElementById('cutOv') as HTMLCanvasElement | null;
+}
+
+function drawArr(playhead = -1) {
+  const a = arrState;
+  if (!audio.buffer) return;
+  const total = arrTotal();
+  const len = arrangeLength(a.clips);
+  const lcd = document.getElementById('arrLcdPos');
+  if (lcd) {
+    const t = playhead >= 0 ? playhead : a.play;
+    lcd.textContent = fmtCut(t);
+    const g = arrGrid(t - 30, t + 0.001).filter((x) => x.t <= t + 1e-6);
+    const last = g[g.length - 1];
+    const bars = g.filter((x) => x.bar);
+    const bar = bars[bars.length - 1];
+    $('arrLcdBar').textContent = last && bar ? `小節 ${bar.n} 拍 ${g.filter((x) => x.t >= bar.t - 1e-6).length}` : '曲の頭より前';
+  }
+  const info = document.getElementById('arrLen');
+  if (info) info.textContent = fmtCut(len);
+  const off = document.getElementById('arrOff');
+  if (off) off.textContent = `${ed.chart.offset.toFixed(3)} → ${(ed.chart.offset - refShift(a.clips, -ed.chart.offset)).toFixed(3)}`;
+
+  // ---- 全体（上の帯） ----
+  const ovc = document.getElementById('arrOv') as HTMLCanvasElement | null;
   if (ovc) {
     const { ctx, W, H } = fitCanvas(ovc);
-    const peaks = overviewPeaks(buf);
     ctx.fillStyle = '#1d2023';
     ctx.fillRect(0, 0, W, H);
-    const xs = (t: number) => (t / c.dur) * W;
-    ctx.fillStyle = 'rgba(77,159,190,0.85)';
-    for (let x = 0; x < W; x++) {
-      const k0 = Math.floor((x / W) * peaks.length);
-      const k1 = Math.max(k0 + 1, Math.floor(((x + 1) / W) * peaks.length));
-      let m = 0;
-      for (let k = k0; k < k1; k++) m = Math.max(m, peaks[k]);
-      ctx.fillRect(x, H / 2 - (m * H) / 2, 1, Math.max(1, m * H));
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.6)';
-    ctx.fillRect(0, 0, xs(c.start), H);
-    ctx.fillRect(xs(c.end), 0, W - xs(c.end), H);
-    ctx.fillStyle = '#fff';
-    for (const t of [c.start, c.end]) ctx.fillRect(xs(t) - 1, 0, 2, H);
-    // 下の波形に出している範囲
-    const v0 = xs(c.viewAt - c.span / 2);
-    const v1 = xs(c.viewAt + c.span / 2);
+    const xs = (t: number) => (t / total) * W;
+    a.clips.forEach((c, i) => {
+      ctx.fillStyle = i === a.sel ? '#93cde2' : '#4d9fbe';
+      ctx.fillRect(xs(c.pos), 3, Math.max(1, xs(c.len)), H - 6);
+      ctx.fillStyle = '#1d2023';
+      ctx.fillRect(xs(c.pos), 3, 1, H - 6);
+    });
+    const v0 = xs(a.viewAt - a.span / 2);
+    const v1 = xs(a.viewAt + a.span / 2);
     ctx.strokeStyle = 'rgba(255,255,255,0.9)';
     ctx.lineWidth = 2;
     ctx.strokeRect(Math.max(1, v0), 1, Math.max(3, Math.min(W - 1, v1) - Math.max(1, v0)), H - 2);
-    if (playhead >= 0) { ctx.fillStyle = PLAYHEAD; ctx.fillRect(xs(playhead) - 1, 0, 2, H); }
+    ctx.fillStyle = PLAYHEAD;
+    ctx.fillRect(xs(playhead >= 0 ? playhead : a.play) - 1, 0, 2, H);
   }
-  // ---- 拡大した波形 ----
-  const cv = document.getElementById('cutWave') as HTMLCanvasElement | null;
+
+  // ---- 拡大したトラック ----
+  const cv = document.getElementById('arrWave') as HTMLCanvasElement | null;
   if (!cv) return;
   const { ctx, W, H: HH } = fitCanvas(cv);
-  const t0 = c.viewAt - c.span / 2;
-  const xOf = (t: number) => ((t - t0) / c.span) * W;
+  const t0 = a.viewAt - a.span / 2;
+  const t1 = t0 + a.span;
+  const xOf = (t: number) => ((t - t0) / a.span) * W;
   ctx.fillStyle = '#1d2023';
   ctx.fillRect(0, 0, W, HH);
-  // ルーラー（秒）
-  const stp = niceStep(c.span, W, 64);
-  const minor = stp / (stp >= 1 && stp !== 15 ? (stp === 2 || stp === 0.2 || stp === 0.02 ? 4 : 5) : 5);
-  const marks: { x: number; major: boolean; label?: string }[] = [];
-  for (let t = Math.max(0, Math.floor(t0 / minor) * minor); t <= t0 + c.span; t += minor) {
-    const major = Math.abs(t / stp - Math.round(t / stp)) < 1e-6;
-    marks.push({ x: xOf(t), major, label: major ? (stp >= 1 ? `${Math.floor(t / 60)}:${String(Math.round(t % 60)).padStart(2, '0')}` : fmtCut(t)) : undefined });
-  }
-  drawRuler(ctx, W, C_RULER, marks);
+  // ルーラー: 小節の番号（詰まるときは間引く）
+  const grid = arrGrid(t0, t1);
+  let lastLabel = -1e9;
+  const pxBeat = grid.length > 1 ? Math.abs(xOf(grid[1].t) - xOf(grid[0].t)) : 99;
+  const marks = grid.filter((g) => g.bar || pxBeat >= 6).map((g) => {
+    const x = xOf(g.t);
+    const m: { x: number; major: boolean; label?: string } = { x, major: g.bar };
+    if (g.bar && x - lastLabel >= 34) { m.label = String(g.n); lastLabel = x; }
+    return m;
+  });
+  drawRuler(ctx, W, A_RULER, marks);
   ctx.save();
-  ctx.translate(0, C_RULER);
-  const H = HH - C_RULER;
+  ctx.translate(0, A_RULER);
+  const H = HH - A_RULER;
   ctx.beginPath();
   ctx.rect(0, 0, W, H);
   ctx.clip();
-  // 音源の外
-  ctx.fillStyle = '#16181b';
-  if (t0 < 0) ctx.fillRect(0, 0, xOf(0), H);
-  if (t0 + c.span > c.dur) ctx.fillRect(xOf(c.dur), 0, W - xOf(c.dur), H);
-  // 残す範囲（クリップ）: 背景と上の帯
-  const xa = xOf(c.start);
-  const xb = xOf(c.end);
-  ctx.fillStyle = 'rgba(77,159,190,0.14)';
-  ctx.fillRect(xa, 0, xb - xa, H);
-  ctx.fillStyle = '#4d9fbe';
-  ctx.fillRect(xa, 0, xb - xa, C_HEAD);
-  ctx.fillStyle = '#fff';
-  ctx.font = '700 11px system-ui, sans-serif';
-  ctx.fillText('残す範囲', Math.max(xa, 0) + 22, 12);
-  // 波形
-  const chs = bufferChannels(buf);
-  const sr = buf.sampleRate;
-  const mid = C_HEAD + (H - C_HEAD) / 2;
-  const amp = (H - C_HEAD) / 2 - 4;
-  for (let x = 0; x < W; x++) {
-    const ta = t0 + (x / W) * c.span;
-    const a = Math.floor(ta * sr);
-    const b = Math.floor((t0 + ((x + 1) / W) * c.span) * sr);
-    if (b <= 0 || a >= buf.length) continue;
-    let mx = 0;
-    const step = Math.max(1, Math.floor((b - a) / 200));
-    for (let i = Math.max(0, a); i < Math.min(buf.length, b); i += step) for (const ch of chs) mx = Math.max(mx, Math.abs(ch[i]));
-    // フェードで小さくなる分も見せる
-    let g = 1;
-    if (ta < c.start || ta > c.end) g = 1;
-    else {
-      if (c.fadeIn > 0 && ta < c.start + c.fadeIn) g = (ta - c.start) / c.fadeIn;
-      if (c.fadeOut > 0 && ta > c.end - c.fadeOut) g = Math.min(g, (c.end - ta) / c.fadeOut);
-    }
-    const inside = ta >= c.start && ta <= c.end;
-    ctx.fillStyle = inside ? '#7fb8cc' : 'rgba(127,184,204,0.3)';
-    ctx.fillRect(x, mid - mx * amp * g, 1, Math.max(1, mx * amp * 2 * g));
-    if (inside && g < 1) {
-      ctx.fillStyle = 'rgba(127,184,204,0.22)';
-      ctx.fillRect(x, mid - mx * amp, 1, Math.max(1, mx * amp * 2));
-    }
+  // グリッドの線
+  for (const g of grid) {
+    if (!g.bar && pxBeat < 6) continue;
+    ctx.fillStyle = g.bar ? 'rgba(255,255,255,0.13)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(Math.round(xOf(g.t)), 0, 1, H);
   }
-  // 外側を暗く
-  ctx.fillStyle = 'rgba(0,0,0,0.45)';
-  ctx.fillRect(0, 0, xa, H);
-  ctx.fillRect(xb, 0, W - xb, H);
-  // フェードの線
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(xa, H);
-  ctx.lineTo(xOf(c.start + c.fadeIn), C_HEAD);
-  ctx.moveTo(xOf(c.end - c.fadeOut), C_HEAD);
-  ctx.lineTo(xb, H);
-  ctx.stroke();
-  // 端のつまみ（縦線・下のつまみ）とフェードのつまみ（上の四角）
-  for (const [x, dir] of [[xa, 1], [xb, -1]] as const) {
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(x - 1, 0, 2, H);
-    ctx.fillRect(dir > 0 ? x : x - 12, H - 30, 12, 30);
+  // 新しい音源の終わりより後ろ
+  if (xOf(len) < W) {
+    ctx.fillStyle = 'rgba(0,0,0,0.28)';
+    ctx.fillRect(Math.max(0, xOf(len)), 0, W, H);
+  }
+  if (t0 < 0) {
+    ctx.fillStyle = '#16181b';
+    ctx.fillRect(0, 0, xOf(0), H);
+  }
+  // クリップ（下から順に）
+  const y0 = A_PAD;
+  const ch = H - A_PAD * 2;
+  a.clips.forEach((c, i) => {
+    const xa = xOf(c.pos);
+    const xb = xOf(clipEnd(c));
+    if (xb < -2 || xa > W + 2) return;
+    const on = i === a.sel;
+    ctx.fillStyle = on ? 'rgba(77,159,190,0.42)' : 'rgba(77,159,190,0.28)';
+    ctx.fillRect(xa, y0, xb - xa, ch);
+    ctx.fillStyle = on ? '#93cde2' : '#4d9fbe';
+    ctx.fillRect(xa, y0, xb - xa, A_HEAD);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(xa, y0, Math.max(0, xb - xa), ch);
+    ctx.clip();
+    ctx.fillStyle = on ? '#1d2023' : '#fff';
+    ctx.font = '700 11px system-ui, sans-serif';
+    ctx.fillText(`${i + 1}  ${fmtCut(c.src)}〜${fmtCut(c.src + c.len)}`, Math.max(xa, 0) + 6, y0 + 12);
+    ctx.fillStyle = on ? '#cdeaf4' : '#8cc4d6';
+    drawClipWave(ctx, c, xa, xb, y0 + A_HEAD + 2, ch - A_HEAD - 4, W);
+    // フェードの線
+    if (c.fadeIn > 0 || c.fadeOut > 0) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      if (c.fadeIn > 0) { ctx.moveTo(xa, y0 + ch); ctx.lineTo(xOf(c.pos + c.fadeIn), y0 + A_HEAD); }
+      if (c.fadeOut > 0) { ctx.moveTo(xOf(clipEnd(c) - c.fadeOut), y0 + A_HEAD); ctx.lineTo(xb, y0 + ch); }
+      ctx.stroke();
+    }
+    ctx.restore();
+    // 区切り・選んでいる枠
     ctx.fillStyle = '#1d2023';
-    for (let k = 0; k < 3; k++) ctx.fillRect((dir > 0 ? x + 3 : x - 9) + k * 3, H - 24, 1, 18);
-  }
-  for (const x of [xOf(c.start + c.fadeIn), xOf(c.end - c.fadeOut)]) {
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(x - 7, 1, 14, 14);
-    ctx.fillStyle = '#4d9fbe';
-    ctx.fillRect(x - 4, 4, 8, 8);
+    ctx.fillRect(xa, y0, 1, ch);
+    if (on) {
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(xa + 1, y0 + 1, xb - xa - 2, ch - 2);
+    }
+  });
+  // 選んでいるクリップのつまみ: 端（丸）とフェード（上の四角）
+  const s = a.clips[a.sel];
+  if (s) {
+    const xa = xOf(s.pos);
+    const xb = xOf(clipEnd(s));
+    const cy = y0 + ch / 2;
+    for (const x of [xa, xb]) {
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.arc(x, cy, 10, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#4d9fbe';
+      ctx.fillRect(x - 3, cy - 5, 1.5, 10);
+      ctx.fillRect(x + 1.5, cy - 5, 1.5, 10);
+    }
+    for (const x of [xOf(s.pos + s.fadeIn), xOf(clipEnd(s) - s.fadeOut)]) {
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(x - 7, y0 + A_HEAD + 1, 14, 14);
+      ctx.fillStyle = '#4d9fbe';
+      ctx.fillRect(x - 4, y0 + A_HEAD + 4, 8, 8);
+    }
   }
   ctx.restore();
-  // 再生する所・再生中の位置
+  // 再生を始める所・再生中の位置
   if (playhead >= 0) {
-    const cx = xOf(c.cursor);
     ctx.fillStyle = 'rgba(255,201,77,0.5)';
-    ctx.fillRect(cx - 0.5, C_RULER, 1, HH - C_RULER);
-    drawPlayhead(ctx, xOf(playhead), HH, C_RULER);
-  } else drawPlayhead(ctx, xOf(c.cursor), HH, C_RULER);
+    ctx.fillRect(xOf(a.play) - 0.5, A_RULER, 1, HH - A_RULER);
+    drawPlayhead(ctx, xOf(playhead), HH, A_RULER);
+  } else drawPlayhead(ctx, xOf(a.play), HH, A_RULER);
+  // クリップの上の操作ボタン（選んでいるときだけ。クリップの真ん中の上）
+  const bub = document.getElementById('arrBub');
+  if (bub) {
+    const sc = a.clips[a.sel];
+    const vis = !!sc && xOf(clipEnd(sc)) > 0 && xOf(sc.pos) < W && playhead < 0;
+    bub.classList.toggle('hidden', !vis);
+    if (vis && sc) {
+      const cx = Math.max(xOf(sc.pos), 0) / 2 + Math.min(xOf(clipEnd(sc)), W) / 2;
+      const bw = bub.offsetWidth;
+      bub.style.left = `${Math.max(4, Math.min(W - bw - 4, cx - bw / 2))}px`;
+      bub.style.top = `${cv.offsetTop + A_RULER + y0 + A_HEAD + 20}px`;
+      bub.querySelector<HTMLButtonElement>('[data-abub="split"]')!.disabled = !(a.play > sc.pos + MIN_LEN && a.play < clipEnd(sc) - MIN_LEN);
+    }
+  }
 }
 
+const ARR_IC = {
+  move: '<path d="M5 3l14 8-6 1.8L10.5 19z" class="fill"/>',
+  split: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>',
+  magnet: '<path d="M6 4v7a6 6 0 0 0 12 0V4"/><path d="M6 8h4M14 8h4"/>',
+};
+
 function renderCutSheet(body: HTMLElement) {
-  $('sheetTitle').textContent = '音源をカット';
-  const c = cutState;
+  $('sheetTitle').textContent = '音源の切り貼り';
+  const a = arrState;
+  a.sel = a.sel < a.clips.length ? a.sel : -1;
+  const sel = a.clips[a.sel];
   body.innerHTML = `<div class="daw">
     <header class="daw-top">
-      <button class="daw-ic" data-cact="cancel" aria-label="やめる">${IC.close}</button>
-      <b class="daw-title">音源をカット</b>
+      <button class="daw-ic" data-aact="cancel" aria-label="やめる">${IC.close}</button>
+      <b class="daw-title">音源の切り貼り</b>
+      <button class="daw-ic" data-aundo aria-label="元に戻す" ${a.undo.length ? '' : 'disabled'}>${IC.undo}</button>
+      <button class="daw-ic" data-aredo aria-label="やり直す" ${a.redo.length ? '' : 'disabled'}>${IC.redo}</button>
       <span class="daw-sep"></span>
-      <button class="daw-ic" data-chome aria-label="始まりへ">${IC.home}</button>
-      <button class="daw-ic daw-play ${cutPlay.on ? 'on' : ''}" data-cplayhere aria-label="${cutPlay.on ? '止める' : '再生'}">${cutPlay.on ? IC.stop : IC.play}</button>
-      <div class="daw-lcd"><b id="cutLcdPos"></b><small id="cutLcdLen"></small></div>
+      <button class="daw-ic" data-ahome aria-label="頭へ">${IC.home}</button>
+      <button class="daw-ic daw-play ${arrPlay.on ? 'on' : ''}" data-aplay aria-label="${arrPlay.on ? '止める' : '再生'}">${arrPlay.on ? IC.stop : IC.play}</button>
+      <div class="daw-lcd"><b id="arrLcdPos"></b><small id="arrLcdBar"></small></div>
       <span class="daw-sp"></span>
-      <button class="daw-ok" data-cact="ok">${IC.ok}<span>反映</span></button>
+      <button class="daw-ok" data-aact="ok">${IC.ok}<span>反映</span></button>
     </header>
     <div class="daw-main">
       <nav class="daw-tools">
-        <button data-czoom="0.5" aria-label="拡大">${IC.plus}</button>
-        <button data-czoom="2" aria-label="縮小">${IC.minus}</button>
-        <button data-cfit aria-label="全体を表示">${IC.fit}<small>全体</small></button>
+        <button data-atool="move" class="${a.tool === 'move' ? 'on' : ''}">${ic(ARR_IC.move)}<small>選ぶ</small></button>
+        <button data-atool="split" class="${a.tool === 'split' ? 'on' : ''}">${ic(ARR_IC.split)}<small>分ける</small></button>
+        <button data-asnap class="${a.snap !== 'off' ? 'snap-on' : ''}">${ic(ARR_IC.magnet)}<small>${ARR_SNAP_LABEL[a.snap]}</small></button>
         <span class="daw-sp"></span>
+        <button data-azoom="0.5" aria-label="拡大">${IC.plus}</button>
+        <button data-azoom="2" aria-label="縮小">${IC.minus}</button>
+        <button data-afit aria-label="全体を表示">${IC.fit}</button>
       </nav>
       <div class="daw-stage">
-        <canvas id="cutOv" class="daw-ov"></canvas>
-        <canvas id="cutWave" class="daw-wave"></canvas>
+        <canvas id="arrOv" class="daw-ov"></canvas>
+        <canvas id="arrWave" class="daw-wave"></canvas>
+        <div id="arrBub" class="arr-bub hidden">
+          <button data-abub="split">✂ 分割</button><button data-abub="dup">⧉ 複製</button><button data-abub="del">削除</button>
+        </div>
       </div>
     </div>
     <footer class="daw-insp">
-      ${valueBoxHtml('start', '始まり', { cls: 'dv-big' })}
-      ${valueBoxHtml('end', '終わり', { cls: 'dv-big' })}
-      <span class="daw-vsep"></span>
-      ${valueBoxHtml('fadeIn', 'フェードイン')}
-      ${valueBoxHtml('fadeOut', 'フェードアウト')}
-      ${valueBoxHtml('pad', '頭に無音')}
-      <span class="daw-vsep"></span>
-      <div class="dv dv-info"><span class="dv-l">OFFSET（自動で直します）</span><b id="cutInfo"></b></div>
-      <div class="daw-acts">
-        <button data-cplay="start">▶ 始まりから</button>
-        <button data-cplay="end">▶ 終わりの手前から</button>
-      </div>
+      ${sel ? `
+        <div class="dv dv-info dv-sec" style="--c:#93cde2"><span class="dv-l">クリップ</span><b>${a.sel + 1} / ${a.clips.length}</b></div>
+        ${valueBoxHtml('pos', '位置', { cls: 'dv-big' })}
+        ${valueBoxHtml('len', '長さ')}
+        ${valueBoxHtml('src', '元の音源の位置')}
+        <span class="daw-vsep"></span>
+        ${valueBoxHtml('fadeIn', 'フェードイン')}
+        ${valueBoxHtml('fadeOut', 'フェードアウト')}
+        <span class="daw-vsep"></span>
+        <div class="daw-acts">
+          <button data-abub="split">✂ 再生位置で分割</button>
+          <button data-abub="dup">⧉ 複製</button>
+          <button data-abub="del" class="bad">削除</button>
+          <button data-adesel>選ぶのをやめる</button>
+        </div>` : `
+        <div class="dv dv-info"><span class="dv-l">新しい長さ</span><b id="arrLen"></b></div>
+        <div class="dv dv-info"><span class="dv-l">OFFSET（自動で直します）</span><b id="arrOff"></b></div>
+        <span class="daw-vsep"></span>
+        <div class="daw-acts">
+          <button data-asplitplay>✂ 再生位置で分割</button>
+          <button data-areset ${a.undo.length ? '' : 'disabled'}>最初の状態に戻す</button>
+        </div>
+        <p class="arr-hint">クリップをタップで選ぶ・ドラッグで動かす。ルーラーをなぞって再生位置。2 本指で拡大</p>`}
     </footer>
   </div>`;
   const rerender = () => renderCutSheet(body);
-  const clamp = () => {
-    c.start = Math.max(0, Math.min(c.start, c.dur - 1));
-    c.end = Math.max(c.start + 1, Math.min(c.end, c.dur));
-    c.fadeIn = Math.max(0, Math.min(c.fadeIn, (c.end - c.start) / 2));
-    c.fadeOut = Math.max(0, Math.min(c.fadeOut, (c.end - c.start) / 2));
-    c.pad = Math.max(0, Math.min(c.pad, 10));
-    c.start = Math.round(c.start * 1000) / 1000;
-    c.end = Math.round(c.end * 1000) / 1000;
-    c.fadeIn = Math.round(c.fadeIn * 100) / 100;
-    c.fadeOut = Math.round(c.fadeOut * 100) / 100;
-  };
   const clampView = () => {
-    c.span = Math.min(c.dur * 1.2, Math.max(0.05, c.span));
-    c.viewAt = Math.max(-c.span * 0.3, Math.min(c.dur + c.span * 0.3, c.viewAt));
+    const total = arrTotal();
+    a.span = Math.min(total * 1.3, Math.max(0.05, a.span));
+    a.viewAt = Math.max(-a.span * 0.3, Math.min(total + a.span * 0.3, a.viewAt));
   };
   let refreshBoxes = () => {};
-  const update = () => { drawCut(cutPlay.on ? audio.now() : -1); refreshBoxes(); };
+  const update = () => { drawArr(arrPlay.on ? audio.now() : -1); refreshBoxes(); };
 
-  // ---- 曲全体: タップ・ドラッグでそこを表示 ----
-  const ov = $<HTMLCanvasElement>('cutOv');
+  // ---- 全体の帯: タップ・ドラッグでそこを表示 ----
+  const ov = $<HTMLCanvasElement>('arrOv');
   bindTimeline(ov, {
     single: (x) => {
-      const go = (xx: number) => { c.viewAt = (xx / Math.max(1, ov.clientWidth)) * c.dur; clampView(); update(); };
+      const go = (xx: number) => { a.viewAt = (xx / Math.max(1, ov.clientWidth)) * arrTotal(); clampView(); update(); };
       go(x);
       return { move: (xx) => go(xx), end: () => {} };
     },
@@ -3040,142 +3185,247 @@ function renderCutSheet(body: HTMLElement) {
     zoom: () => {},
   });
 
-  // ---- 拡大した波形 ----
-  const cv = $<HTMLCanvasElement>('cutWave');
+  // ---- トラック ----
+  const cv = $<HTMLCanvasElement>('arrWave');
   const W = () => Math.max(1, cv.clientWidth);
-  const tAt = (x: number) => c.viewAt - c.span / 2 + (x / W()) * c.span;
-  const xAt = (t: number) => ((t - (c.viewAt - c.span / 2)) / c.span) * W();
+  const tAt = (x: number) => a.viewAt - a.span / 2 + (x / W()) * a.span;
+  const xAt = (t: number) => ((t - (a.viewAt - a.span / 2)) / a.span) * W();
+  const tol = () => (12 / W()) * a.span;
+  const snap = (t: number, except = -1) => snapTo(t, arrSnapCands(t, a.span, except), tol());
+  /** 動かし始めたら 1 回だけ元に戻すの記録を取る */
+  const once = () => { let done = false; return () => { if (!done) { arrPush(); done = true; } }; };
   bindTimeline(cv, {
     single: (x, y) => {
       const t = tAt(x);
-      if (y < C_RULER) {
-        // ルーラー: なぞって再生する所を動かす
-        const set = (xx: number) => { c.cursor = Math.max(0, Math.min(c.dur, tAt(xx))); update(); };
+      if (y < A_RULER) {
+        // ルーラー: なぞって再生を始める所を動かす（グリッドに吸い付く）
+        const set = (xx: number) => { a.play = Math.max(0, snapTo(tAt(xx), arrSnapCands(tAt(xx), a.span), tol())); update(); };
         set(x);
-        return { move: (xx) => set(xx), end: () => {} };
+        return { move: (xx) => set(xx), end: () => rerender() };
       }
-      const yy = y - C_RULER;
-      // フェードのつまみ（上の四角）
-      const fx = [xAt(c.start + c.fadeIn), xAt(c.end - c.fadeOut)];
-      const fk = yy < C_HEAD + 14 ? (Math.abs(x - fx[0]) < 16 ? 'fadeIn' : Math.abs(x - fx[1]) < 16 ? 'fadeOut' : null) : null;
-      if (fk) {
+      const yy = y - A_RULER;
+      const s = a.clips[a.sel];
+      if (s && a.tool === 'move') {
+        // フェードのつまみ（上の四角）
+        const fy = yy >= A_PAD + A_HEAD - 4 && yy <= A_PAD + A_HEAD + 22;
+        const fin = Math.abs(x - xAt(s.pos + s.fadeIn)) < 14;
+        const fout = Math.abs(x - xAt(clipEnd(s) - s.fadeOut)) < 14;
+        if (fy && (fin || fout)) {
+          const push = once();
+          const which = fin && (!fout || s.fadeIn > 0) ? 'fadeIn' : 'fadeOut';
+          return {
+            move: (xx) => {
+              push();
+              const c = a.clips[a.sel];
+              const tt = tAt(xx);
+              a.clips[a.sel] = fixFades(which === 'fadeIn' ? { ...c, fadeIn: Math.round((tt - c.pos) * 100) / 100 } : { ...c, fadeOut: Math.round((clipEnd(c) - tt) * 100) / 100 });
+              update();
+            },
+            end: () => rerender(),
+          };
+        }
+        // 端（丸いつまみ・縦の辺）: 詰める・伸ばす
+        const nearA = Math.abs(x - xAt(s.pos)) < 16;
+        const nearB = Math.abs(x - xAt(clipEnd(s))) < 16;
+        if (nearA || nearB) {
+          const push = once();
+          const left = nearA && (!nearB || Math.abs(x - xAt(s.pos)) <= Math.abs(x - xAt(clipEnd(s))));
+          return {
+            move: (xx) => {
+              push();
+              const c = a.clips[a.sel];
+              const tt = snap(tAt(xx), a.sel);
+              a.clips[a.sel] = left ? trimStart(c, tt) : trimEnd(c, tt, a.dur);
+              update();
+            },
+            end: (moved) => { if (moved) rerender(); },
+          };
+        }
+      }
+      const hit = clipAt(a.clips, t);
+      if (hit >= 0 && a.tool === 'split') {
+        // 分けるツール: タップした所（グリッドに吸い付く）で分ける
         return {
-          move: (xx) => {
-            const tt = tAt(xx);
-            if (fk === 'fadeIn') c.fadeIn = tt - c.start;
-            else c.fadeOut = c.end - tt;
-            clamp();
+          move: () => {},
+          end: (moved) => {
+            if (moved) return;
+            const res = splitClip(a.clips, hit, snap(t));
+            if (!res) { toast('クリップの端に近すぎて分けられません'); return; }
+            arrPush();
+            a.clips = res;
+            a.sel = hit + 1;
+            rerender();
+          },
+        };
+      }
+      if (hit >= 0) {
+        // クリップ: タップで選ぶ、ドラッグで動かす（左の端か右の端を、近いほうの吸い付く先へ）
+        const c0 = a.clips[hit];
+        const push = once();
+        let idx = hit;
+        return {
+          move: (_xx, _y, dx) => {
+            if (idx === hit) {
+              push();
+              const r = bringToTop(a.clips, hit);
+              a.clips = r.clips;
+              idx = r.index;
+              a.sel = idx;
+            }
+            let pos = c0.pos + (dx / W()) * a.span;
+            const sa = snap(pos, idx);
+            const sb = snap(pos + c0.len, idx) - c0.len;
+            pos = Math.abs(sa - pos) <= Math.abs(sb - pos) ? sa : sb;
+            a.clips[idx] = { ...a.clips[idx], pos: Math.max(0, Math.round(pos * 1000) / 1000) };
             update();
           },
-          end: () => rerender(),
+          end: (moved) => {
+            if (!moved) a.sel = hit;
+            rerender();
+          },
         };
       }
-      // 端（縦線の近く）
-      const ek = Math.abs(x - xAt(c.start)) < 18 ? 'start' : Math.abs(x - xAt(c.end)) < 18 ? 'end' : null;
-      if (ek) {
-        const v0 = c[ek];
-        return {
-          move: (_xx, _y, dx) => { c[ek] = v0 + (dx / W()) * c.span; clamp(); update(); },
-          end: (moved) => { if (!moved) { c.cursor = c[ek]; update(); } else rerender(); },
-        };
-      }
-      // ほか: ドラッグで表示する所を動かす、タップで再生する所
-      const v0 = c.viewAt;
+      // 何も無い所: ドラッグで表示を動かす、タップで選ぶのをやめて再生を始める所
+      const v0 = a.viewAt;
       return {
-        move: (_xx, _y, dx) => { c.viewAt = v0 - (dx / W()) * c.span; clampView(); update(); },
-        end: (moved) => { if (!moved) { c.cursor = Math.max(0, Math.min(c.dur, t)); update(); } },
+        move: (_xx, _y, dx) => { a.viewAt = v0 - (dx / W()) * a.span; clampView(); update(); },
+        end: (moved) => {
+          if (moved) return;
+          a.sel = -1;
+          a.play = Math.max(0, snap(t));
+          rerender();
+        },
       };
     },
-    pan: (dx) => { c.viewAt -= (dx / W()) * c.span; clampView(); update(); },
+    pan: (dx) => { a.viewAt -= (dx / W()) * a.span; clampView(); update(); },
     zoom: (k, x) => {
       const tx = tAt(x);
-      c.span *= k;
+      a.span *= k;
       clampView();
-      c.viewAt = tx - (x / W() - 0.5) * c.span;
+      a.viewAt = tx - (x / W() - 0.5) * a.span;
       clampView();
       update();
     },
   });
 
-  // ---- 値の箱 ----
+  // ---- 値の箱（選んでいるクリップ） ----
   const box = (k: string) => body.querySelector<HTMLElement>(`[data-dv="${k}"]`)!;
-  const timeBox = (k: 'start' | 'end') => ({
-    get: () => fmtCut(c[k]),
-    step: (n: number) => { c[k] += n * 0.01; clamp(); },
+  const setSel = (fn: (c: Clip) => Clip) => { if (a.clips[a.sel]) a.clips[a.sel] = fixFades(fn(a.clips[a.sel])); };
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  const timeBox = (get: (c: Clip) => number, set: (c: Clip, v: number) => Clip, step = 0.01) => ({
+    get: () => (a.clips[a.sel] ? fmtCut(get(a.clips[a.sel])) : '—'),
+    step: (n: number) => setSel((c) => set(c, r3(get(c) + n * step))),
     px: 4,
-    tap: () => inlineInput(box(k), fmtCut(c[k]), (v) => { const t = parseCut(v); if (Number.isFinite(t)) { c[k] = t; clamp(); } update(); }),
+    tap: () => {
+      const c = a.clips[a.sel];
+      if (!c) return;
+      inlineInput(box(boxKey), fmtCut(get(c)), (v) => { const t = parseCut(v); if (Number.isFinite(t)) { arrPush(); setSel((cc) => set(cc, r3(t))); } rerender(); });
+    },
   });
-  const secBox = (k: 'fadeIn' | 'fadeOut' | 'pad') => ({
-    get: () => `${c[k].toFixed(k === 'pad' ? 1 : 2)} 秒`,
-    step: (n: number) => { c[k] = Math.round((c[k] + n * (k === 'pad' ? 0.1 : 0.05)) * 100) / 100; clamp(); },
-    px: 8,
-    tap: () => inlineInput(box(k), String(c[k]), (v) => { const t = Number(v.replace(/秒$/, '')); if (Number.isFinite(t)) { c[k] = t; clamp(); } update(); }),
-  });
-  refreshBoxes = bindValueBoxes(body, {
-    start: timeBox('start'),
-    end: timeBox('end'),
-    fadeIn: secBox('fadeIn'),
-    fadeOut: secBox('fadeOut'),
-    pad: secBox('pad'),
-  }, { begin: () => {}, end: () => {}, changed: () => update() });
+  let boxKey = '';
+  const boxes: Record<string, ValueBox> = {
+    pos: timeBox((c) => c.pos, (c, v) => ({ ...c, pos: Math.max(0, v) })),
+    len: timeBox((c) => c.len, (c, v) => trimEnd(c, c.pos + v, a.dur)),
+    src: timeBox((c) => c.src, (c, v) => ({ ...c, src: Math.max(0, Math.min(a.dur - c.len, v)) })),
+    fadeIn: { get: () => `${(a.clips[a.sel]?.fadeIn ?? 0).toFixed(2)} 秒`, step: (n: number) => setSel((c) => ({ ...c, fadeIn: r3(c.fadeIn + n * 0.05) })), px: 8 },
+    fadeOut: { get: () => `${(a.clips[a.sel]?.fadeOut ?? 0).toFixed(2)} 秒`, step: (n: number) => setSel((c) => ({ ...c, fadeOut: r3(c.fadeOut + n * 0.05) })), px: 8 },
+  };
+  // 入力欄を出す箱を覚えるため、tap を包む
+  for (const [k, d] of Object.entries(boxes)) {
+    const tap = d.tap;
+    if (tap) d.tap = () => { boxKey = k; tap(); };
+  }
+  let pushed = false;
+  refreshBoxes = sel ? bindValueBoxes(body, boxes, {
+    begin: () => { if (!pushed) { arrPush(); pushed = true; } },
+    end: () => { pushed = false; },
+    changed: () => update(),
+  }) : () => {};
   update();
+  body.querySelectorAll<HTMLElement>('[data-dvs]').forEach((b) => b.addEventListener('click', rerender));
 
-  body.querySelectorAll<HTMLButtonElement>('[data-czoom]').forEach((b) => b.addEventListener('click', () => { c.span *= Number(b.dataset.czoom); clampView(); update(); }));
-  body.querySelector('[data-cfit]')!.addEventListener('click', () => { c.viewAt = c.dur / 2; c.span = c.dur * 1.04; clampView(); update(); });
-  body.querySelector('[data-chome]')!.addEventListener('click', () => { c.cursor = c.start; if (c.start < c.viewAt - c.span / 2 || c.start > c.viewAt + c.span / 2) c.viewAt = c.start + c.span * 0.4; update(); });
-  body.querySelector('[data-cplayhere]')!.addEventListener('click', async () => {
-    if (cutPlay.on) { stopCutPlay(); rerender(); return; }
-    const from = c.cursor >= c.start && c.cursor < c.end ? c.cursor : c.start;
-    await startCutPlay(from, c.end);
+  // ---- ボタン ----
+  const on = (sel_: string, fn: (b: HTMLElement) => void) => body.querySelectorAll<HTMLElement>(sel_).forEach((b) => b.addEventListener('click', () => { fn(b); rerender(); }));
+  on('[data-atool]', (b) => { a.tool = b.dataset.atool as 'move' | 'split'; });
+  on('[data-asnap]', () => { a.snap = a.snap === 'bar' ? 'beat' : a.snap === 'beat' ? 'off' : 'bar'; });
+  on('[data-aundo]', () => { const s = a.undo.pop(); if (!s) return; a.redo.push(arrSnap()); arrRestore(s); });
+  on('[data-aredo]', () => { const s = a.redo.pop(); if (!s) return; a.undo.push(arrSnap()); arrRestore(s); });
+  on('[data-ahome]', () => { a.play = 0; if (a.viewAt - a.span / 2 > 0) a.viewAt = a.span * 0.45; });
+  on('[data-adesel]', () => { a.sel = -1; });
+  on('[data-areset]', () => {
+    arrPush();
+    a.clips = [{ src: 0, len: a.dur, pos: 0, fadeIn: 0, fadeOut: 0 }];
+    a.sel = -1;
+  });
+  const splitAtPlay = (i: number) => {
+    const res = splitClip(a.clips, i, a.play);
+    if (!res) { toast('再生位置がクリップの端に近すぎて分けられません'); return; }
+    arrPush();
+    a.clips = res;
+    a.sel = i + 1;
+  };
+  on('[data-asplitplay]', () => {
+    const i = clipAt(a.clips, a.play);
+    if (i < 0) toast('再生位置にクリップがありません');
+    else splitAtPlay(i);
+  });
+  on('[data-abub]', (b) => {
+    const i = a.sel;
+    const c = a.clips[i];
+    if (!c) return;
+    const k = b.dataset.abub;
+    if (k === 'split') splitAtPlay(i);
+    else if (k === 'dup') {
+      // すぐ後ろに複製して、それを選ぶ（ドラッグで好きな所へ）
+      arrPush();
+      a.clips = [...a.clips, { ...c, pos: r3(clipEnd(c)) }];
+      a.sel = a.clips.length - 1;
+      const e = clipEnd(a.clips[a.sel]);
+      if (e > a.viewAt + a.span / 2) a.viewAt = e - a.span * 0.4;
+    } else if (k === 'del') {
+      if (a.clips.length <= 1) { toast('最後のクリップは消せません'); return; }
+      arrPush();
+      a.clips = a.clips.filter((_, j) => j !== i);
+      a.sel = -1;
+    }
+  });
+  body.querySelectorAll<HTMLButtonElement>('[data-azoom]').forEach((b) => b.addEventListener('click', () => { a.span *= Number(b.dataset.azoom); clampView(); update(); }));
+  body.querySelector('[data-afit]')!.addEventListener('click', () => { const tt = arrTotal(); a.viewAt = tt / 2; a.span = tt * 1.04; clampView(); update(); });
+  body.querySelector('[data-aplay]')!.addEventListener('click', async () => {
+    if (arrPlay.on) { stopArrPlay(); rerender(); return; }
+    await startArrPlay(Math.min(a.play, Math.max(0, arrangeLength(a.clips) - 0.05)));
     rerender();
   });
-  // 試聴: 始まりから 4 秒、終わりの 4 秒前から終わりまで
-  body.querySelectorAll<HTMLButtonElement>('[data-cplay]').forEach((b) => b.addEventListener('click', async () => {
-    const from = b.dataset.cplay === 'start' ? c.start : Math.max(c.start, c.end - 4);
-    const to = b.dataset.cplay === 'start' ? Math.min(c.end, c.start + 4) : c.end;
-    c.cursor = from;
-    await startCutPlay(from, to);
-    rerender();
-  }));
-  body.querySelectorAll<HTMLButtonElement>('[data-cact]').forEach((b) => b.addEventListener('click', async () => {
-    stopCutPlay();
-    if (b.dataset.cact === 'ok') await applyCut();
+  body.querySelectorAll<HTMLButtonElement>('[data-aact]').forEach((b) => b.addEventListener('click', async () => {
+    stopArrPlay();
+    if (b.dataset.aact === 'ok') await applyCut();
     closeSheet();
   }));
 }
 
-/** カットを反映: 切り出し・フェード・頭の無音を付けて .ogg にし直し、OFFSET と DEMOSTART を合わせる */
+/** 反映: 並べた音を .ogg にして音源を入れ替え、譜面の頭の音を使っているクリップに合わせて OFFSET と DEMOSTART を直す */
 async function applyCut() {
-  const c = cutState;
+  const a = arrState;
   const buf = audio.buffer;
   if (!buf) return;
+  const c0 = a.clips[0];
+  if (a.clips.length === 1 && c0.pos === 0 && c0.src === 0 && Math.abs(c0.len - a.dur) < 0.002 && !c0.fadeIn && !c0.fadeOut) return; // 変えていない
   const sr = buf.sampleRate;
-  const s0 = Math.round(c.start * sr);
-  const s1 = Math.round(c.end * sr);
-  const pad = Math.round(c.pad * sr);
-  const fi = Math.round(c.fadeIn * sr);
-  const fo = Math.round(c.fadeOut * sr);
-  const chs = bufferChannels(buf).map((ch) => {
-    const out = new Float32Array(pad + (s1 - s0));
-    out.set(ch.subarray(s0, s1), pad);
-    const n = s1 - s0;
-    for (let i = 0; i < fi && i < n; i++) out[pad + i] *= i / fi;
-    for (let i = 0; i < fo && i < n; i++) out[pad + n - 1 - i] *= i / fo;
-    return out;
-  });
+  const chs = renderClips(bufferChannels(buf), sr, a.clips);
   try {
-    busy('カットした音源を .ogg にしています…', 0);
-    const data = await pcmToOgg(chs, sr, (p) => busy('カットした音源を .ogg にしています…', p));
+    busy('切り貼りした音源を .ogg にしています…', 0);
+    const data = await pcmToOgg(chs, sr, (p) => busy('切り貼りした音源を .ogg にしています…', p));
     const name = oggName(ed.audio?.name ?? `${safeName(ed.chart.title)}.ogg`);
-    const shift = c.start - c.pad;
+    const shift = refShift(a.clips, -ed.chart.offset);
+    const demo = mapTime(a.clips, ed.chart.demoStart) ?? ed.chart.demoStart + shift;
     ed.mutate(() => {
-      ed.chart.offset = Math.round((ed.chart.offset + shift) * 1000) / 1000;
-      ed.chart.demoStart = Math.max(0, Math.round((ed.chart.demoStart - shift) * 1000) / 1000);
+      ed.chart.offset = Math.round((ed.chart.offset - shift) * 1000) / 1000;
+      ed.chart.demoStart = Math.max(0, Math.round(demo * 1000) / 1000);
       ed.chart.wave = name;
     });
     await setAudio({ name, data });
     busyEnd();
-    toast('カットを反映しました');
+    toast('切り貼りを反映しました');
   } catch (err) {
     busyEnd();
     toast(`反映できませんでした: ${(err as Error).message}`);

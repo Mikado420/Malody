@@ -120,9 +120,10 @@ export class AudioEngine {
   }
 
   /**
-   * 曲の songTime 秒の位置から rate 倍速で再生（songTime が負なら、その分待ってから曲が始まる）
+   * 曲の songTime 秒の位置から rate 倍速で再生（songTime が負なら、その分待ってから曲が始まる）。
+   * buf を渡すと、読み込んだ曲の代わりにその音を鳴らす（音源の切り貼りの確認用）
    */
-  async startAt(songTime: number, rate = 1) {
+  async startAt(songTime: number, rate = 1, buf?: AudioBuffer) {
     await this.ctx.resume();
     this.stop();
     this.rate = rate;
@@ -134,9 +135,10 @@ export class AudioEngine {
     this.lastSample = -Infinity;
     this.perfZero = this.perfZeroCandidate() ?? performance.now() + 30;
     this.playing = true;
-    if (this.music && songTime < this.music.duration) {
+    const music = buf ?? this.music;
+    if (music && songTime < music.duration) {
       const src = this.ctx.createBufferSource();
-      src.buffer = this.music;
+      src.buffer = music;
       src.playbackRate.value = rate;
       src.connect(this.musicGain);
       src.start(this.startedAt + Math.max(0, -songTime) / rate, Math.max(0, songTime));
