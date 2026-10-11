@@ -2779,14 +2779,16 @@ async function importLink(url: string, target: 'home' | 'editor') {
 // ---------- 音源の切り貼り ----------
 // FL Studio Mobile のプレイリストのように、音源をクリップにして、分ける・消す・複製・動かす・端を詰める。
 // 音量は FL Studio のオートメーションのように、点を線でつないで描く。
-// 画面のスクロールは上の小節のバー（ルーラー）をドラッグ。ルーラーをタップすると切り取りのマーク（黄色）がそこへ、
-// マークを長押ししてから動かしても動く。グリッド（小節・1/2〜1/32）に吸い付く。
+// 画面のスクロールは上の小節のバー（ルーラー）をドラッグ（再生中も勝手には動かさない）。
+// ルーラーをタップすると切り取りのマーク（黄色）がそこへ、マークを長押ししてから動かしても動く。
+// マークを下へドラッグして離すと、そこでクリップを切る。マーク・クリップの移動・端・音量の点はグリッドに合わせる。
+// 2 本指で横に拡大・縮小、縦に開くと波形の高さを拡大・縮小。
 // 「反映」で並べた音を .ogg にして、譜面の OFFSET を合わせる
 
 /** グリッド: -1 = 小節の頭、0 = なし、n = 1 小節（4/4）を n 分割（エディタのグリッドと同じ数え方） */
 const ARR_GRIDS = [-1, 2, 4, 8, 16, 32, 0];
 const arrGridLabel = (g: number) => (g === -1 ? '小節' : g === 0 ? 'なし' : `1/${g}`);
-type ArrTool = 'move' | 'split' | 'auto';
+type ArrTool = 'move' | 'auto';
 const arrState = {
   clips: [] as Clip[],
   /** 選んでいるクリップ（-1 は無し） */
@@ -2804,6 +2806,10 @@ const arrState = {
   gridMenu: false,
   /** マークを長押しして掴んでいるか（表示用） */
   markHold: false,
+  /** マークを下へドラッグ中（離すと切る）。その指の y（トラックの中の座標）。-1 は無し */
+  cutDrag: -1,
+  /** 波形の縦の拡大（1 = 上下に少し余白を残す高さ） */
+  vz: 1,
   undo: [] as string[],
   redo: [] as string[],
 };
@@ -2818,7 +2824,7 @@ function openCut() {
   if (Number.isNaN(arrState.grid)) arrState.grid = [2, 4, 8, 16, 32].includes(ed.divisor) ? ed.divisor : 4;
   Object.assign(arrState, {
     clips: [{ src: 0, len: d, pos: 0, env: [] }],
-    sel: -1, dur: d, viewAt: d / 2, span: d * 1.04, play: 0, undo: [], redo: [], gridMenu: false, markHold: false,
+    sel: -1, dur: d, viewAt: d / 2, span: d * 1.04, play: 0, undo: [], redo: [], gridMenu: false, markHold: false, cutDrag: -1, tool: 'move',
   });
   arrCache = null;
   openSheet('cut');
@@ -2856,7 +2862,24 @@ function arrGrid(t0: number, t1: number, div: number): { t: number; bar: boolean
   const out: { t: number; bar: boolean; beat: boolean; n: number }[] = [];
   const endTick = Math.max(0, tm.timeToTick(t1 - sh)) + TPB * 8;
   const step = div > 0 ? (TPB * 4) / div : Infinity;
-  for (const m of ed.measuresUntil(endTick)) {
+  const ms = ed.measuresUntil(endTick);
+  // 譜面の頭より前（新しい音源の頭のほう）にも、最初の小節の長さ・BPM で線を伸ばす
+  if (ms.length) {
+    const m0 = ms[0];
+    const h0 = tm.tickToTime(0) + sh;
+    const st = div > 0 ? step : m0.length;
+    const dt = tm.tickToTime(st) - tm.tickToTime(0);
+    const beat0 = (TPB * 4) / m0.den;
+    const pre: { t: number; bar: boolean; beat: boolean; n: number }[] = [];
+    for (let k = 1; dt > 0 && h0 - k * dt >= t0 - 0.5 && k < 100000; k++) {
+      const t = h0 - k * dt;
+      if (t > t1 + 0.5) continue;
+      const tick = (((-k * st) % m0.length) + m0.length) % m0.length;
+      pre.push({ t, bar: tick === 0, beat: Math.abs(tick / beat0 - Math.round(tick / beat0)) < 1e-6, n: 0 });
+    }
+    out.push(...pre.reverse());
+  }
+  for (const m of ms) {
     const head = tm.tickToTime(m.start) + sh;
     if (head > t1 + 0.5) break;
     if (tm.tickToTime(m.start + m.length) + sh < t0 - 0.5) continue;
@@ -2871,12 +2894,20 @@ function arrGrid(t0: number, t1: number, div: number): { t: number; bar: boolean
   return out;
 }
 
-/** 吸い付く先: グリッド・ほかのクリップの端・マーク・0 秒（グリッドが「なし」なら吸い付かない） */
-function arrSnapCands(t: number, span: number, except = -1, withMark = true): number[] {
-  if (arrState.grid === 0) return [];
-  const g = arrGrid(t - span, t + span, arrState.grid).map((x) => x.t);
-  const edges = arrState.clips.flatMap((c, i) => (i === except ? [] : [c.pos, clipEnd(c)]));
-  return [...g, ...edges, ...(withMark ? [arrState.play] : []), 0];
+/**
+ * グリッドに合わせる: いちばん近いグリッドの線へ（タップでもドラッグでも）。
+ * ほかのクリップの端・マーク・0 秒が tol 秒以内でグリッドより近ければ、そちらへ。グリッドが「なし」ならそのまま
+ */
+function arrQuantize(t: number, tol: number, except = -1, withMark = true): number {
+  const a = arrState;
+  if (a.grid === 0) return t;
+  const win = Math.max(4, a.span);
+  let g = t;
+  let gd = Infinity;
+  for (const x of arrGrid(t - win, t + win, a.grid)) { const d = Math.abs(x.t - t); if (d < gd) { gd = d; g = x.t; } }
+  const edges = a.clips.flatMap((c, i) => (i === except ? [] : [c.pos, clipEnd(c)]));
+  const e = snapTo(t, [...edges, ...(withMark ? [a.play] : []), 0], tol);
+  return e !== t && Math.abs(e - t) < gd ? e : g;
 }
 
 function stopArrPlay() {
@@ -2903,14 +2934,12 @@ async function startArrPlay(from: number) {
 function tickArrPlay() {
   if (sheet !== 'cut') { stopArrPlay(); return; }
   const now = audio.now();
-  const a = arrState;
   if (now >= arrPlay.until) {
     stopArrPlay();
     renderSheet();
     return;
   }
-  // 再生位置が表示の外へ出たら、ページをめくる
-  if (now > a.viewAt + a.span / 2 || now < a.viewAt - a.span / 2) a.viewAt = now + a.span * 0.4;
+  // 画面は動かさない（スクロールは上の小節のバーだけ）
   drawArr(now);
 }
 
@@ -2929,7 +2958,12 @@ function drawClipWave(ctx: CanvasRenderingContext2D, c: Clip, x0: number, x1: nu
   const a = arrState;
   const t0 = a.viewAt - a.span / 2;
   const mid = y0 + h / 2;
-  const amp = h / 2 - 2;
+  // ふだんは上下に余白を残す（FL Studio のように）。縦に拡大すると、はみ出した分はクリップの枠で切れる
+  const amp = (h / 2) * 0.7 * a.vz;
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(x0, y0, x1 - x0, h);
+  ctx.clip();
   for (let x = Math.max(0, Math.floor(x0)); x < Math.min(W, Math.ceil(x1)); x++) {
     const ta = t0 + (x / W) * a.span;
     const tb = t0 + ((x + 1) / W) * a.span;
@@ -2942,6 +2976,7 @@ function drawClipWave(ctx: CanvasRenderingContext2D, c: Clip, x0: number, x1: nu
     const g = envAt(c.env, c.src + ta - c.pos);
     ctx.fillRect(x, mid - mx * amp * g, 1, Math.max(1, mx * amp * 2 * g));
   }
+  ctx.restore();
 }
 
 function drawArr(playhead = -1) {
@@ -3108,29 +3143,47 @@ function drawArr(playhead = -1) {
     }
   }
   ctx.restore();
-  // 切り取りのマーク（再生もここから）・再生中の位置
+  // 切り取りのマーク（再生もここから）: 縦の線と、ルーラーの中の三角 1 つ。長押しで掴んでいる間は大きく
   const mx = xOf(a.play);
-  if (playhead >= 0) {
-    ctx.fillStyle = 'rgba(255,201,77,0.5)';
-    ctx.fillRect(mx - 0.5, A_RULER, 1, HH - A_RULER);
-    drawPlayhead(ctx, xOf(playhead), HH, A_RULER);
-  } else {
-    drawPlayhead(ctx, mx, HH, A_RULER);
-    // 掴める所（ルーラーの中の大きい三角）。長押しで掴んでいる間は大きく
-    const r = a.markHold ? 12 : 8;
-    ctx.fillStyle = PLAYHEAD;
-    ctx.beginPath();
-    ctx.moveTo(mx - r, A_RULER - r * 1.6);
-    ctx.lineTo(mx + r, A_RULER - r * 1.6);
-    ctx.lineTo(mx, A_RULER);
-    ctx.closePath();
-    ctx.fill();
-    if (a.markHold) {
-      ctx.strokeStyle = '#fff';
-      ctx.lineWidth = 2;
-      ctx.stroke();
-    }
+  ctx.fillStyle = playhead >= 0 ? 'rgba(255,201,77,0.55)' : PLAYHEAD;
+  ctx.fillRect(Math.round(mx) - 1, A_RULER, 2, HH - A_RULER);
+  const tr = a.markHold || a.cutDrag >= 0 ? 12 : 9;
+  ctx.fillStyle = PLAYHEAD;
+  ctx.beginPath();
+  ctx.moveTo(mx - tr, A_RULER - tr * 1.7);
+  ctx.lineTo(mx + tr, A_RULER - tr * 1.7);
+  ctx.lineTo(mx, A_RULER);
+  ctx.closePath();
+  ctx.fill();
+  if (a.markHold || a.cutDrag >= 0) {
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
+  // マークを下へドラッグ中: 切る所を見せる（クリップの上まで来たら、離すとそこで切る）
+  if (a.cutDrag >= 0) {
+    const ready = a.cutDrag > A_RULER + 24;
+    const ci = clipAt(a.clips, a.play);
+    ctx.strokeStyle = ready && ci >= 0 ? '#ff7a6a' : 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([7, 5]);
+    ctx.beginPath();
+    ctx.moveTo(mx, A_RULER);
+    ctx.lineTo(mx, Math.min(HH, Math.max(A_RULER, a.cutDrag)));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const label = ci < 0 ? 'ここにクリップがありません' : ready ? '✂ 離すとここで切る' : '下へドラッグで切る';
+    ctx.font = '800 13px system-ui, sans-serif';
+    const lw = ctx.measureText(label).width + 16;
+    const lx = Math.max(4, Math.min(W - lw - 4, mx + 10));
+    const ly = Math.min(HH - 30, Math.max(A_RULER + 6, a.cutDrag - 14));
+    ctx.fillStyle = ready && ci >= 0 ? '#ff7a6a' : 'rgba(29,32,35,0.92)';
+    ctx.fillRect(lx, ly, lw, 26);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(label, lx + 8, ly + 18);
+  }
+  // 再生中の位置
+  if (playhead >= 0) drawPlayhead(ctx, xOf(playhead), HH, A_RULER);
   // クリップの上の操作ボタン（選んでいるとき・オートメーションでないとき。クリップの真ん中の上）
   const bub = document.getElementById('arrBub');
   if (bub) {
@@ -3148,8 +3201,6 @@ function drawArr(playhead = -1) {
 }
 
 const ARR_IC = {
-  move: '<path d="M5 3l14 8-6 1.8L10.5 19z" class="fill"/>',
-  split: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>',
   auto: '<path d="M3 17 9 8l6 6 6-9"/><circle cx="9" cy="8" r="2" class="fill"/><circle cx="15" cy="14" r="2" class="fill"/>',
   grid: '<path d="M4 4v16M10 4v16M16 4v16M20 4v16"/><path d="M2 20h20"/>',
 };
@@ -3190,7 +3241,7 @@ function renderCutSheet(body: HTMLElement) {
           <button data-asplitplay>✂ マークで分割</button>
           <button data-areset ${a.undo.length ? '' : 'disabled'}>最初に戻す</button>
         </div>
-        <p class="arr-hint">上の小節のバーをドラッグで移動・タップでマーク。クリップはタップで選ぶ・ドラッグで動かす</p>`;
+        <p class="arr-hint">上の小節のバー: ドラッグで移動・タップでマーク・マークを下へドラッグで切る。2 本指で拡大（縦に開くと波形の高さ）</p>`;
   })();
   body.innerHTML = `<div class="daw">
     <header class="daw-top">
@@ -3202,20 +3253,13 @@ function renderCutSheet(body: HTMLElement) {
       <button class="daw-ic" data-ahome aria-label="マークを頭へ">${IC.home}</button>
       <button class="daw-ic daw-play ${arrPlay.on ? 'on' : ''}" data-aplay aria-label="${arrPlay.on ? '止める' : 'マークから再生'}">${arrPlay.on ? IC.stop : IC.play}</button>
       <div class="daw-lcd"><b id="arrLcdPos"></b><small id="arrLcdBar"></small></div>
+      <span class="daw-sep"></span>
+      <button class="daw-tg ${a.tool === 'auto' ? 'on' : ''}" data-aauto aria-pressed="${a.tool === 'auto'}">${ic(ARR_IC.auto)}<span>音量</span></button>
+      <button class="daw-tg ${a.gridMenu ? 'open' : ''}" data-agrid>${ic(ARR_IC.grid)}<span>${arrGridLabel(a.grid)}</span></button>
       <span class="daw-sp"></span>
       <button class="daw-ok" data-aact="ok">${IC.ok}<span>反映</span></button>
     </header>
     <div class="daw-main">
-      <nav class="daw-tools">
-        <button data-atool="move" class="${a.tool === 'move' ? 'on' : ''}">${ic(ARR_IC.move)}<small>選ぶ</small></button>
-        <button data-atool="split" class="${a.tool === 'split' ? 'on' : ''}">${ic(ARR_IC.split)}<small>分ける</small></button>
-        <button data-atool="auto" class="${a.tool === 'auto' ? 'on' : ''}">${ic(ARR_IC.auto)}<small>音量</small></button>
-        <button data-agrid class="${a.grid !== 0 ? 'snap-on' : ''} ${a.gridMenu ? 'open' : ''}">${ic(ARR_IC.grid)}<small>${arrGridLabel(a.grid)}</small></button>
-        <span class="daw-sp"></span>
-        <button data-azoom="0.5" aria-label="拡大">${IC.plus}</button>
-        <button data-azoom="2" aria-label="縮小">${IC.minus}</button>
-        <button data-afit aria-label="全体を表示">${IC.fit}</button>
-      </nav>
       ${a.gridMenu ? `<div class="arr-gridmenu">${ARR_GRIDS.map((g) => `<button data-agridset="${g}" class="${g === a.grid ? 'on' : ''}">${arrGridLabel(g)}</button>`).join('')}</div>` : ''}
       <div class="daw-stage">
         <canvas id="arrOv" class="daw-ov"></canvas>
@@ -3228,9 +3272,12 @@ function renderCutSheet(body: HTMLElement) {
     <footer class="daw-insp fit">${insp}</footer>
   </div>`;
   const rerender = () => renderCutSheet(body);
-  // グリッドのメニューは、グリッドのボタンの横に出す
+  // グリッドのメニューは、グリッドのボタンの下に出す
   const gm = body.querySelector<HTMLElement>('.arr-gridmenu');
-  if (gm) gm.style.top = `${Math.max(0, body.querySelector<HTMLElement>('[data-agrid]')!.offsetTop - 4)}px`;
+  if (gm) {
+    const gb = body.querySelector<HTMLElement>('[data-agrid]')!;
+    gm.style.left = `${Math.max(4, Math.min(gb.offsetLeft, body.clientWidth - gm.offsetWidth - 4))}px`;
+  }
   const clampView = () => {
     const total = arrTotal();
     a.span = Math.min(total * 1.3, Math.max(0.05, a.span));
@@ -3258,7 +3305,7 @@ function renderCutSheet(body: HTMLElement) {
   const tAt = (x: number) => a.viewAt - a.span / 2 + (x / W()) * a.span;
   const xAt = (t: number) => ((t - (a.viewAt - a.span / 2)) / a.span) * W();
   const tol = () => (12 / W()) * a.span;
-  const snap = (t: number, except = -1, withMark = true) => snapTo(t, arrSnapCands(t, a.span, except, withMark), tol());
+  const snap = (t: number, except = -1, withMark = true) => arrQuantize(t, tol(), except, withMark);
   /** 動かし始めたら 1 回だけ元に戻すの記録を取る */
   const once = () => { let done = false; return () => { if (!done) { arrPush(); done = true; } }; };
   let lastPointTap = { at: 0, k: -1 };
@@ -3266,15 +3313,22 @@ function renderCutSheet(body: HTMLElement) {
     single: (x, y) => {
       const t = tAt(x);
       if (y < A_RULER) {
-        // ルーラー: ドラッグで画面を動かす。タップでマークをそこへ。マークを長押ししてから動かすとマークが動く
+        // ルーラー: ドラッグで画面を動かす。タップでマークをそこへ（グリッドに合わせる）。
+        // マークを長押ししてから横に動かすとマークが動き、マークを下へドラッグして離すとそこで切る
         const v0 = a.viewAt;
-        const nearMark = Math.abs(x - xAt(a.play)) < 22;
+        const nearMark = Math.abs(x - xAt(a.play)) < 24;
         let hold = false;
-        const timer = nearMark ? window.setTimeout(() => { hold = true; a.markHold = true; navigator.vibrate?.(15); update(); }, 320) : 0;
+        let mode: 'none' | 'scroll' | 'cut' = 'none';
+        const timer = nearMark ? window.setTimeout(() => { hold = true; a.markHold = true; navigator.vibrate?.(15); update(); }, 300) : 0;
         const setMark = (xx: number) => { a.play = Math.max(0, snap(tAt(xx), -1, false)); update(); };
         return {
-          move: (xx, _y, dx) => {
+          move: (xx, yy, dx) => {
+            const dy = yy - y;
+            if (mode === 'none' && nearMark && dy > 14 && dy > Math.abs(dx) * 1.2) mode = 'cut';
+            if (mode === 'cut') { clearTimeout(timer); a.markHold = false; a.cutDrag = yy; update(); return; }
             if (hold) { setMark(xx); return; }
+            if (mode === 'none' && Math.abs(dx) < 6) return;
+            mode = 'scroll';
             clearTimeout(timer);
             a.viewAt = v0 - (dx / W()) * a.span;
             clampView();
@@ -3282,11 +3336,26 @@ function renderCutSheet(body: HTMLElement) {
           },
           end: (moved) => {
             clearTimeout(timer);
-            if (!moved && !hold) setMark(x);
             a.markHold = false;
+            if (mode === 'cut') {
+              const ready = a.cutDrag > A_RULER + 24;
+              a.cutDrag = -1;
+              if (ready) {
+                const i = clipAt(a.clips, a.play);
+                if (i < 0) toast('マークの所にクリップがありません');
+                else {
+                  const res = splitClip(a.clips, i, a.play);
+                  if (!res) toast('マークがクリップの端に近すぎて切れません');
+                  else { arrPush(); a.clips = res; a.sel = i + 1; }
+                }
+              }
+              rerender();
+              return;
+            }
+            if (!moved && !hold) setMark(x);
             if (hold || !moved) rerender();
           },
-          cancel: () => { clearTimeout(timer); a.markHold = false; },
+          cancel: () => { clearTimeout(timer); a.markHold = false; a.cutDrag = -1; update(); },
         };
       }
       const yy = y - A_RULER;
@@ -3366,21 +3435,6 @@ function renderCutSheet(body: HTMLElement) {
           };
         }
       }
-      if (hit >= 0 && a.tool === 'split') {
-        // 分けるツール: タップした所（グリッドに吸い付く）で分ける
-        return {
-          move: () => {},
-          end: (moved) => {
-            if (moved) return;
-            const res = splitClip(a.clips, hit, snap(t));
-            if (!res) { toast('クリップの端に近すぎて分けられません'); return; }
-            arrPush();
-            a.clips = res;
-            a.sel = hit + 1;
-            rerender();
-          },
-        };
-      }
       if (hit >= 0) {
         // クリップ: タップで選ぶ、ドラッグで動かす（左の端か右の端を、近いほうの吸い付く先へ）
         const c0 = a.clips[hit];
@@ -3420,6 +3474,8 @@ function renderCutSheet(body: HTMLElement) {
       clampView();
       update();
     },
+    // 縦に開く・閉じる: 波形の高さ
+    vzoom: (k) => { a.vz = Math.max(0.5, Math.min(12, a.vz * k)); update(); },
   });
 
   // ---- 値の箱（選んでいるクリップ） ----
@@ -3451,7 +3507,7 @@ function renderCutSheet(body: HTMLElement) {
 
   // ---- ボタン ----
   const on = (q: string, fn: (b: HTMLElement) => void) => body.querySelectorAll<HTMLElement>(q).forEach((b) => b.addEventListener('click', () => { fn(b); rerender(); }));
-  on('[data-atool]', (b) => { a.tool = b.dataset.atool as ArrTool; a.gridMenu = false; });
+  on('[data-aauto]', () => { a.tool = a.tool === 'auto' ? 'move' : 'auto'; a.gridMenu = false; });
   on('[data-agrid]', () => { a.gridMenu = !a.gridMenu; });
   on('[data-agridset]', (b) => { a.grid = Number(b.dataset.agridset); a.gridMenu = false; });
   on('[data-aundo]', () => { const s = a.undo.pop(); if (!s) return; a.redo.push(arrSnap()); arrRestore(s); });
@@ -3504,8 +3560,6 @@ function renderCutSheet(body: HTMLElement) {
       a.sel = -1;
     }
   });
-  body.querySelectorAll<HTMLButtonElement>('[data-azoom]').forEach((b) => b.addEventListener('click', () => { a.span *= Number(b.dataset.azoom); clampView(); update(); }));
-  body.querySelector('[data-afit]')!.addEventListener('click', () => { const tt = arrTotal(); a.viewAt = tt / 2; a.span = tt * 1.04; clampView(); update(); });
   body.querySelector('[data-aplay]')!.addEventListener('click', async () => {
     if (arrPlay.on) { stopArrPlay(); rerender(); return; }
     await startArrPlay(Math.min(a.play, Math.max(0, arrangeLength(a.clips) - 0.05)));

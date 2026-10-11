@@ -1114,7 +1114,7 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .sheet .daw-insp.fit .daw-acts button { padding: 2px 10px; }
 .sheet .daw-insp.fit .arr-hint { flex: 1 1 0; min-width: 0; max-width: none; }
 /* グリッドのメニュー（左のツールの横に出す） */
-.sheet .arr-gridmenu { position: absolute; z-index: 3; left: calc(58px + var(--safe-l)); display: flex; flex-direction: row; gap: 2px; padding: 3px; background: var(--deep); border: 1.5px solid rgba(255, 255, 255, 0.8); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6); }
+.sheet .arr-gridmenu { position: absolute; z-index: 3; top: 2px; display: flex; flex-direction: row; gap: 2px; padding: 3px; background: var(--deep); border: 1.5px solid rgba(255, 255, 255, 0.8); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6); }
 .sheet .arr-gridmenu button { min-width: 50px; padding: 8px 10px; font: 700 15px var(--fd), sans-serif; white-space: nowrap; }
 .sheet .arr-gridmenu button.on { background: var(--accent); }
 .sheet .daw-tools button.open { background: rgba(255, 255, 255, 0.12); }
@@ -1122,5 +1122,14 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
   .sheet .daw-tools button { min-height: 37px; padding: 2px 0; }
   .sheet .daw-tools svg { width: 20px; height: 20px; }
   .sheet .daw-insp.fit .dv-v { font-size: 15px; }
+}
+/* 上のバーの切り替えボタン（音量・グリッド） */
+.sheet .daw-tg { display: flex; align-items: center; gap: 5px; height: 34px; margin: 0 2px; padding: 0 10px; font-size: 13px; font-weight: 800; background: var(--btn); white-space: nowrap; }
+.sheet .daw-tg svg { width: 18px; height: 18px; }
+.sheet .daw-tg.on { background: var(--accent); }
+.sheet .daw-tg.open { background: rgba(255, 255, 255, 0.16); }
+/* 幅の狭い画面では、上のバーの題名を出さない */
+@media (max-width: 760px) {
+  .sheet .daw-top .daw-title { display: none; }
 }
 

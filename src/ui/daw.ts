@@ -4,7 +4,8 @@ import { localPoint } from '../orient';
  * FL Studio Mobile のような操作の部品（BPM・OFFSET の画面と、音源カットの画面で使う）。
  *
  * - bindTimeline: 波形の上の指の操作。2 本指でピンチ（横に拡大・縮小）と移動、
- *   マウスのホイールで移動（Ctrl / ⌘ を押しながら、またはトラックパッドのピンチで拡大・縮小）。
+ *   vzoom があれば、縦に開く・閉じるピンチで縦に拡大・縮小（波形の高さ）。
+ *   マウスのホイールで移動（Ctrl / ⌘ を押しながら、またはトラックパッドのピンチで拡大・縮小、Alt / Shift で縦）。
  *   1 本指は single() が返した操作に任せる（null なら表示する所を動かす）
  * - bindValueBoxes: 値の箱。上下にドラッグで値を変える（上で増える）。‹ › で 1 つずつ、値をタップで入力
  *
@@ -27,6 +28,8 @@ export interface TimelineOpts {
   pan(dx: number): void;
   /** x px の所を中心に、表示する長さを k 倍にする（k < 1 で拡大） */
   zoom(k: number, x: number): void;
+  /** 縦に k 倍（波形の高さ）。無ければ縦のピンチも横の拡大・縮小になる */
+  vzoom?(k: number): void;
   /** 指を全部離したあと（描き直しなど） */
   done?(): void;
 }
@@ -40,11 +43,11 @@ export function bindTimeline(el: HTMLElement, o: TimelineOpts) {
   let moved = false;
   let panning = false;
   let lastX = 0;
-  let pinch: { d: number; mx: number } | null = null;
+  let pinch: { d: number; mx: number; dy: number; vertical: boolean } | null = null;
 
-  const pinchInfo = () => {
+  const pinchInfo = (vertical = false) => {
     const [a, b] = [...pts.values()];
-    return { d: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2 };
+    return { d: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2, dy: Math.max(10, Math.abs(a.y - b.y)), vertical };
   };
 
   el.addEventListener('pointerdown', (e) => {
@@ -62,7 +65,9 @@ export function bindTimeline(el: HTMLElement, o: TimelineOpts) {
       single?.cancel?.();
       single = null;
       panning = false;
-      pinch = pinchInfo();
+      // 2 本の指が縦に並んでいれば縦のピンチ
+      const [a, b] = [...pts.values()];
+      pinch = pinchInfo(!!o.vzoom && Math.abs(a.y - b.y) > Math.abs(a.x - b.x) * 1.2);
     }
   });
   el.addEventListener('pointermove', (e) => {
@@ -70,9 +75,12 @@ export function bindTimeline(el: HTMLElement, o: TimelineOpts) {
     const p = localPoint(e, el);
     pts.set(e.pointerId, p);
     if (pts.size >= 2 && pinch) {
-      const now = pinchInfo();
-      o.zoom(pinch.d / now.d, now.mx);
-      o.pan(now.mx - pinch.mx);
+      const now = pinchInfo(pinch.vertical);
+      if (pinch.vertical) o.vzoom?.(now.dy / pinch.dy);
+      else {
+        o.zoom(pinch.d / now.d, now.mx);
+        o.pan(now.mx - pinch.mx);
+      }
       pinch = now;
       return;
     }
@@ -114,7 +122,8 @@ export function bindTimeline(el: HTMLElement, o: TimelineOpts) {
   el.addEventListener('wheel', (e) => {
     e.preventDefault();
     const p = localPoint(e, el);
-    if (e.ctrlKey || e.metaKey) o.zoom(Math.exp(e.deltaY * 0.01), p.x);
+    if (o.vzoom && (e.altKey || e.shiftKey)) o.vzoom(Math.exp(-(e.deltaY || e.deltaX) * 0.01));
+    else if (e.ctrlKey || e.metaKey) o.zoom(Math.exp(e.deltaY * 0.01), p.x);
     else o.pan(-(Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY));
     o.done?.();
   }, { passive: false });
