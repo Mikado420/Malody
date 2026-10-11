@@ -1139,4 +1139,11 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .sheet .arr-row { flex: 1; min-height: 0; display: flex; }
 .sheet .arr-head { flex: none; display: block; width: calc(46px + var(--safe-l)); height: 100%; touch-action: none; }
 .sheet .arr-row .daw-wave { flex: 1; min-width: 0; width: auto; height: 100%; }
+/* クリップの上のボタン: ふだんは分割・複製・削除、音量のときはフェード */
+.sheet .arr-bub .b-auto { display: none; }
+.sheet .arr-bub.auto .b-auto { display: block; }
+.sheet .arr-bub.auto .b-move { display: none; }
+.sheet .arr-bub button:disabled { opacity: 0.4; }
+.sheet .daw-insp.fit .dv-wide { flex-grow: 1.6; }
+.sheet .daw-ic.open { background: rgba(255, 255, 255, 0.16); }
 
