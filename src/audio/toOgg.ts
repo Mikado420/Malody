@@ -17,13 +17,13 @@ interface OggEncoder {
   finalize(): Uint8Array;
 }
 
-/** PCM（チャンネルごと）→ .ogg のバイト列 */
-export async function pcmToOgg(channels: Float32Array[], sampleRate: number, progress?: (p: number) => void): Promise<ArrayBuffer> {
+/** PCM（チャンネルごと）→ .ogg のバイト列。quality は Vorbis の品質（0〜10。5 で約 160kbps、8 で約 256kbps） */
+export async function pcmToOgg(channels: Float32Array[], sampleRate: number, progress?: (p: number) => void, quality = 5): Promise<ArrayBuffer> {
   // @ts-ignore 型は依存パッケージ側にある（入れていない環境でも型チェックが通るように）
   const mod = (await import('wasm-media-encoders')) as { createOggEncoder: () => Promise<OggEncoder> };
   const enc = await mod.createOggEncoder();
   const chs = channels.slice(0, 2);
-  enc.configure({ channels: chs.length, sampleRate, vbrQuality: 5 });
+  enc.configure({ channels: chs.length, sampleRate, vbrQuality: quality });
   const parts: Uint8Array[] = [];
   const len = chs[0].length;
   const step = sampleRate; // 1 秒ずつ

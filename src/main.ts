@@ -19,6 +19,7 @@ import { EditorView, eventText, EVENT_COLOR, type EventItem, type EventShow } fr
 import { loadFiles, type AudioFile } from './io/load';
 import { encodeSJIS } from './chart/sjis';
 import { bufferChannels, isOgg, oggName, pcmToOgg } from './audio/toOgg';
+import { boostWithLimiter, oggSampleRate } from './audio/loudness';
 import { fetchLink, testSetup, type LinkResult } from './io/linkFetch';
 import { fetchYoutubePublic, youtubeId } from './io/ytPublic';
 import { loadAudio, loadChart, loadHitSound, saveHitSound } from './io/storage';
@@ -1150,6 +1151,35 @@ function download(blob: Blob, name: string) {
 
 const safeName = (s: string) => (s || 'chart').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
 
+/** 書き出す音源の音量（アプリの中で保存している音源に対して） */
+const EXPORT_GAIN = 1.5;
+/**
+ * 書き出す音源（.zip に入れる .ogg）: 音量を 1.5 倍にする。大きい所はリミッターで抑えて音割れさせない。
+ * 音質を落とさないよう、元の .ogg のサンプリング周波数のまま読み、高音質（品質 8）で .ogg にし直す。
+ * アプリの中の音源（保存しているもの）は変えないので、何度書き出しても劣化は重ならない。
+ * うまくいかないときは、元の音源をそのまま返す
+ */
+async function exportAudioData(a: AudioFile): Promise<ArrayBuffer> {
+  try {
+    busy('書き出す音源の音量を上げています…', 0);
+    const rate = oggSampleRate(a.data) || audio.buffer?.sampleRate || 44100;
+    let buf: AudioBuffer;
+    try {
+      buf = await new OfflineAudioContext(2, 1, rate).decodeAudioData(a.data.slice(0));
+    } catch {
+      buf = await audio.ctx.decodeAudioData(a.data.slice(0));
+    }
+    const chs = boostWithLimiter(bufferChannels(buf), buf.sampleRate, EXPORT_GAIN);
+    const data = await pcmToOgg(chs, buf.sampleRate, (p) => busy('書き出す音源の音量を上げています…', p), 8);
+    busyEnd();
+    return data;
+  } catch (err) {
+    busyEnd();
+    toast(`音量を上げられなかったので、元の音源のまま書き出します（${(err as Error).message}）`);
+    return a.data;
+  }
+}
+
 async function fileAction(act: string) {
   if (act === 'open') pickFiles('any');
   else if (act === 'audio') { srcTarget = 'editor'; openSheet('src'); }
@@ -1169,7 +1199,7 @@ async function fileAction(act: string) {
     const files: { name: string; data: Uint8Array; compress?: boolean }[] = [];
     if (ed.audio) {
       ed.chart.wave = ed.audio.name;
-      files.push({ name: `${name}/${ed.audio.name}`, data: new Uint8Array(ed.audio.data) });
+      files.push({ name: `${name}/${ed.audio.name}`, data: new Uint8Array(await exportAudioData(ed.audio)) });
     }
     const tja = encodeSJIS(writeTJA(ed.chart));
     files.unshift({ name: `${name}/${name}.tja`, data: tja, compress: true });
@@ -3789,7 +3819,9 @@ async function applyCut() {
   const c0 = a.clips[0];
   if (a.clips.length === 1 && arrSources.length === 1 && c0.pos === 0 && c0.src === 0 && Math.abs(c0.len - a.dur) < 0.002 && !c0.env.length) return; // 変えていない
   const sr = arrSources[0].buf.sampleRate;
-  const chs = arrRender();
+  // トラックを重ねて大きくなった所は、音割れしないようにリミッターで抑える（1 トラックだけなら何もしない）
+  const multi = new Set(a.clips.map((c) => c.track)).size > 1;
+  const chs = multi ? boostWithLimiter(arrRender(), sr, 1, 0.99) : arrRender();
   try {
     busy('切り貼りした音源を .ogg にしています…', 0);
     const data = await pcmToOgg(chs, sr, (p) => busy('切り貼りした音源を .ogg にしています…', p));
