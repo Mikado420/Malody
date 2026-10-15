@@ -50,6 +50,10 @@ export function bindTimeline(el: HTMLElement, o: TimelineOpts) {
     return { d: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)), mx: (a.x + b.x) / 2, dy: Math.max(10, Math.abs(a.y - b.y)), vertical };
   };
 
+  // iPhone の Safari が指の動きをスクロールなどに使って、ドラッグを途中で取り消さないように
+  const stop = (e: TouchEvent) => { if (e.cancelable) e.preventDefault(); };
+  el.addEventListener('touchstart', stop, { passive: false });
+  el.addEventListener('touchmove', stop, { passive: false });
   el.addEventListener('pointerdown', (e) => {
     el.setPointerCapture(e.pointerId);
     const p = localPoint(e, el);

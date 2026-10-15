@@ -3495,6 +3495,9 @@ function renderCutSheet(body: HTMLElement) {
   const trackAt = (y: number) => Math.floor((y - A_RULER + a.vscroll) / lanes().laneH);
   const tol = () => (12 / W()) * a.span;
   const snap = (t: number, except = -1, withMark = true) => arrQuantize(t, tol(), except, withMark);
+  /** ドラッグ中: グリッドの線（端・マーク）の近くに来たときだけ吸い付き、ほかは指のとおりに動く */
+  const magnet = () => (14 / W()) * a.span;
+  const snapNear = (t: number, except = -1) => { const g = snap(t, except); return Math.abs(g - t) <= magnet() ? g : t; };
   /** 動かし始めたら 1 回だけ元に戻すの記録を取る */
   const once = () => { let done = false; return () => { if (!done) { arrPush(); done = true; } }; };
   let lastPointTap = { at: 0, k: -1 };
@@ -3645,7 +3648,7 @@ function renderCutSheet(body: HTMLElement) {
             move: (xx) => {
               push();
               const c = a.clips[a.sel];
-              const tt = snap(tAt(xx), a.sel);
+              const tt = snapNear(tAt(xx), a.sel);
               a.clips[a.sel] = left ? trimStart(c, tt) : trimEnd(c, tt, srcDur(c));
               update();
             },
@@ -3667,10 +3670,15 @@ function renderCutSheet(body: HTMLElement) {
               idx = r.index;
               a.sel = idx;
             }
-            let pos = c0.pos + (dx / W()) * a.span;
-            const sa = snap(pos, idx);
-            const sb = snap(pos + c0.len, idx) - c0.len;
-            pos = Math.abs(sa - pos) <= Math.abs(sb - pos) ? sa : sb;
+            // 指のとおりに動かし、頭か終わりがグリッドの線の近くに来たら吸い付く
+            const raw = c0.pos + (dx / W()) * a.span;
+            const sa = snapNear(raw, idx);
+            const sb = snapNear(raw + c0.len, idx) - c0.len;
+            const da = Math.abs(sa - raw);
+            const db = Math.abs(sb - raw);
+            let pos = raw;
+            if (da > 0 && (db === 0 || da <= db)) pos = sa;
+            else if (db > 0) pos = sb;
             const track = Math.max(0, Math.min(a.tracks - 1, trackAt(yy)));
             a.clips[idx] = { ...a.clips[idx], pos: Math.round(pos * 1000) / 1000, track };
             update();
