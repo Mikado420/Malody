@@ -773,7 +773,7 @@ function renderSheet() {
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
       <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
-      <h3>音量（自動で同じ大きさに揃えてから、この比率を掛けます）</h3>
+      <h3>音量（自動で同じ大きさに揃えてから、この比率を掛けます。.zip の音源も、音源と打音の比率に合わせて書き出します）</h3>
       <label class="field"><span>音源</span><input type="range" min="0" max="2" step="0.05" data-set="volMusic" value="${settings.volMusic}"><output>${settings.volMusic.toFixed(2)}</output></label>
       <label class="field"><span>打音</span><input type="range" min="0" max="2" step="0.05" data-set="volHit" value="${settings.volHit}"><output>${settings.volHit.toFixed(2)}</output></label>
       <label class="field"><span>メトロノーム</span><input type="range" min="0" max="2" step="0.05" data-set="volMetro" value="${settings.volMetro}"><output>${settings.volMetro.toFixed(2)}</output></label>
@@ -1152,16 +1152,16 @@ function download(blob: Blob, name: string) {
 const safeName = (s: string) => (s || 'chart').replace(/[\\/:*?"<>|]+/g, '_').slice(0, 80);
 
 /** 書き出す音源の音量（アプリの中で保存している音源に対して） */
-const EXPORT_GAIN = 1.5;
 /**
- * 書き出す音源（.zip に入れる .ogg）: 音量を 1.5 倍にする。大きい所はリミッターで抑えて音割れさせない。
- * 音質を落とさないよう、元の .ogg のサンプリング周波数のまま読み、高音質（品質 8）で .ogg にし直す。
+ * 書き出す音源（.zip に入れる .ogg）: 設定の音量の比率（音源 : 打音）に合わせた大きさにする。
+ * 音源と打音（ドン）を同じ大きさに揃えてから比率を掛けるので、書き出した先で打音をそのまま鳴らすと、エディタと同じ聞こえ方になる。
+ * 大きくして音割れする所はリミッターで抑える。元の .ogg のサンプリング周波数のまま読み、高音質（品質 8）で .ogg にし直す。
  * アプリの中の音源（保存しているもの）は変えないので、何度書き出しても劣化は重ならない。
- * うまくいかないときは、元の音源をそのまま返す
+ * 倍率がほぼ 1 のときや、うまくいかないときは、元の音源をそのまま返す
  */
 async function exportAudioData(a: AudioFile): Promise<ArrayBuffer> {
   try {
-    busy('書き出す音源の音量を上げています…', 0);
+    busy('書き出す音源の音量を合わせています…', 0);
     const rate = oggSampleRate(a.data) || audio.buffer?.sampleRate || 44100;
     let buf: AudioBuffer;
     try {
@@ -1169,13 +1169,21 @@ async function exportAudioData(a: AudioFile): Promise<ArrayBuffer> {
     } catch {
       buf = await audio.ctx.decodeAudioData(a.data.slice(0));
     }
-    const chs = boostWithLimiter(bufferChannels(buf), buf.sampleRate, EXPORT_GAIN);
-    const data = await pcmToOgg(chs, buf.sampleRate, (p) => busy('書き出す音源の音量を上げています…', p), 8);
+    const gain = audio.exportGain(buf, settings.volMusic, settings.volHit);
+    if (Math.abs(gain - 1) < 0.01) {
+      busyEnd();
+      return a.data;
+    }
+    const msg = `書き出す音源の音量を ×${gain.toFixed(2)} にしています…`;
+    busy(msg, 0);
+    const chs = boostWithLimiter(bufferChannels(buf), buf.sampleRate, gain);
+    const data = await pcmToOgg(chs, buf.sampleRate, (p) => busy(msg, p), 8);
     busyEnd();
+    toast(`音源を ×${gain.toFixed(2)}（音源 ${settings.volMusic.toFixed(2)} : 打音 ${settings.volHit.toFixed(2)}）で書き出しました`);
     return data;
   } catch (err) {
     busyEnd();
-    toast(`音量を上げられなかったので、元の音源のまま書き出します（${(err as Error).message}）`);
+    toast(`音量を合わせられなかったので、元の音源のまま書き出します（${(err as Error).message}）`);
     return a.data;
   }
 }

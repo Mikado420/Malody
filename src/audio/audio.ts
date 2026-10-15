@@ -92,6 +92,18 @@ export class AudioEngine {
     return lv > 0 ? Math.min(8, AudioEngine.TARGET / lv) : 1;
   }
 
+  /**
+   * 書き出す音源（.zip の .ogg）に掛ける倍率。
+   * 音源と打音（ドン）を同じ大きさに揃えたうえで、設定の比率（音源 : 打音）になるようにする。
+   * 書き出した先では打音はそのままの大きさで鳴るので、「打音の大きさ ÷ 音源の大きさ × 音源の比率 ÷ 打音の比率」倍にする
+   */
+  exportGain(buf: AudioBuffer, volMusic: number, volHit: number): number {
+    const lm = AudioEngine.level(buf, false);
+    const lh = AudioEngine.level(this.customHit.don ?? this.builtinHit('don'), true);
+    if (!(lm > 0) || !(lh > 0) || !(volHit > 0)) return 1;
+    return (lh / lm) * (volMusic / volHit);
+  }
+
   private measureHit(kind: HitSound) {
     this.hitLevel[kind] = AudioEngine.level(this.customHit[kind] ?? this.builtinHit(kind), true);
   }
