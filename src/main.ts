@@ -693,9 +693,29 @@ function openSheet(kind: SheetKind) {
   document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
 }
+/** 切り貼りの確認再生用に作った音（並べ方が同じなら使い回す） */
+let arrCache: { key: string; buf: AudioBuffer } | null = null;
+
+/**
+ * 画面から外したキャンバスのメモリをすぐ空ける。
+ * iPhone の Safari はキャンバスのメモリの合計に上限があり、外したキャンバスも GC されるまでメモリを使い続ける。
+ * 切り貼り・BPM 測定の画面は操作のたびに描き直す（キャンバスを作り直す）ので、放っておくと上限を超えて
+ * 波形が描かれなくなり（動かしても変わらないように見える）、最後はアプリが落ちる
+ */
+const releaseCanvas = (n: Node) => {
+  const list = n instanceof HTMLCanvasElement ? [n] : n instanceof Element ? [...n.querySelectorAll('canvas')] : [];
+  for (const c of list) { c.width = 0; c.height = 0; }
+};
+new MutationObserver((recs) => { for (const r of recs) r.removedNodes.forEach(releaseCanvas); })
+  .observe($('sheetBody'), { childList: true, subtree: true });
+
 function closeSheet() {
   stopTempoPreview();
   stopArrPlay();
+  // 切り貼りで作った音（曲の長さぶん）は持ち続けない
+  arrCache = null;
+  // 閉じた画面のキャンバスも空ける
+  $('sheetBody').querySelectorAll('canvas').forEach(releaseCanvas);
   sheet = null;
   document.body.classList.remove('tja-open');
   $('sheet').classList.add('hidden');
@@ -2451,7 +2471,8 @@ function bindTempoDrag(
 
 /** キャンバスの大きさを画面に合わせる */
 function fitCanvas(cv: HTMLCanvasElement) {
-  const dpr = Math.min(3, window.devicePixelRatio || 1);
+  // 3 倍の画面でも 2 倍で描く（見た目はほぼ同じで、キャンバスのメモリは半分以下）
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
   const W = Math.max(1, cv.clientWidth);
   const H = Math.max(1, cv.clientHeight);
   if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) {
@@ -2867,7 +2888,6 @@ const arrState = {
 };
 /** 確認再生（並べた音を作って鳴らす。until 秒で止める） */
 const arrPlay = { on: false, until: 0, origin: 0 };
-let arrCache: { key: string; buf: AudioBuffer } | null = null;
 
 function openCut() {
   const buf = audio.buffer;
@@ -2983,6 +3003,8 @@ async function startArrPlay(from: number) {
   stopArrPlay();
   const key = JSON.stringify(arrState.clips) + arrSources.length;
   if (!arrCache || arrCache.key !== key) {
+    // 前に作った音を先に手放してから作る（曲の長さぶんの音を 2 つ同時に持たない）
+    arrCache = null;
     const chs = arrRender();
     const b = audio.ctx.createBuffer(chs.length, chs[0].length, arrSources[0].buf.sampleRate);
     chs.forEach((d, i) => b.getChannelData(i).set(d));
