@@ -5,7 +5,7 @@
  * 過ぎたら約 80ms かけて戻す。超えない所は、ちょうど gain 倍（音は変わらず大きくなるだけ）。
  * 全チャンネルに同じ音量を掛けるので、左右の定位は変わらない。
  */
-export function boostWithLimiter(chs: Float32Array[], sr: number, gain: number, ceiling = 0.95): Float32Array[] {
+export function boostWithLimiter(chs: Float32Array[], sr: number, gain: number, ceiling = 0.95, inPlace = false): Float32Array[] {
   const n = chs[0]?.length ?? 0;
   // その所で必要な音量（1 = 下げなくてよい）
   const need = new Float64Array(n);
@@ -33,8 +33,9 @@ export function boostWithLimiter(chs: Float32Array[], sr: number, gain: number, 
       if (fwd < g[i]) g[i] = fwd;
     }
   }
+  // inPlace なら渡した配列をそのまま書き換える（曲の長さぶんの配列を新しく作らない）
   return chs.map((c) => {
-    const o = new Float32Array(n);
+    const o = inPlace ? c : new Float32Array(n);
     for (let i = 0; i < n; i++) o[i] = c[i] * gain * g[i];
     return o;
   });

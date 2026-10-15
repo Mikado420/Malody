@@ -8,7 +8,7 @@ import type { Note } from './chart/types';
 import { DEMO_TJA } from './demo';
 import { buildAutoEvents, type AutoEvent } from './play/auto';
 import { bindTimeline, bindValueBoxes, drawPlayhead, drawRuler, inlineInput, PLAYHEAD, valueBoxHtml, type ValueBox } from './ui/daw';
-import { addFadeIn, addFadeOut, arrangeLength, arrangeStart, bringToTop, clipAt, clipEnd, envAt, mapTime, MIN_LEN, refShift, renderClips, snapTo, sortEnv, splitClip, trimEnd, trimStart, type Clip, type EnvPoint } from './audio/arrange';
+import { addFadeIn, addFadeOut, arrangeLength, arrangeStart, bringToTop, clipAt, clipEnd, envAt, mapTime, MIN_LEN, refShift, renderClips, renderSize, snapTo, sortEnv, splitClip, trimEnd, trimStart, type Clip, type EnvPoint } from './audio/arrange';
 import { analyzeTempo, computeMeters, planBars, planBeatTimes, planTimeAt, tempoPlan, type Meter, type TempoOptions, type TempoPlan, type TempoResult } from './audio/tempo';
 import { meterAt as meterAtTick, moveBoundary, nudge, removeSection, sectionAtTime, sections as editSections, setBpm, setEnd, setMeter, setStart, shiftDownbeat, splitAt, tickAtTime } from './editor/tempoEdit';
 import { applyGrad, gradValid, type Grad } from './editor/grad';
@@ -693,6 +693,8 @@ function openSheet(kind: SheetKind) {
   document.body.classList.toggle('tja-open', kind === 'events');
   renderSheet();
 }
+/** 切り貼りで使う音源（0 = 譜面の音源、ほかは足した音源） */
+let arrSources: ArrSource[] = [];
 /** 切り貼りの確認再生用に作った音（並べ方が同じなら使い回す） */
 let arrCache: { key: string; buf: AudioBuffer } | null = null;
 
@@ -712,8 +714,9 @@ new MutationObserver((recs) => { for (const r of recs) r.removedNodes.forEach(re
 function closeSheet() {
   stopTempoPreview();
   stopArrPlay();
-  // 切り貼りで作った音（曲の長さぶん）は持ち続けない
+  // 切り貼りで作った音・足した音源（曲の長さぶん）は持ち続けない
   arrCache = null;
+  if (sheet === 'cut') arrSources = [];
   // 閉じた画面のキャンバスも空ける
   $('sheetBody').querySelectorAll('canvas').forEach(releaseCanvas);
   sheet = null;
@@ -2852,7 +2855,6 @@ const arrGridLabel = (g: number) => (g === -1 ? '小節' : g === 0 ? 'なし' : 
 type ArrTool = 'move' | 'auto';
 /** 音源（0 = 譜面の音源、ほかは足した音源） */
 interface ArrSource { name: string; buf: AudioBuffer }
-let arrSources: ArrSource[] = [];
 const arrState = {
   clips: [] as Clip[],
   /** トラックの数 */
@@ -3003,11 +3005,14 @@ async function startArrPlay(from: number) {
   stopArrPlay();
   const key = JSON.stringify(arrState.clips) + arrSources.length;
   if (!arrCache || arrCache.key !== key) {
-    // 前に作った音を先に手放してから作る（曲の長さぶんの音を 2 つ同時に持たない）
+    // 前に作った音を先に手放してから作る（曲の長さぶんの音を 2 つ同時に持たない）。
+    // 鳴らす音（AudioBuffer）の中に直接書くので、コピーも作らない
     arrCache = null;
-    const chs = arrRender();
-    const b = audio.ctx.createBuffer(chs.length, chs[0].length, arrSources[0].buf.sampleRate);
-    chs.forEach((d, i) => b.getChannelData(i).set(d));
+    const sr = arrSources[0].buf.sampleRate;
+    const srcs = arrSources.map((s) => bufferChannels(s.buf));
+    const { n, nch } = renderSize(srcs, sr, arrState.clips);
+    const b = audio.ctx.createBuffer(nch, n, sr);
+    renderClips(srcs, sr, arrState.clips, Array.from({ length: nch }, (_, i) => b.getChannelData(i)));
     arrCache = { key, buf: b };
   }
   const origin = arrangeStart(arrState.clips);
@@ -3859,7 +3864,9 @@ async function applyCut() {
   const sr = arrSources[0].buf.sampleRate;
   // トラックを重ねて大きくなった所は、音割れしないようにリミッターで抑える（1 トラックだけなら何もしない）
   const multi = new Set(a.clips.map((c) => c.track)).size > 1;
-  const chs = multi ? boostWithLimiter(arrRender(), sr, 1, 0.99) : arrRender();
+  // 確認再生用に作った音は手放してから作る（メモリを 2 つぶん使わない）。リミッターはその配列のまま書き換える
+  arrCache = null;
+  const chs = multi ? boostWithLimiter(arrRender(), sr, 1, 0.99, true) : arrRender();
   try {
     busy('切り貼りした音源を .ogg にしています…', 0);
     const data = await pcmToOgg(chs, sr, (p) => busy('切り貼りした音源を .ogg にしています…', p));

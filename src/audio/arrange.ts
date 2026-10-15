@@ -156,20 +156,44 @@ export function refShift(clips: Clip[], t: number): number {
  * クリップを並べた新しい音源を作る（チャンネルごと）。sources[音源][チャンネル]、どれも同じサンプリング周波数。
  * トラックごとに作ってから足し合わせる。モノラルの音源はステレオの両方に入れる
  */
-export function renderClips(sources: Float32Array[][], sr: number, clips: Clip[]): Float32Array[] {
+/** 並べた音の長さ（サンプル数）とチャンネル数 */
+export function renderSize(sources: Float32Array[][], sr: number, clips: Clip[]): { n: number; nch: number } {
   const origin = arrangeStart(clips);
   const n = Math.max(1, Math.ceil((arrangeLength(clips) - origin) * sr));
   const used = new Set(clips.map((c) => c.srcId));
   const nch = Math.max(1, ...[...used].map((i) => Math.min(2, sources[i]?.length ?? 1)));
-  const out = Array.from({ length: nch }, () => new Float32Array(n));
+  return { n, nch };
+}
+
+/**
+ * 並べた音を作る。out を渡すと、そこ（0 で埋まった、renderSize の大きさの配列）に書く。
+ * 曲の長さぶんの配列はとても大きい（3 分のステレオで約 70MB）ので、余計に作らない:
+ * トラックが 1 つなら out に直接、2 つ以上なら作業用を 1 組だけ使い回して足していく
+ */
+export function renderClips(sources: Float32Array[][], sr: number, clips: Clip[], outArg?: Float32Array[]): Float32Array[] {
+  const origin = arrangeStart(clips);
+  const { n, nch } = renderSize(sources, sr, clips);
+  const out = outArg ?? Array.from({ length: nch }, () => new Float32Array(n));
   const tracks = [...new Set(clips.map((c) => c.track))].sort((x, y) => x - y);
+  let tb: Float32Array[] | null = null;
   for (const tr of tracks) {
-    const tb = tracks.length === 1 ? out : Array.from({ length: nch }, () => new Float32Array(n));
-    for (const c of clips) {
-      if (c.track !== tr) continue;
-      writeClip(tb, sources[c.srcId] ?? [], sr, { ...c, pos: c.pos - origin }, n);
+    const mine = clips.filter((c) => c.track === tr);
+    if (tracks.length === 1) {
+      for (const c of mine) writeClip(out, sources[c.srcId] ?? [], sr, { ...c, pos: c.pos - origin }, n);
+      continue;
     }
-    if (tb !== out) for (let k = 0; k < nch; k++) { const o = out[k]; const t = tb[k]; for (let i = 0; i < n; i++) o[i] += t[i]; }
+    tb ??= Array.from({ length: nch }, () => new Float32Array(n));
+    // このトラックが使う所だけ、作業用を 0 に戻して書き、out に足す
+    let lo = n;
+    let hi = 0;
+    for (const c of mine) {
+      lo = Math.min(lo, Math.max(0, Math.round((c.pos - origin) * sr)));
+      hi = Math.max(hi, Math.min(n, Math.round((c.pos - origin + c.len) * sr) + 1));
+    }
+    if (hi <= lo) continue;
+    for (const t of tb) t.fill(0, lo, hi);
+    for (const c of mine) writeClip(tb, sources[c.srcId] ?? [], sr, { ...c, pos: c.pos - origin }, n);
+    for (let k = 0; k < nch; k++) { const o = out[k]; const t = tb[k]; for (let i = lo; i < hi; i++) o[i] += t[i]; }
   }
   return out;
 }
