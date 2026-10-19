@@ -74,7 +74,7 @@ const settings = {
   /** 拡大率の決め方の版（2 = プレイ画面と同じ間隔） */
   zoomVer: 0,
   /** レーンの下に出すイベントの種類 */
-  evShow: { bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true } as EventShow,
+  evShow: { bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true, jpos: true } as EventShow,
   /** 打音の比率の初期値を 0.8 にした版 */
   hitVolVer: 0,
 };
@@ -120,7 +120,7 @@ if (settings.zoomVer !== 2) {
   settings.zoomVer = 2;
 }
 view.playSpeed = settings.speed;
-settings.evShow = Object.assign({ bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true }, settings.evShow);
+settings.evShow = Object.assign({ bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true, jpos: true }, settings.evShow);
 view.evShow = settings.evShow;
 view.onEventTap = (items) => openEvents(items);
 const applyMix = () => audio.setMix({ music: settings.volMusic, hit: settings.volHit, metro: settings.volMetro });
@@ -782,6 +782,13 @@ function renderSheet() {
         <select data-course-name>${COURSE_NAMES.map((n) => `<option ${n === ed.course.name ? 'selected' : ''}>${n}</option>`).join('')}</select>
       </label>
       <label class="field"><span>レベル</span><input type="number" min="1" max="10" inputmode="numeric" data-course-level value="${ed.course.level}"></label>
+      <label class="field"><span>流れ方</span>
+        <select data-course-scroll>
+          <option value="" ${!ed.course.scrollMode ? 'selected' : ''}>ふつう</option>
+          <option value="hb" ${ed.course.scrollMode === 'hb' ? 'selected' : ''}>#HBSCROLL（BPM で急に変わる・SCROLL 無視）</option>
+          <option value="bm" ${ed.course.scrollMode === 'bm' ? 'selected' : ''}>#BMSCROLL（BPM で急に変わる・SCROLL 有効）</option>
+        </select>
+      </label>
       <div class="btns three">
         <button data-act="addCourse">追加</button>
         <button data-act="dupCourse">複製</button>
@@ -1008,6 +1015,12 @@ $('sheetBody').addEventListener('change', (e) => {
     });
   } else if (d.courseName !== undefined) {
     ed.mutate(() => { ed.course.name = el.value; });
+  } else if (d.courseScroll !== undefined) {
+    const v = el.value;
+    ed.mutate(() => {
+      if (v === 'hb' || v === 'bm') ed.course.scrollMode = v;
+      else delete ed.course.scrollMode;
+    });
   } else if (d.courseLevel !== undefined) {
     const v = Number(el.value);
     if (v > 0) ed.mutate(() => { ed.course.level = Math.round(v); });
@@ -1670,7 +1683,7 @@ function renderPointSheet(body: HTMLElement) {
 // ---------- レーンの下のイベント（タップしたとき） ----------
 
 const EV_NAMES: Partial<Record<keyof EventShow, string>> = {
-  bpm: 'BPM', scroll: 'SCROLL', measure: '拍子', delay: 'DELAY', barline: '小節線の表示',
+  bpm: 'BPM', scroll: 'SCROLL', measure: '拍子', delay: 'DELAY', barline: '小節線の表示', jpos: '判定枠の移動',
 };
 
 /** 一覧に出しているイベント */

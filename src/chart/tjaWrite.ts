@@ -18,6 +18,7 @@ function eventLine(e: EEvent): string {
     case 'gogo': return e.on ? '#GOGOSTART' : '#GOGOEND';
     case 'barline': return e.on ? '#BARLINEON' : '#BARLINEOFF';
     case 'delay': return `#DELAY ${num(e.value)}`;
+    case 'jpos': return `#JPOSSCROLL ${num(e.time)} ${num(e.dist)} ${e.dir}`;
   }
 }
 
@@ -40,6 +41,7 @@ export function writeTJA(chart: EChart): string {
     if (balloons.length) out.push(`BALLOON:${balloons.join(',')}`);
     for (const [k, v] of c.extra) out.push(`${k}:${v}`);
     out.push('');
+    if (c.scrollMode) out.push(c.scrollMode === 'hb' ? '#HBSCROLL' : '#BMSCROLL');
     out.push('#START');
     out.push(...writeCourseBody(c));
     out.push('#END');

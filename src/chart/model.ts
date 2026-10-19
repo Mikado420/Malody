@@ -1,4 +1,4 @@
-import type { BarLine, Course, Note, NoteType } from './types';
+import type { BarLine, BeatPoint, Course, JposMove, Note, NoteType } from './types';
 import type { Grad } from '../editor/grad';
 
 /**
@@ -23,7 +23,9 @@ export type EEvent =
   | { tick: number; kind: 'measure'; num: number; den: number }
   | { tick: number; kind: 'gogo'; on: boolean }
   | { tick: number; kind: 'barline'; on: boolean }
-  | { tick: number; kind: 'delay'; value: number };
+  | { tick: number; kind: 'delay'; value: number }
+  /** #JPOSSCROLL: 判定枠を time 秒かけて dist ピクセル動かす（dir: 1 = 右、0 = 左） */
+  | { tick: number; kind: 'jpos'; time: number; dist: number; dir: 0 | 1 };
 
 export type EventKind = EEvent['kind'];
 
@@ -34,6 +36,11 @@ export interface ECourse {
   events: EEvent[];
   /** LEVEL / BALLOON 以外の難易度ごとのヘッダ（SCOREINIT など）をそのまま保持 */
   extra: [string, string][];
+  /**
+   * 譜面の流れ方（#START の直前の #HBSCROLL / #BMSCROLL）。
+   * hb・bm は拍の数で位置を決めるので、BPM が変わった瞬間にレーン全体の速さが変わる。hb は #SCROLL を無視、bm は反映
+   */
+  scrollMode?: 'hb' | 'bm';
   /** グラデ（エディタの中だけで使う。.tja には書き込まない） */
   grads?: Grad[];
 }
@@ -71,7 +78,7 @@ export function newChart(title = '新しい譜面', bpm = 120): EChart {
 
 export const isLong = (t: NoteType) => t === 'roll' || t === 'bigRoll' || t === 'balloon';
 
-const EVENT_ORDER: EventKind[] = ['measure', 'bpm', 'scroll', 'gogo', 'barline', 'delay'];
+const EVENT_ORDER: EventKind[] = ['measure', 'bpm', 'scroll', 'gogo', 'barline', 'delay', 'jpos'];
 
 export function sortCourse(c: ECourse) {
   c.notes.sort((a, b) => a.tick - b.tick);
@@ -205,10 +212,51 @@ export class Timing {
   }
 }
 
+/**
+ * #HBSCROLL / #BMSCROLL の拍の位置。tick → 拍の位置（bm は #SCROLL を掛けて足す）と、時刻 → 拍の位置の表を作る
+ */
+export function beatTable(chart: EChart, course: ECourse, mode: 'hb' | 'bm') {
+  type P = { tick: number; time: number; beat: number; bpm: number; sc: number };
+  let bpm = chart.bpm > 0 ? chart.bpm : 120;
+  let p: P = { tick: 0, time: 0 - chart.offset, beat: 0, bpm, sc: 1 };
+  const pts: P[] = [p];
+  const time: BeatPoint[] = [{ time: p.time, beat: 0, rate: bpm / 60 }];
+  for (const e of course.events) {
+    const sc = e.kind === 'scroll' && mode === 'bm';
+    if (e.kind !== 'bpm' && e.kind !== 'delay' && !sc) continue;
+    const dTick = e.tick - p.tick;
+    const q: P = { ...p, tick: e.tick, time: p.time + (dTick / TPB) * (60 / p.bpm), beat: p.beat + (dTick / TPB) * p.sc };
+    if (e.kind === 'bpm' && e.value > 0) q.bpm = e.value;
+    if (e.kind === 'scroll') q.sc = e.value;
+    if (e.kind === 'delay') {
+      // DELAY の間は止まる
+      time.push({ time: q.time, beat: q.beat, rate: 0 });
+      q.time += e.value;
+    }
+    time.push({ time: q.time, beat: q.beat, rate: (q.bpm / 60) * q.sc });
+    pts.push(q);
+    p = q;
+  }
+  const beatOf = (tick: number) => {
+    let lo = 0;
+    let hi = pts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (pts[mid].tick <= tick) lo = mid;
+      else hi = mid - 1;
+    }
+    const a = pts[lo];
+    return a.beat + ((tick - a.tick) / TPB) * a.sc;
+  };
+  return { beatOf, points: time };
+}
+
 /** 編集用モデル → プレイ用（秒ベース）に変換 */
 export function toPlayable(chart: EChart, course: ECourse): Course {
   sortCourse(course);
   const t = new Timing(chart, course);
+  const mode = course.scrollMode;
+  const bt = mode ? beatTable(chart, course, mode) : null;
   const notes: Note[] = course.notes.map((n) => {
     const note: Note = {
       type: n.type,
@@ -219,13 +267,17 @@ export function toPlayable(chart: EChart, course: ECourse): Course {
     };
     if (n.endTick !== undefined) note.endTime = t.tickToTime(n.endTick);
     if (n.type === 'balloon') note.hits = n.hits ?? 5;
+    if (bt) {
+      note.beat = bt.beatOf(n.tick);
+      if (n.endTick !== undefined) note.endBeat = bt.beatOf(n.endTick);
+    }
     return note;
   });
   const bars: BarLine[] = [];
   for (const m of measures(course, contentEnd(course))) {
     if (m.start > contentEnd(course)) break;
     if (!t.barlineAt(m.start)) continue;
-    bars.push({ time: t.tickToTime(m.start), bpm: t.bpmAt(m.start), scroll: t.scrollAt(m.start) });
+    bars.push({ time: t.tickToTime(m.start), bpm: t.bpmAt(m.start), scroll: t.scrollAt(m.start), ...(bt ? { beat: bt.beatOf(m.start) } : {}) });
   }
   // ゴーゴー区間は「直前に通過したノーツ」ではなくイベントの時刻で決める
   // （#GOGOEND の後しばらくノーツがなくても、その時刻で解除されるように）
@@ -241,5 +293,15 @@ export function toPlayable(chart: EChart, course: ECourse): Course {
     }
   }
   if (from !== null) gogo.push([from, Infinity]);
-  return { name: course.name, level: course.level, notes, bars, gogo };
+  // 判定枠の移動（#JPOSSCROLL）
+  const jpos: JposMove[] = [];
+  for (const e of course.events) {
+    if (e.kind !== 'jpos') continue;
+    jpos.push({ start: t.tickToTime(e.tick), time: e.time, dx: (e.dir ? 1 : -1) * e.dist });
+  }
+  return {
+    name: course.name, level: course.level, notes, bars, gogo,
+    ...(mode && bt ? { scrollMode: mode, beatPoints: bt.points } : {}),
+    ...(jpos.length ? { jpos } : {}),
+  };
 }

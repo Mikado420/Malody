@@ -5,6 +5,7 @@ import { newCourse, sortCourse, TPB, type EChart, type ECourse, type EEvent } fr
  * TJA → 編集用モデル（tick ベース）
  * 対応: TITLE SUBTITLE BPM OFFSET WAVE DEMOSTART COURSE LEVEL BALLOON（他のヘッダは保持）
  *       #START #END #BPMCHANGE #SCROLL #MEASURE #DELAY #GOGOSTART #GOGOEND #BARLINEON #BARLINEOFF
+ *       #HBSCROLL #BMSCROLL（#START の直前） #JPOSSCROLL
  * 譜面分岐は「普通譜面 (#N)」だけ採用。2P 譜面 (#START P2) は無視。
  */
 
@@ -46,7 +47,7 @@ export function parseTJA(text: string): EChart {
     title: '', subtitle: '', wave: '', bpm: 120, offset: 0, demoStart: 0, extra: [], courses: [],
   };
 
-  let header = { name: 'Oni', level: 0, balloons: [] as number[], extra: [] as [string, string][] };
+  let header = { name: 'Oni', level: 0, balloons: [] as number[], extra: [] as [string, string][], scrollMode: undefined as 'hb' | 'bm' | undefined };
   let inChart = false;
   let items: Item[] = [];
   let branch: 'none' | 'N' | 'E' | 'M' = 'none';
@@ -75,6 +76,9 @@ export function parseTJA(text: string): EChart {
         items = [];
         st = newState();
         course = { ...newCourse(header.name, header.level), extra: header.extra.slice() };
+        if (header.scrollMode) course.scrollMode = header.scrollMode;
+        // 次の #START には持ち越さない（難易度ごとに書く）
+        header.scrollMode = undefined;
         continue;
       }
       if (name === 'END') {
@@ -83,6 +87,13 @@ export function parseTJA(text: string): EChart {
         sortCourse(course);
         chart.courses.push(course);
         inChart = false;
+        continue;
+      }
+      // 流れ方: #START の直前（または #START の後）に置く
+      if (name === 'HBSCROLL' || name === 'BMSCROLL') {
+        const mode = name === 'HBSCROLL' ? 'hb' : 'bm';
+        if (inChart) course.scrollMode = mode;
+        else header.scrollMode = mode;
         continue;
       }
       if (!inChart) continue;
@@ -109,7 +120,7 @@ export function parseTJA(text: string): EChart {
         case 'DEMOSTART': chart.demoStart = Number(val) || 0; break;
         case 'COURSE':
           // 新しい難易度: 難易度ごとのヘッダをリセット
-          header = { name: normalizeCourse(val), level: 0, balloons: [], extra: [] };
+          header = { name: normalizeCourse(val), level: 0, balloons: [], extra: [], scrollMode: header.scrollMode };
           break;
         case 'LEVEL': header.level = Number(val) || 0; break;
         case 'BALLOON':
@@ -215,6 +226,12 @@ function toEvent(name: string, arg: string, tick: number): EEvent | null {
     case 'GOGOEND': return { tick, kind: 'gogo', on: false };
     case 'BARLINEON': return { tick, kind: 'barline', on: true };
     case 'BARLINEOFF': return { tick, kind: 'barline', on: false };
+    case 'JPOSSCROLL': {
+      // a b c = 移動時間（秒）・移動距離（px）・向き（1 = 右、0 = 左）
+      const [a, b, c] = arg.split(/[\s,]+/).map(Number);
+      if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+      return { tick, kind: 'jpos', time: Math.max(0, a), dist: Math.abs(b), dir: c === 0 ? 0 : 1 };
+    }
     default: return null;
   }
 }

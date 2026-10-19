@@ -1,4 +1,4 @@
-import type { Course, Note } from '../chart/types';
+import { beatAt, jposAt, type Course, type Note } from '../chart/types';
 import { CLEAR_LINE, type Game, type HitKind, type Judge, type JudgeEvent, type NoteState } from '../engine/game';
 import { BIG_SCALE, clearTextCache, drawCachedText, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
 
@@ -20,6 +20,8 @@ const JX = 634; // 判定枠の中心
 const JY = 402;
 const NR = 54; // 通常ノーツの半径（黒縁を含む）
 const MEASURE_PX = 1470; // ハイスピード 1.0 で 1 小節が流れる距離
+/** #JPOSSCROLL の距離（px）は、横 1280 の画面での px として、この画面の基準座標（横 2000）に直す */
+const JPOS_SCALE = REF_W / 1280;
 const GAUGE = { x1: 768, x2: 1812, y1: 258, y2: 291, segs: 50 };
 const FLOWER = { x: 1912, y: 258, r: 96 };
 const DRUM = { x: 417, y: 418, r: 76 };
@@ -288,7 +290,7 @@ export class Renderer {
    */
   private gogoGrad: CanvasGradient | null = null;
   private gogoGradRight = 0;
-  private sprites = new Map<string, { c: HTMLCanvasElement; dx: number; dy: number }>();
+  private sprites = new Map<string, { c: HTMLCanvasElement; dx: number; dy: number; x0: number; y0: number }>();
 
   private drawSprite(key: string, x: number, y: number, w: number, h: number, paint: () => void, alpha = 1) {
     const sc = this.dpr * this.s;
@@ -310,14 +312,17 @@ export class Renderer {
       } finally {
         this.ctx = prev;
       }
-      sp = { c, dx, dy };
+      sp = { c, dx, dy, x0: x, y0: y };
       this.sprites.set(k, sp);
     }
+    // 作った後で位置が変わったら（#JPOSSCROLL で判定枠が動いたときなど）、その分ずらして貼る
+    const ox = Math.round(this.dpr * this.s * (x - sp.x0));
+    const oy = Math.round(this.dpr * this.s * (y - sp.y0));
     const ctx = this.ctx;
     ctx.save();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     if (alpha !== 1) ctx.globalAlpha *= alpha;
-    ctx.drawImage(sp.c, sp.dx, sp.dy);
+    ctx.drawImage(sp.c, sp.dx + ox, sp.dy + oy);
     ctx.restore();
   }
 
@@ -417,10 +422,26 @@ export class Renderer {
     return (MEASURE_PX * n.bpm * n.scroll * this.speed) / 240;
   }
 
+  /** 判定枠の中心（#JPOSSCROLL で動く） */
+  private jx = JX;
+  /** #HBSCROLL / #BMSCROLL のときの今の拍の位置（null ならふつうの流れ方） */
+  private beatNow: number | null = null;
+
+  /**
+   * 音符・小節線の x。ふつうは音符ごとの BPM・SCROLL の速さで流れる。
+   * #HBSCROLL / #BMSCROLL は拍の数の差で決める（BPM が変わるとレーン全体の速さが変わる）
+   */
+  private xOf(time: number, beat: number | undefined, n: { bpm: number; scroll: number }, now: number) {
+    if (this.beatNow !== null && beat !== undefined) return this.jx + (beat - this.beatNow) * (MEASURE_PX / 4) * this.speed;
+    return this.jx + (time - now) * this.velocity(n);
+  }
+
   draw(game: Game, course: Course, now: number, info: { title: string; course: string; level: number; genre?: string }) {
     const bars = course.bars;
     const ctx = this.ctx;
     const wall = performance.now();
+    this.jx = JX + jposAt(course.jpos, now) * JPOS_SCALE;
+    this.beatNow = course.beatPoints?.length ? beatAt(course.beatPoints, now) : null;
     const st = game.stats;
 
     if (st.combo > this.lastCombo) {
@@ -537,14 +558,14 @@ export class Renderer {
     if (gogo) this.drawFireball(wall);
     else {
       ctx.beginPath();
-      ctx.arc(JX, JY, NR - 2, 0, Math.PI * 2);
+      ctx.arc(this.jx, JY, NR - 2, 0, Math.PI * 2);
       ctx.fillStyle = '#1d1d1d';
       ctx.fill();
       ctx.lineWidth = 4;
       ctx.strokeStyle = '#6b6b6b';
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(JX, JY, 73, 0, Math.PI * 2);
+      ctx.arc(this.jx, JY, 73, 0, Math.PI * 2);
       ctx.lineWidth = 4;
       ctx.strokeStyle = '#5e5e5e';
       ctx.stroke();
@@ -554,7 +575,7 @@ export class Renderer {
     // 小節線
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     for (const b of bars) {
-      const x = JX + (b.time - now) * this.velocity(b);
+      const x = this.xOf(b.time, b.beat, b, now);
       if (x < LANE_X || x > right) continue;
       ctx.fillRect(x - 1.5, LANE_TOP, 3, LANE_BOTTOM - LANE_TOP);
     }
@@ -574,9 +595,8 @@ export class Renderer {
       const s = states[i];
       const n = s.note;
       if (s.done && !s.missed && n.type !== 'roll' && n.type !== 'bigRoll') continue;
-      const v = this.velocity(n);
-      let x = JX + (n.time - now) * v;
-      const endX = n.endTime !== undefined ? JX + (n.endTime - now) * v : x;
+      let x = this.xOf(n.time, n.beat, n, now);
+      const endX = n.endTime !== undefined ? this.xOf(n.endTime, n.endBeat, n, now) : x;
       if (endX < LANE_X - 120 || x > right + 120) continue;
       const r = isBig(n.type) ? NR * BIG_SCALE : NR;
 
@@ -585,7 +605,7 @@ export class Renderer {
         const active = now >= n.time && now <= (n.endTime ?? n.time);
         // 叩いている間は、レーンの音符の代わりにふくらむ風船を出す
         if (active && this.rollFx?.balloon) continue;
-        if (active) x = JX;
+        if (active) x = this.jx;
         if (now > (n.endTime ?? n.time)) continue;
         drawBalloon(ctx, x, JY, r, null);
       } else if (n.type === 'roll' || n.type === 'bigRoll') {
@@ -704,9 +724,9 @@ export class Renderer {
     const a = 0.85 * (ms < 100 ? 1 : ms < 240 ? 1 - ((ms - 100) / 140) * 0.6 : 0.4 * (1 - (ms - 240) / 240));
     const r = NR - 4;
     // 光の円は一度だけ描いておき、濃さ（a）を変えて貼る
-    this.drawSprite(`glow:${b.judge}`, JX - r - 2, JY - r - 2, r * 2 + 4, r * 2 + 4, () => {
+    this.drawSprite(`glow:${b.judge}`, this.jx - r - 2, JY - r - 2, r * 2 + 4, r * 2 + 4, () => {
       const c = this.ctx;
-      const g = c.createRadialGradient(JX, JY, 4, JX, JY, r);
+      const g = c.createRadialGradient(this.jx, JY, 4, this.jx, JY, r);
       if (b.judge === 'good') {
         g.addColorStop(0, 'rgb(255,246,150)');
         g.addColorStop(0.75, 'rgb(250,214,40)');
@@ -717,7 +737,7 @@ export class Renderer {
       }
       c.fillStyle = g;
       c.beginPath();
-      c.arc(JX, JY, r, 0, Math.PI * 2);
+      c.arc(this.jx, JY, r, 0, Math.PI * 2);
       c.fill();
     }, a);
     void ctx;
@@ -731,7 +751,7 @@ export class Renderer {
       const k = 0.92 + 0.12 * ease(Math.min(1, ms / 80));
       const half = (b.big ? 230 : 130) * k;
       ctx.globalAlpha = 0.8 * (ms < 90 ? 1 : 1 - (ms - 90) / 110);
-      ctx.drawImage(this.burstSprite(b.judge, b.big), JX - half, JY - half, half * 2, half * 2);
+      ctx.drawImage(this.burstSprite(b.judge, b.big), this.jx - half, JY - half, half * 2, half * 2);
     }
     ctx.globalAlpha = 1;
     this.bursts = this.bursts.filter((b) => wall - b.t < 500);
@@ -1032,7 +1052,7 @@ export class Renderer {
     }
     if (age > 900) return;
     const ctx = this.ctx;
-    const cx = JX;
+    const cx = this.jx;
     const cy = 208;
     const pop = age < 70 ? 1.12 - 0.12 * (age / 70) : 1;
     ctx.save();
@@ -1209,7 +1229,7 @@ export class Renderer {
     const f = Math.floor(wall / 62); // コマ番号
     const n = (i: number, k: number) => Math.sin(f * (0.9 + i * 0.37) + k * 2.3 + i * 1.7); // コマごとに変わる値（-1〜1）
     const R = 95;
-    const P = (ang: number, r: number) => [JX + Math.cos(ang) * r, JY + Math.sin(ang) * r] as const;
+    const P = (ang: number, r: number) => [this.jx + Math.cos(ang) * r, JY + Math.sin(ang) * r] as const;
     // 先: 付け根の角度、長さ、向き（右上 -45° を基準に少し開く）
     const tips = [
       { a: -0.75, len: 60, dir: -0.6 },
@@ -1231,7 +1251,7 @@ export class Renderer {
       prevA = t.a - 0.32;
     }
     ctx.lineTo(...P(-2.9, R - 4));
-    ctx.arc(JX, JY, R - 4, -2.9, 0.35, false);
+    ctx.arc(this.jx, JY, R - 4, -2.9, 0.35, false);
     ctx.closePath();
   }
 
@@ -1248,21 +1268,21 @@ export class Renderer {
       ctx.fillRect(LANE_X, LANE_TOP, this.vis.x1 - LANE_X, LANE_BOTTOM - LANE_TOP);
       ctx.save();
       ctx.globalAlpha = 0.4 * (1 - k);
-      ctx.translate(JX, JY);
+      ctx.translate(this.jx, JY);
       const sc = 1.9 - 0.9 * e;
       ctx.scale(sc, sc);
-      ctx.translate(-JX, -JY);
+      ctx.translate(-this.jx, -JY);
       this.flamePath(wall);
       ctx.fillStyle = '#ff9a7a';
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(JX, JY, 95, 0, Math.PI * 2);
+      ctx.arc(this.jx, JY, 95, 0, Math.PI * 2);
       ctx.fill();
       ctx.restore();
       // レーンの下の縁を右へ流れる小さな光
       ctx.fillStyle = `rgba(255,255,255,${0.6 * (1 - k)})`;
       for (let j = 0; j < 14; j++) {
-        const x = JX + 60 + ((j * 97 + since * 3) % 900);
+        const x = this.jx + 60 + ((j * 97 + since * 3) % 900);
         const y = LANE_BOTTOM - 10 - ((j * 37) % 30);
         const r = 2 + (j % 3);
         ctx.fillRect(x - r, y - 0.6, r * 2, 1.2);
@@ -1277,37 +1297,37 @@ export class Renderer {
     ctx.strokeStyle = 'rgba(255,190,140,0.55)';
     ctx.stroke();
     // 外の光と玉（動かないので一度だけ描いて貼る）
-    this.drawSprite('fireball', JX - 120, JY - 120, 240, 240, () => this.paintFireball());
+    this.drawSprite('fireball', this.jx - 120, JY - 120, 240, 240, () => this.paintFireball());
     ctx.restore();
   }
 
   private paintFireball() {
     const ctx = this.ctx;
     ctx.save();
-    const glow = ctx.createRadialGradient(JX, JY, 80, JX, JY, 118);
+    const glow = ctx.createRadialGradient(this.jx, JY, 80, this.jx, JY, 118);
     glow.addColorStop(0, 'rgba(240,116,54,0.9)');
     glow.addColorStop(1, 'rgba(240,116,54,0)');
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(JX, JY, 118, 0, Math.PI * 2);
+    ctx.arc(this.jx, JY, 118, 0, Math.PI * 2);
     ctx.fill();
     // 玉
     ctx.beginPath();
-    ctx.arc(JX, JY, 95, 0, Math.PI * 2);
+    ctx.arc(this.jx, JY, 95, 0, Math.PI * 2);
     ctx.fillStyle = '#f07436';
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(JX, JY, 81, 0, Math.PI * 2);
+    ctx.arc(this.jx, JY, 81, 0, Math.PI * 2);
     ctx.lineWidth = 3;
     ctx.strokeStyle = '#ffcf8a';
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(JX, JY, 55, 0, Math.PI * 2);
+    ctx.arc(this.jx, JY, 55, 0, Math.PI * 2);
     ctx.lineWidth = 5;
     ctx.strokeStyle = '#ffe2a0';
     ctx.stroke();
     ctx.beginPath();
-    ctx.arc(JX, JY, 47, 0, Math.PI * 2);
+    ctx.arc(this.jx, JY, 47, 0, Math.PI * 2);
     ctx.fillStyle = '#f3a35f';
     ctx.fill();
     ctx.restore();
@@ -1411,7 +1431,7 @@ export class Renderer {
       fill = g;
     } else if (j.judge === 'ok') fill = '#ffffff';
     else fill = '#7f9cff';
-    outlinedText(ctx, JUDGE_TEXT[j.judge], JX, y, fill, '#3a1300', 10);
+    outlinedText(ctx, JUDGE_TEXT[j.judge], this.jx, y, fill, '#3a1300', 10);
     ctx.globalAlpha = 1;
   }
 
@@ -1429,7 +1449,7 @@ export class Renderer {
       keep.push(f);
       const t = p * p * (3 - 2 * p) * 0.35 + p * 0.65;
       // 3次ベジェ: 判定枠 → 上へ → 右へ → 花
-      const P0 = [JX, JY], P1 = [JX + 60, JY - 420], P2 = [FLOWER.x - 420, FLOWER.y - 330], P3 = [FLOWER.x, FLOWER.y];
+      const P0 = [this.jx, JY], P1 = [this.jx + 60, JY - 420], P2 = [FLOWER.x - 420, FLOWER.y - 330], P3 = [FLOWER.x, FLOWER.y];
       const u = 1 - t;
       const x = u * u * u * P0[0] + 3 * u * u * t * P1[0] + 3 * u * t * t * P2[0] + t * t * t * P3[0];
       const y = u * u * u * P0[1] + 3 * u * u * t * P1[1] + 3 * u * t * t * P2[1] + t * t * t * P3[1];
@@ -1604,7 +1624,7 @@ export class Renderer {
     ctx.font = `800 34px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    outlinedText(ctx, tm.text, JX, LANE_BOTTOM - 22, tm.color, '#000', 6);
+    outlinedText(ctx, tm.text, this.jx, LANE_BOTTOM - 22, tm.color, '#000', 6);
     ctx.globalAlpha = 1;
   }
 

@@ -84,6 +84,7 @@ export function eventShort(e: EEvent): string {
     case 'gogo': return e.on ? 'GOGO▶' : 'GOGO■';
     case 'barline': return e.on ? '|ON' : '|OFF';
     case 'delay': return `⏱${e.value}s`;
+    case 'jpos': return `◎${e.dir ? '→' : '←'}${Number(e.dist.toFixed(1))}`;
   }
 }
 
@@ -95,6 +96,7 @@ export const EVENT_COLOR: Record<EEvent['kind'], string> = {
   gogo: '#ff8a3a',
   barline: '#a8a8b0',
   delay: '#8fd18f',
+  jpos: '#ff9ec7',
 };
 
 /** レーンの下に出す種類（設定で切り替える） */
@@ -115,6 +117,7 @@ export function eventText(e: EEvent): string {
     case 'gogo': return e.on ? 'GOGO 開始' : 'GOGO 終了';
     case 'barline': return e.on ? '小節線 ON' : '小節線 OFF';
     case 'delay': return `DELAY ${e.value}s`;
+    case 'jpos': return `判定枠 ${e.dir ? '右' : '左'}へ ${Number(e.dist.toFixed(1))}px（${Number(e.time.toFixed(3))} 秒）`;
   }
 }
 
@@ -151,7 +154,7 @@ export class EditorView {
   /** レーンの下のイベントの文字をタップしたとき（重なってまとめたものは全部） */
   onEventTap: (items: EventItem[]) => void = () => {};
   /** レーンの下に出す種類 */
-  evShow: EventShow = { bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true };
+  evShow: EventShow = { bpm: true, scroll: true, measure: true, gogo: true, barline: true, delay: true, jpos: true };
   /** 最後に描いたイベントの文字の位置（タップの判定用） */
   private evBoxes: { x1: number; x2: number; items: EventItem[] }[] = [];
   onUserScroll: () => void = () => {};
