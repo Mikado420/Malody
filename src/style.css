@@ -1147,3 +1147,8 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .sheet .daw-insp.fit .dv-wide { flex-grow: 1.6; }
 .sheet .daw-ic.open { background: rgba(255, 255, 255, 0.16); }
 
+/* グラデのつなぎ目をタップしたときの選択肢 */
+.gp-list { display: flex; flex-direction: column; gap: 8px; }
+.sheet-body .gp-item { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 12px 18px; text-align: left; white-space: normal; }
+.gp-item b { font-size: 15px; }
+.gp-item small { color: var(--sub); font-size: 12px; }

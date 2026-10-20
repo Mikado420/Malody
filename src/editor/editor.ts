@@ -21,6 +21,8 @@ export interface TapResult {
   newGrad?: { start: number; end: number };
   /** UI 側で設定を変えるグラデ */
   editGrad?: Grad;
+  /** UI 側で選ばせる、グラデの始点・終点（つなぎ目）の上のタップ（before = ここで終わるグラデ、after = ここから始まるグラデ） */
+  gradPick?: { tick: number; before?: Grad; after?: Grad };
   /** 範囲を選び終えた */
   selected?: boolean;
   /** UI 側で値を聞く、1 か所の命令（#SCROLL / #BPMCHANGE / #MEASURE） */
@@ -456,6 +458,11 @@ export class Editor {
    */
   private tapScroll(tick: number): TapResult {
     if (this.pendingLong === null) {
+      // グラデの始点・終点の上: どのグラデを開くか、ここから新しく作るかを UI で選ばせる
+      // （そのまま開くと、終点から次のグラデを作れず、つなぎ目では後ろのグラデを開けない）
+      const before = this.course.grads?.find((g) => g.end === tick);
+      const after = this.course.grads?.find((g) => g.start === tick);
+      if (before || after) return { gradPick: { tick, before, after } };
       const g = this.gradAt(tick);
       if (g) return { editGrad: g };
       this.pendingLong = tick;
@@ -467,6 +474,12 @@ export class Editor {
     this.emit();
     if (tick === p) return { point: { kind: 'scroll', tick } };
     return { newGrad: { start: Math.min(p, tick), end: Math.max(p, tick) } };
+  }
+
+  /** SCROLL・グラデの始点をここに決めて、次のタップを待つ（つなぎ目から新しいグラデを作るとき） */
+  startScrollAt(tick: number) {
+    this.pendingLong = tick;
+    this.emit();
   }
 
   /** その位置・種類の命令 */

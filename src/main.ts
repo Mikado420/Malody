@@ -549,7 +549,11 @@ view.onTap = (tick, tol) => {
     const v = prompt('風船の打数', String(r.editBalloon.hits ?? 5));
     if (v !== null) ed.setBalloonHits(r.editBalloon, Number(v));
   }
-  if (r.newGrad || r.editGrad || r.point) $('toast').classList.remove('show');
+  if (r.newGrad || r.editGrad || r.point || r.gradPick) $('toast').classList.remove('show');
+  if (r.gradPick) {
+    gradPick = r.gradPick;
+    openSheet('gpick');
+  }
   if (r.point) openPoint(r.point.kind, r.point.tick);
   if (r.newGrad) {
     const from = ed.timing.scrollAt(r.newGrad.start);
@@ -595,6 +599,42 @@ $('selBar').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-sel]');
   if (b && !b.disabled) selAction(b.dataset.sel!);
 });
+
+/** グラデのつなぎ目（始点・終点）をタップしたときの選択肢 */
+let gradPick: { tick: number; before?: Grad; after?: Grad } | null = null;
+
+function renderGradPickSheet(body: HTMLElement) {
+  const gp = gradPick!;
+  const range = (g: Grad) => `${ed.label(g.start)} 〜 ${ed.label(g.end)}`;
+  const val = (g: Grad) => `${g.from} → ${g.to}`;
+  $('sheetTitle').textContent = gp.before && gp.after ? 'グラデのつなぎ目' : gp.before ? 'グラデの終点' : 'グラデの始点';
+  const items: string[] = [];
+  if (gp.before) items.push(`<button data-gp="before" class="gp-item"><b>前のグラデを開く</b><small>${val(gp.before)}　${range(gp.before)}</small></button>`);
+  if (gp.after) items.push(`<button data-gp="after" class="gp-item"><b>後ろのグラデを開く</b><small>${val(gp.after)}　${range(gp.after)}</small></button>`);
+  if (!gp.after) items.push(`<button data-gp="new" class="gp-item"><b>ここから新しいグラデを始める</b><small>次に、終わりにしたい位置をタップ</small></button>`);
+  else if (!gp.before) items.push(`<button data-gp="new" class="gp-item"><b>ここで終わる新しいグラデを作る</b><small>次に、始めにしたい位置をタップ</small></button>`);
+  items.push(`<button data-gp="point" class="gp-item"><b>この位置にだけ SCROLL を置く</b><small>${ed.label(gp.tick)}</small></button>`);
+  body.innerHTML = `<p class="note">${ed.label(gp.tick)}</p><div class="gp-list">${items.join('')}</div>`;
+  // タップで開いた直後に、そのタップから来るクリックがちょうど指の下のボタンを押してしまわないように
+  const openedAt = performance.now();
+  body.querySelectorAll<HTMLButtonElement>('[data-gp]').forEach((b) => b.addEventListener('click', () => {
+    if (performance.now() - openedAt < 350) return;
+    const k = b.dataset.gp;
+    const g = k === 'before' ? gp.before : k === 'after' ? gp.after : undefined;
+    gradPick = null;
+    if (g) {
+      gradEdit = { grad: { ...g }, old: g };
+      openSheet('grad');
+    } else if (k === 'new') {
+      closeSheet();
+      ed.startScrollAt(gp.tick);
+      toast(gp.after ? '始めにしたい位置をタップしてください' : '終わりにしたい位置をタップしてください');
+    } else if (k === 'point') {
+      closeSheet();
+      openPoint('scroll', gp.tick);
+    }
+  }));
+}
 
 /** 設定画面で編集中のグラデ */
 let gradEdit: { grad: Grad; old?: Grad } | null = null;
@@ -676,7 +716,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'info' | 'settings' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo' | 'src' | 'link' | 'cut';
+type SheetKind = 'info' | 'settings' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo' | 'src' | 'link' | 'cut' | 'gpick';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -729,7 +769,7 @@ function refreshSheet() {
   if ($('sheetBody').contains(document.activeElement) && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) return;
   // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
   if (sheet === 'events' && document.getElementById('tjaText')) return;
-  if (sheet === 'grad' || sheet === 'point' || sheet === 'tempo' || sheet === 'link' || sheet === 'cut') return;
+  if (sheet === 'grad' || sheet === 'point' || sheet === 'tempo' || sheet === 'link' || sheet === 'cut' || sheet === 'gpick') return;
   if (sheet === 'evlist') { renderSheet(); return; }
   renderSheet();
 }
@@ -832,6 +872,8 @@ function renderSheet() {
     renderPointSheet(body);
   } else if (sheet === 'grad' && gradEdit) {
     renderGradSheet(body);
+  } else if (sheet === 'gpick' && gradPick) {
+    renderGradPickSheet(body);
   } else if (sheet === 'events') {
     // TJA のテキスト（譜面全体）。書き換えて「反映」すると譜面に反映する
     $('sheetTitle').textContent = 'TJA';
