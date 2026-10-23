@@ -1,4 +1,4 @@
-import { beatAt, jposAt, type Course, type Note } from '../chart/types';
+import { beatAt, jposAt, scrollAhead, type Course, type Note } from '../chart/types';
 import { CLEAR_LINE, type Game, type HitKind, type Judge, type JudgeEvent, type NoteState } from '../engine/game';
 import { BIG_SCALE, clearTextCache, drawCachedText, drawAny, drawBalloon, drawNoteHead, isBig, outlinedText } from './notes';
 
@@ -418,22 +418,19 @@ export class Renderer {
 
   // ---------- 描画 ----------
 
-  private velocity(n: { bpm: number; scroll: number }) {
-    return (MEASURE_PX * n.bpm * n.scroll * this.speed) / 240;
-  }
-
   /** 判定枠の中心（#JPOSSCROLL で動く） */
   private jx = JX;
   /** #HBSCROLL / #BMSCROLL のときの今の拍の位置（null ならふつうの流れ方） */
   private beatNow: number | null = null;
+  private scrollMode: Course['scrollMode'] = undefined;
 
   /**
    * 音符・小節線の x。ふつうは音符ごとの BPM・SCROLL の速さで流れる。
-   * #HBSCROLL / #BMSCROLL は拍の数の差で決める（BPM が変わるとレーン全体の速さが変わる）
+   * #HBSCROLL / #BMSCROLL は拍の数の差で決める（BPM が変わるとレーン全体の速さが変わる）。
+   * #BMSCROLL は、さらに音符ごとの SCROLL を掛ける（#BPMCHANGE が無ければふつうと同じ）
    */
   private xOf(time: number, beat: number | undefined, n: { bpm: number; scroll: number }, now: number) {
-    if (this.beatNow !== null && beat !== undefined) return this.jx + (beat - this.beatNow) * (MEASURE_PX / 4) * this.speed;
-    return this.jx + (time - now) * this.velocity(n);
+    return this.jx + scrollAhead(this.scrollMode, { time, bpm: n.bpm, scroll: n.scroll, beat }, now, this.beatNow) * (MEASURE_PX / 4) * this.speed;
   }
 
   draw(game: Game, course: Course, now: number, info: { title: string; course: string; level: number; genre?: string }) {
@@ -442,6 +439,7 @@ export class Renderer {
     const wall = performance.now();
     this.jx = JX + jposAt(course.jpos, now) * JPOS_SCALE;
     this.beatNow = course.beatPoints?.length ? beatAt(course.beatPoints, now) : null;
+    this.scrollMode = this.beatNow !== null ? course.scrollMode : undefined;
     const st = game.stats;
 
     if (st.combo > this.lastCombo) {

@@ -213,27 +213,27 @@ export class Timing {
 }
 
 /**
- * #HBSCROLL / #BMSCROLL の拍の位置。tick → 拍の位置（bm は #SCROLL を掛けて足す）と、時刻 → 拍の位置の表を作る
+ * #HBSCROLL / #BMSCROLL の拍の位置。tick → 拍の位置と、時刻 → 拍の位置の表を作る。
+ * 拍の位置は BPM だけで決める（#SCROLL は入れない）。#BMSCROLL の #SCROLL は、ふつうと同じく
+ * 音符・小節線ごとの速さに掛ける（scrollAhead）ので、#BPMCHANGE が無ければふつうの流れ方と同じになる
  */
-export function beatTable(chart: EChart, course: ECourse, mode: 'hb' | 'bm') {
-  type P = { tick: number; time: number; beat: number; bpm: number; sc: number };
+export function beatTable(chart: EChart, course: ECourse) {
+  type P = { tick: number; time: number; beat: number; bpm: number };
   let bpm = chart.bpm > 0 ? chart.bpm : 120;
-  let p: P = { tick: 0, time: 0 - chart.offset, beat: 0, bpm, sc: 1 };
+  let p: P = { tick: 0, time: 0 - chart.offset, beat: 0, bpm };
   const pts: P[] = [p];
   const time: BeatPoint[] = [{ time: p.time, beat: 0, rate: bpm / 60 }];
   for (const e of course.events) {
-    const sc = e.kind === 'scroll' && mode === 'bm';
-    if (e.kind !== 'bpm' && e.kind !== 'delay' && !sc) continue;
+    if (e.kind !== 'bpm' && e.kind !== 'delay') continue;
     const dTick = e.tick - p.tick;
-    const q: P = { ...p, tick: e.tick, time: p.time + (dTick / TPB) * (60 / p.bpm), beat: p.beat + (dTick / TPB) * p.sc };
+    const q: P = { ...p, tick: e.tick, time: p.time + (dTick / TPB) * (60 / p.bpm), beat: p.beat + dTick / TPB };
     if (e.kind === 'bpm' && e.value > 0) q.bpm = e.value;
-    if (e.kind === 'scroll') q.sc = e.value;
     if (e.kind === 'delay') {
       // DELAY の間は止まる
       time.push({ time: q.time, beat: q.beat, rate: 0 });
       q.time += e.value;
     }
-    time.push({ time: q.time, beat: q.beat, rate: (q.bpm / 60) * q.sc });
+    time.push({ time: q.time, beat: q.beat, rate: q.bpm / 60 });
     pts.push(q);
     p = q;
   }
@@ -246,7 +246,7 @@ export function beatTable(chart: EChart, course: ECourse, mode: 'hb' | 'bm') {
       else hi = mid - 1;
     }
     const a = pts[lo];
-    return a.beat + ((tick - a.tick) / TPB) * a.sc;
+    return a.beat + (tick - a.tick) / TPB;
   };
   return { beatOf, points: time };
 }
@@ -256,7 +256,7 @@ export function toPlayable(chart: EChart, course: ECourse): Course {
   sortCourse(course);
   const t = new Timing(chart, course);
   const mode = course.scrollMode;
-  const bt = mode ? beatTable(chart, course, mode) : null;
+  const bt = mode ? beatTable(chart, course) : null;
   const notes: Note[] = course.notes.map((n) => {
     const note: Note = {
       type: n.type,

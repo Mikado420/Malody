@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseTJA } from './tja';
 import { writeTJA } from './tjaWrite';
 import { toPlayable } from './model';
-import { beatAt, jposAt } from './types';
+import { beatAt, jposAt, scrollAhead } from './types';
 
 const tja = (pre: string, body: string) => `TITLE:t\nBPM:120\nOFFSET:0\n\nCOURSE:Oni\nLEVEL:8\n${pre}\n#START\n${body}\n#END\n`;
 
@@ -51,12 +51,34 @@ describe('#HBSCROLL・#BMSCROLL・#JPOSSCROLL', () => {
     expect(beatAt(p.beatPoints!, 2.5)).toBeCloseTo(6, 6);
   });
 
-  it('#BMSCROLL: SCROLL を掛けて足す', () => {
-    const c = parseTJA(tja('#BMSCROLL', '1111,\n#SCROLL 2\n1111,'));
+  it('#BMSCROLL: #BPMCHANGE が無ければ、#SCROLL はふつうと同じ（音符ごとの速さに掛かる）', () => {
+    const body = '1111,\n#SCROLL 2\n1111,\n#SCROLL 0.5\n1111,';
+    const bm = parseTJA(tja('#BMSCROLL', body));
+    const nm = parseTJA(tja('', body));
+    const pb = toPlayable(bm, bm.courses[0]);
+    const pn = toPlayable(nm, nm.courses[0]);
+    // 拍の位置は BPM だけで決まる（SCROLL は位置に足さない）
+    expect(pb.notes[5].beat).toBe(5);
+    expect(pb.notes[9].beat).toBe(9);
+    // どの時刻でも、どの音符・小節線も、ふつうの流れ方と同じ所に描く
+    for (const now of [0, 0.7, 1.9, 2.3, 4.1, 5.5]) {
+      const bn = beatAt(pb.beatPoints!, now);
+      pb.notes.forEach((n, i) => expect(scrollAhead('bm', n, now, bn)).toBeCloseTo(scrollAhead(undefined, pn.notes[i], now, null), 6));
+      pb.bars.forEach((b, i) => expect(scrollAhead('bm', b, now, bn)).toBeCloseTo(scrollAhead(undefined, pn.bars[i], now, null), 6));
+    }
+  });
+
+  it('#BMSCROLL: #BPMCHANGE があると、そこからレーン全体の速さが変わり、SCROLL も掛かる', () => {
+    const c = parseTJA(tja('#BMSCROLL', '1111,\n#BPMCHANGE 240\n#SCROLL 2\n1111,'));
     const p = toPlayable(c, c.courses[0]);
-    expect(p.notes[4].beat).toBe(4);
-    expect(p.notes[5].beat).toBe(6);
-    expect(beatAt(p.beatPoints!, 2.5)).toBeCloseTo(6, 6);
+    // 今 = 1 秒（2 拍目）。5 拍目の音符（BPM 240・SCROLL 2）は (5 − 2) × 2 = 6 拍ぶん先
+    const bn = beatAt(p.beatPoints!, 1);
+    expect(bn).toBeCloseTo(2, 6);
+    expect(scrollAhead('bm', p.notes[5], 1, bn)).toBeCloseTo(6, 6);
+    // #HBSCROLL なら SCROLL を無視して 3 拍ぶん先
+    const h = parseTJA(tja('#HBSCROLL', '1111,\n#BPMCHANGE 240\n#SCROLL 2\n1111,'));
+    const ph = toPlayable(h, h.courses[0]);
+    expect(scrollAhead('hb', ph.notes[5], 1, beatAt(ph.beatPoints!, 1))).toBeCloseTo(3, 6);
   });
 
   it('#DELAY の間は止まる', () => {

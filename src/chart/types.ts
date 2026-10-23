@@ -22,7 +22,7 @@ export interface Note {
   /** #SCROLL の値 */
   scroll: number;
   gogo: boolean;
-  /** 流れ方が #HBSCROLL / #BMSCROLL のときの位置（拍の数。#BMSCROLL は #SCROLL を掛けて足したもの） */
+  /** 流れ方が #HBSCROLL / #BMSCROLL のときの位置（拍の数。BPM だけで決まり、#SCROLL は入らない） */
   beat?: number;
   /** 連打・風船の終点の beat */
   endBeat?: number;
@@ -63,6 +63,22 @@ export interface Course {
   beatPoints?: BeatPoint[];
   /** 判定枠の移動（#JPOSSCROLL） */
   jpos?: JposMove[];
+}
+
+/**
+ * 判定枠から何拍ぶん先に描くか（音符・小節線の位置。拍の数 × 1 拍の幅 で x になる）。
+ * - ふつう: (音符の時刻 − 今) × その音符の BPM / 60 × その音符の SCROLL
+ * - #HBSCROLL: (音符の拍 − 今の拍)。BPM が変わるとレーン全体の速さが変わり、SCROLL は無視
+ * - #BMSCROLL: (音符の拍 − 今の拍) × その音符の SCROLL。#BPMCHANGE が無ければふつうと同じ
+ */
+export function scrollAhead(
+  mode: Course['scrollMode'],
+  n: { time: number; bpm: number; scroll: number; beat?: number },
+  now: number,
+  beatNow: number | null,
+): number {
+  if (mode && beatNow !== null && n.beat !== undefined) return (n.beat - beatNow) * (mode === 'bm' ? n.scroll : 1);
+  return ((n.time - now) * n.bpm * n.scroll) / 60;
 }
 
 /** 時刻 now の拍の位置（beatPoints から） */
