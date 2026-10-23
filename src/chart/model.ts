@@ -95,6 +95,16 @@ export interface Measure {
   den: number;
 }
 
+/** #MEASURE num/den の 1 小節の tick（整数。とても短い小節でも 1 tick） */
+export const measureTicks = (num: number, den: number) => Math.max(1, Math.round((TPB * 4 * num) / den));
+
+/**
+ * #MEASURE num/den の小節の中で、1 tick が本当は何 tick ぶんの長さか（本来の長さ ÷ 整数にした長さ）。
+ * tick は整数で持つので、#MEASURE 1/40000 のような短い小節（本来 0.672 tick）は 1 tick に丸められる。
+ * 秒に直すときにこれを掛けて、本来の長さで計算する（極端に遅い・速い BPM でもずれないように）
+ */
+export const measureScale = (num: number, den: number) => (TPB * 4 * num) / den / measureTicks(num, den);
+
 /** untilTick を含むところまでの小節一覧 */
 export function measures(c: ECourse, untilTick: number): Measure[] {
   const ms = c.events.filter((e) => e.kind === 'measure') as Extract<EEvent, { kind: 'measure' }>[];
@@ -109,7 +119,7 @@ export function measures(c: ECourse, untilTick: number): Measure[] {
       den = ms[mi].den;
       mi++;
     }
-    const length = Math.max(1, Math.round((TPB * 4 * num) / den));
+    const length = measureTicks(num, den);
     out.push({ index, start, length, num, den });
     start += length;
     if (start > untilTick) break;
@@ -143,6 +153,8 @@ interface Point {
   tick: number;
   time: number;
   bpm: number;
+  /** この tick から先の、1 tick の本当の長さ（measureScale） */
+  scale: number;
 }
 
 export class Timing {
@@ -152,14 +164,16 @@ export class Timing {
     let time = 0 - chart.offset; // -chart.offset だと 0 のとき -0 になる
     let tick = 0;
     let bpm = chart.bpm > 0 ? chart.bpm : 120;
-    this.points.push({ tick: 0, time, bpm });
+    let scale = 1;
+    this.points.push({ tick: 0, time, bpm, scale });
     for (const e of course.events) {
-      if (e.kind !== 'bpm' && e.kind !== 'delay') continue;
-      time += ((e.tick - tick) / TPB) * (60 / bpm);
+      if (e.kind !== 'bpm' && e.kind !== 'delay' && e.kind !== 'measure') continue;
+      time += ((e.tick - tick) * scale / TPB) * (60 / bpm);
       tick = e.tick;
       if (e.kind === 'bpm' && e.value > 0) bpm = e.value;
       if (e.kind === 'delay') time += e.value;
-      this.points.push({ tick, time, bpm });
+      if (e.kind === 'measure') scale = measureScale(e.num, e.den);
+      this.points.push({ tick, time, bpm, scale });
     }
   }
 
@@ -177,7 +191,7 @@ export class Timing {
 
   tickToTime(tick: number): number {
     const p = this.pointAtTick(tick);
-    return p.time + ((tick - p.tick) / TPB) * (60 / p.bpm);
+    return p.time + ((tick - p.tick) * p.scale / TPB) * (60 / p.bpm);
   }
 
   timeToTick(time: number): number {
@@ -185,7 +199,7 @@ export class Timing {
     let idx = 0;
     for (let i = 0; i < p.length; i++) if (p[i].time <= time) idx = i;
     const pt = p[idx];
-    return pt.tick + ((time - pt.time) * pt.bpm * TPB) / 60;
+    return pt.tick + ((time - pt.time) * pt.bpm * TPB) / 60 / pt.scale;
   }
 
   bpmAt(tick: number): number {
@@ -218,16 +232,17 @@ export class Timing {
  * 音符・小節線ごとの速さに掛ける（scrollAhead）ので、#BPMCHANGE が無ければふつうの流れ方と同じになる
  */
 export function beatTable(chart: EChart, course: ECourse) {
-  type P = { tick: number; time: number; beat: number; bpm: number };
+  type P = { tick: number; time: number; beat: number; bpm: number; scale: number };
   let bpm = chart.bpm > 0 ? chart.bpm : 120;
-  let p: P = { tick: 0, time: 0 - chart.offset, beat: 0, bpm };
+  let p: P = { tick: 0, time: 0 - chart.offset, beat: 0, bpm, scale: 1 };
   const pts: P[] = [p];
   const time: BeatPoint[] = [{ time: p.time, beat: 0, rate: bpm / 60 }];
   for (const e of course.events) {
-    if (e.kind !== 'bpm' && e.kind !== 'delay') continue;
-    const dTick = e.tick - p.tick;
-    const q: P = { ...p, tick: e.tick, time: p.time + (dTick / TPB) * (60 / p.bpm), beat: p.beat + dTick / TPB };
+    if (e.kind !== 'bpm' && e.kind !== 'delay' && e.kind !== 'measure') continue;
+    const dBeat = ((e.tick - p.tick) * p.scale) / TPB;
+    const q: P = { ...p, tick: e.tick, time: p.time + dBeat * (60 / p.bpm), beat: p.beat + dBeat };
     if (e.kind === 'bpm' && e.value > 0) q.bpm = e.value;
+    if (e.kind === 'measure') q.scale = measureScale(e.num, e.den);
     if (e.kind === 'delay') {
       // DELAY の間は止まる
       time.push({ time: q.time, beat: q.beat, rate: 0 });
@@ -246,7 +261,7 @@ export function beatTable(chart: EChart, course: ECourse) {
       else hi = mid - 1;
     }
     const a = pts[lo];
-    return a.beat + (tick - a.tick) / TPB;
+    return a.beat + ((tick - a.tick) * a.scale) / TPB;
   };
   return { beatOf, points: time };
 }

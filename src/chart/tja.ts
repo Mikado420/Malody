@@ -1,5 +1,5 @@
 import type { NoteType } from './types';
-import { newCourse, sortCourse, TPB, type EChart, type ECourse, type EEvent } from './model';
+import { measureTicks, newCourse, sortCourse, TPB, type EChart, type ECourse, type EEvent } from './model';
 
 /**
  * TJA → 編集用モデル（tick ベース）
@@ -175,7 +175,7 @@ function processMeasure(items: Item[], st: State, course: ECourse, balloons: num
         if (!m || !(Number(m[2]) > 0)) continue;
         const num = Number(m[1]);
         const den = Number(m[2]);
-        const ticks = Math.max(1, Math.round((TPB * 4 * num) / den));
+        const ticks = measureTicks(num, den);
         if (!seenNote) {
           course.events.push({ tick: st.tick, kind: 'measure', num, den });
           st.measureTicks = ticks;

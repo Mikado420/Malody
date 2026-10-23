@@ -1,4 +1,4 @@
-import { measures, TPB, type ECourse } from '../chart/model';
+import { measures, measureScale, TPB, type ECourse } from '../chart/model';
 
 /**
  * グラデ（#SCROLL を少しずつ変えて、音符の見た目を滑らかに加速・減速させる）。
@@ -55,24 +55,27 @@ function bpmFn(c: ECourse, baseBpm: number) {
   };
 }
 
-/** その位置の秒数を返す関数（BPM と #DELAY から。始点からの差だけを使うので、OFFSET は入れない） */
+/**
+ * その位置の秒数を返す関数（BPM・#DELAY と、#MEASURE の短い小節の本当の長さ（measureScale）から。
+ * 始点からの差だけを使うので、OFFSET は入れない）
+ */
 function timeFn(c: ECourse, baseBpm: number) {
-  const evs = (c.events.filter((e) => e.kind === 'bpm' || e.kind === 'delay') as { tick: number; kind: 'bpm' | 'delay'; value: number }[])
-    .slice()
-    .sort((a, b) => a.tick - b.tick);
+  const evs = c.events.filter((e) => e.kind === 'bpm' || e.kind === 'delay' || e.kind === 'measure').slice().sort((a, b) => a.tick - b.tick);
   return (tick: number) => {
     let time = 0;
     let t = 0;
     let b = baseBpm > 0 ? baseBpm : 120;
+    let sc = 1;
     for (const e of evs) {
       // 位置と同じ tick の #DELAY は、その音符より前に止まるので入れる
       if (e.tick > tick) break;
-      time += ((e.tick - t) / TPB) * (60 / b);
+      time += (((e.tick - t) * sc) / TPB) * (60 / b);
       t = e.tick;
       if (e.kind === 'bpm' && e.value > 0) b = e.value;
       if (e.kind === 'delay') time += e.value;
+      if (e.kind === 'measure') sc = measureScale(e.num, e.den);
     }
-    return time + ((tick - t) / TPB) * (60 / b);
+    return time + (((tick - t) * sc) / TPB) * (60 / b);
   };
 }
 
