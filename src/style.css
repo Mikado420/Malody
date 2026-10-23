@@ -539,7 +539,8 @@ body.playing #app { visibility: hidden; }
 /* 文字の欄は左右・下の余白なしで画面の端まで */
 .sheet.tja .sheet-body { flex: 1; min-height: 0; overflow: hidden; padding: 0; gap: 0; }
 .sheet.tja .tja-wrap { min-height: 0; flex: 1; border: 0; border-radius: 0; }
-.sheet.tja .tja-hl, .sheet.tja .tja-text, .sheet.tja .tja-gutter { padding-bottom: calc(10px + var(--safe-b)); }
+/* キーボードが重なっている高さ（--tja-kb）だけ下に余白を足して、最後の行までキーボードの上にスクロールできるように */
+.sheet.tja .tja-hl, .sheet.tja .tja-text, .sheet.tja .tja-gutter { padding-bottom: calc(10px + var(--safe-b) + var(--tja-kb, 0px)); }
 .sheet.tja, .sheet.tja .sheet-panel, .sheet.tja .sheet-body { overscroll-behavior: none; }
 
 html, body { overscroll-behavior: none; }

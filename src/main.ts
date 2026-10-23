@@ -904,9 +904,52 @@ function renderSheet() {
 
 // キーボードを出しても TJA の画面の大きさは変えない。入力を終えたら（フォーカスが外れたら）待たずに反映する
 $('sheet').addEventListener('focusout', (e) => {
-  if ((e.target as HTMLElement).id === 'tjaText') syncTja();
+  if ((e.target as HTMLElement).id === 'tjaText') {
+    syncTja();
+    setTimeout(fitTjaKeyboard, 60);
+  }
 });
 window.visualViewport?.addEventListener('resize', scheduleTjaHl);
+
+/**
+ * TJA のテキストがキーボードに隠れないように。
+ * 画面の大きさは変えずに、キーボードが重なっている高さ（--tja-kb）だけテキストの下に余白を足して
+ * 最後の行までキーボードの上にスクロールできるようにし、カーソルのある行がキーボードの上に見えるようにスクロールする
+ */
+function fitTjaKeyboard() {
+  const ta = document.getElementById('tjaText') as HTMLTextAreaElement | null;
+  const sh = $('sheet');
+  if (!ta || document.activeElement !== ta) {
+    sh.style.removeProperty('--tja-kb');
+    return;
+  }
+  const vv = window.visualViewport;
+  const r = ta.getBoundingClientRect();
+  // 見えている範囲の下端（キーボードの上端）より下にあるテキスト欄の高さ
+  const visBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+  const cover = Math.max(0, Math.round(r.bottom - visBottom));
+  sh.style.setProperty('--tja-kb', `${cover}px`);
+  // カーソルのある行が、キーボードの上の見えている所に入るように
+  const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+  const padTop = parseFloat(getComputedStyle(ta).paddingTop) || 0;
+  const line = ta.value.slice(0, ta.selectionStart ?? 0).split('\n').length - 1;
+  const y = padTop + line * lh;
+  const visH = ta.clientHeight - cover;
+  const margin = lh * 1.5;
+  if (y + lh + margin > ta.scrollTop + visH) ta.scrollTop = y + lh + margin - visH;
+  else if (y - lh < ta.scrollTop) ta.scrollTop = Math.max(0, y - lh);
+}
+const fitTjaSoon = () => requestAnimationFrame(fitTjaKeyboard);
+window.visualViewport?.addEventListener('resize', () => { fitTjaSoon(); setTimeout(fitTjaKeyboard, 300); });
+window.visualViewport?.addEventListener('scroll', fitTjaSoon);
+document.addEventListener('selectionchange', () => { if (document.activeElement?.id === 'tjaText') fitTjaSoon(); });
+$('sheet').addEventListener('focusin', (e) => {
+  if ((e.target as HTMLElement).id !== 'tjaText') return;
+  // キーボードが出きってからもう一度（出る途中は高さが変わっていく）
+  fitTjaSoon();
+  setTimeout(fitTjaKeyboard, 350);
+  setTimeout(fitTjaKeyboard, 700);
+});
 
 /** TJA のテキストで、その難易度の n 小節目（0 から）がある行 */
 function tjaLineOf(text: string, course: string, measure: number): number {
@@ -1007,6 +1050,7 @@ function renderTjaHl() {
 $('sheetBody').addEventListener('input', (e) => {
   if ((e.target as HTMLElement).id !== 'tjaText') return;
   scheduleTjaHl();
+  fitTjaSoon();
   clearTimeout(tjaSync.timer);
   setTjaStatus('入力中…');
   tjaSync.timer = window.setTimeout(syncTja, 350);
