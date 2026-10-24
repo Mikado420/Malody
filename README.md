@@ -39,8 +39,8 @@
 iPhone の Safari（WebKit）は、両手交互で速く叩いて「指が 1 本も触れていない瞬間」に次の指が触れると、そのタッチをページに届けません（ほかの Web 版の太鼓ゲームでも同じ）。対策は 2 つあります。
 
 - **指置き**: iPhone では最初からレーンより上が「指置き」になっています。そこに指を 1 本置いたまま叩くと取りこぼしません
-- **Expo Go で動かす**（無料・スマホだけで可）: App Store の「Expo Go」を入れ、iPhone で次のリンクを開いて Expo Go で起動します。プレイ中だけアプリの仕組みで指を受け取るので、指置きなしで叩けます
-  - https://snack.expo.dev/?sourceUrl=https%3A%2F%2Fmikado420.github.io%2FTJAtelier%2Fexpo%2FApp.js&platform=ios&name=TJAtelier&sdkVersion=58.0.0&dependencies=react-native-webview%2Cexpo-screen-orientation%2Cexpo-status-bar%2Creact-native-gesture-handler
+- **Expo Go で動かす**（無料・スマホだけで可）: App Store の「Expo Go」を入れ、iPhone の Safari で次のリンク（または設定の「Expo Go で開く」）を開いて Expo Go で起動します。プレイ中だけアプリの仕組みで指を受け取るので、指置きなしで叩けます
+  - exp://u.expo.dev/9ed04cc6-474e-416c-9f42-3cb53d9c2efa?runtime-version=exposdk:58.0.0&channel-name=main（Expo Go にアカウントでログインしていれば、ホームの Projects の TJAtelier からも開けます）
   - アプリ本体は [public/expo/App.js](public/expo/App.js)。中身は Web 版をそのまま表示するので、Web 版を更新すればアプリでも新しくなります
 
 ### 判定

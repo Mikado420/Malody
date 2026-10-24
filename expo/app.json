@@ -6,7 +6,19 @@
     "orientation": "landscape",
     "userInterfaceStyle": "dark",
     "backgroundColor": "#000000",
-    "ios": { "supportsTablet": true },
-    "runtimeVersion": { "policy": "sdkVersion" }
+    "ios": {
+      "supportsTablet": true
+    },
+    "runtimeVersion": {
+      "policy": "sdkVersion"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "9ed04cc6-474e-416c-9f42-3cb53d9c2efa"
+      }
+    },
+    "updates": {
+      "url": "https://u.expo.dev/9ed04cc6-474e-416c-9f42-3cb53d9c2efa"
+    }
   }
 }
