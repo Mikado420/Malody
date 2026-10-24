@@ -184,6 +184,7 @@ export class Editor {
     return measureAt(this.measuresUntil(Math.max(0, tick)), Math.max(0, tick));
   }
 
+  /** グリッドの間隔（tick）。13 分割のように割り切れないときは小数（置く位置は snap で整数に丸める） */
   get step() {
     return (TPB * 4) / this.divisor;
   }
@@ -197,7 +198,7 @@ export class Editor {
   snapView(tick: number): number {
     if (tick >= 0) return this.snapFree(tick);
     const step = this.step;
-    return Math.max(this.minPos, Math.round(tick / step) * step);
+    return Math.max(this.minPos, Math.round(Math.round(tick / step) * step));
   }
 
   /**
@@ -213,7 +214,8 @@ export class Editor {
   private snapFree(tick: number): number {
     const m = this.measureOf(tick);
     const step = this.step;
-    return Math.max(0, m.start + Math.round((tick - m.start) / step) * step);
+    // 小節の長さで割り切れない間隔のとき、小節の終わりを越えたら次の小節の頭に
+    return Math.max(0, m.start + Math.min(m.length, Math.round(Math.round((tick - m.start) / step) * step)));
   }
 
   /** 「小節 3 ・ 2.5拍」のような表示 */

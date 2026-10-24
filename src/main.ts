@@ -105,7 +105,8 @@ const linkReady = () => !!settings.linkRelay || (!!settings.linkToken && !!setti
 const audio = new AudioEngine();
 const ed = new Editor();
 // グリッドは 1 小節の分割数。前の版（1 拍の分割数）で保存したものは 4 倍して引き継ぐ
-const gridOk = (n: number) => Number.isInteger(n) && n >= 1 && n <= 768 && (TPB * 4) % n === 0;
+/** グリッドの分割数: 1 以上の整数ならどれでも（負の数・0・小数は使えない） */
+const gridOk = (n: number) => Number.isSafeInteger(n) && n >= 1;
 if (!settings.grid && settings.divisor) settings.grid = settings.divisor * 4;
 ed.divisor = gridOk(settings.grid) ? settings.grid : 16;
 const view = new EditorView($<HTMLCanvasElement>('editor'), ed);
@@ -401,16 +402,20 @@ function updateDivStep() {
   $<HTMLButtonElement>('divPrev').disabled = ed.divisor <= DIVISORS[0];
   $<HTMLButtonElement>('divNext').disabled = ed.divisor >= DIVISORS[DIVISORS.length - 1];
   $('divMid').classList.toggle('free', !DIVISORS.includes(ed.divisor));
+  // 桁の多い分割数は文字を小さく
+  $('divLabel').style.fontSize = ed.divisor >= 1000 ? `${Math.max(9, 15 - (String(ed.divisor).length - 3) * 1.5)}px` : '';
 }
 $('divPrev').addEventListener('click', () => stepDivisor(-1));
 $('divNext').addEventListener('click', () => stepDivisor(1));
 $('divMid').addEventListener('click', () => {
   closeMenus();
-  const v = prompt('1 小節を何分割にするか（例: 20, 28, 36, 40, 96）', String(ed.divisor));
+  const v = prompt('1 小節を何分割にするか（1 以上の整数。例: 13, 20, 36, 96）', String(ed.divisor));
   if (v === null) return;
-  const n = Math.round(Number(v));
+  // 全角の数字も受け付ける。小数・負の数・0 は使えない
+  const t = v.trim().replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
+  const n = /^\d+$/.test(t) ? Number(t) : NaN;
   if (!gridOk(n)) {
-    toast('その分割数は使えません（使える例: 1〜16, 18, 20, 21, 24, 28, 30, 32, 35, 36, 40, 42, 48, 56, 60, 64, 80, 96…）');
+    toast('1 以上の整数を入力してください（負の数・0・小数は使えません）');
     return;
   }
   setDivisor(n);
@@ -772,7 +777,7 @@ window.addEventListener('keydown', (e) => {
   const move = (ticks: number) => {
     e.preventDefault();
     stopPlayback();
-    view.pos = Math.max(ed.minPos, ed.snapView(view.pos) + ticks);
+    view.pos = Math.max(ed.minPos, Math.round(ed.snapView(view.pos) + ticks));
     view.invalidate();
   };
   if (e.code === 'ArrowRight' || e.code === 'ArrowUp') move(ed.step);

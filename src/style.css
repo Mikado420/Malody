@@ -1056,6 +1056,7 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 .grid-step #divPrev, .grid-step #divNext { width: calc(var(--tw) * 0.72); }
 .grid-step svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
 .grid-step #divMid { width: calc(var(--tw) * 1.5); background: var(--deep); box-shadow: inset 0 -2px 0 var(--accent); }
+.grid-step #divMid { overflow: hidden; }
 .grid-step #divMid b { font-family: var(--fd); font-weight: 800; font-size: max(15px, calc(40px * var(--es, 0.45))); font-variant-numeric: tabular-nums; }
 .grid-step #divMid.free b { color: var(--accent-hi); }
 .sel-bar { bottom: calc(40px * var(--es, 0.45) + var(--th) + 34px); }

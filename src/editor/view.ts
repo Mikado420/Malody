@@ -71,6 +71,8 @@ const DOT_COLORS: Record<number, string> = {
 };
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+/** 小節の中の拍の位置（小節の頭は除く） */
+const beatRels = (len: number) => { const r: number[] = []; for (let t = TPB; t < len; t += TPB) r.push(t); return r; };
 
 /** レーンの下に出す短い文字（種類は色で見分ける） */
 export function eventShort(e: EEvent): string {
@@ -496,7 +498,8 @@ export class EditorView {
     for (const m of ms) {
       if (m.start + m.length < leftTick) continue;
       if (m.start > rightTick) break;
-      const count = Math.round(m.length / step);
+      // 小節の中のグリッドの数（小節の長さで割り切れない間隔でも、小節の中に入る所は全部）
+      const count = Math.ceil(m.length / step - 1e-6);
       // 波形の上の目安の線: 拍ごとに薄い線、グリッドごとにさらに薄い線（小節線だけはレーンまで通す）
       const lw1 = Math.max(1, s);
       const beatPx = this.zoom;
@@ -510,14 +513,15 @@ export class EditorView {
       if (stepPx >= 7) {
         ctx.fillStyle = 'rgba(255,255,255,0.08)';
         for (let k = 1; k < count; k++) {
-          const rel = k * step;
+          const rel = Math.round(k * step);
           if (rel % TPB === 0) continue;
           const x = this.xOf(m.start + rel);
           if (x >= L.colW && x <= this.w) ctx.fillRect(x - lw1 / 2, L.waveY, lw1, L.waveH);
         }
       }
-      for (let k = 1; k < count; k++) {
-        const rel = k * step;
+      // 間隔が狭くて点を描かないときは、拍の点だけ（細かいグリッドで回数が増えすぎないように）
+      const pts = stepPx >= 7 ? Array.from({ length: Math.max(0, count - 1) }, (_, i) => Math.round((i + 1) * step)) : beatRels(m.length);
+      for (const rel of pts) {
         const inBeat = rel % TPB;
         if (stepPx < 7 && inBeat !== 0) continue;
         const x = this.xOf(m.start + rel);

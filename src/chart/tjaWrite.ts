@@ -8,6 +8,17 @@ const TYPE_TO_CHAR: Record<NoteType, string> = {
 };
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+
+/**
+ * 1 小節を何文字で書くか: 全部の位置 p が「k 文字目 = round(k × len ÷ d)」で表せる、いちばん小さい d。
+ * 13 分割・17 分割のように tick で割り切れない分割（位置は丸めてある）も、その分割数で書ける。
+ * exact（tick の最大公約数で割った数）なら必ず表せるので、それより小さい d だけ探す
+ */
+export function measureDiv(len: number, positions: number[], exact: number): number {
+  const fits = (d: number) => positions.every((p) => Math.round((Math.round((p * d) / len) * len) / d) === p);
+  for (let d = 1; d < exact; d++) if (fits(d)) return d;
+  return exact;
+}
 const num = (v: number) => String(Number(v.toFixed(6)));
 
 function eventLine(e: EEvent): string {
@@ -77,11 +88,12 @@ export function writeCourseBody(c: ECourse): string[] {
 
     let g = m.length;
     for (const p of positions) g = gcd(g, p);
-    const div = Math.round(m.length / g);
+    const div = measureDiv(m.length, positions, Math.round(m.length / g));
 
     let cur = '';
     for (let k = 0; k < div; k++) {
-      const t = m.start + k * g;
+      // 読み込むときと同じ丸め方（tja.ts の tickOf）。13 分割のように tick で割り切れない分割も、元の位置に戻る
+      const t = m.start + Math.round((k * m.length) / div);
       const here = evs.filter((e) => e.tick === t);
       if (here.length) {
         if (cur) { lines.push(cur); cur = ''; }
