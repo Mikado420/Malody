@@ -66,7 +66,7 @@ export class PlayMode {
       canvas,
       () => {
         const L = this.renderer.layout;
-        return { x: L.drumX, half: L.drumHalf, restBottom: L.restBottom };
+        return { x: L.drumX, half: L.drumHalf, y: L.drumY, ry: L.drumRY, restBottom: L.restBottom };
       },
       (kind, side, at, pt) => {
         // オートのときは叩いた入力を受け付けない

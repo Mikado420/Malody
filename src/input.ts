@@ -58,7 +58,7 @@ export function resetTouchStats() {
 export function bindInput(
   root: HTMLElement,
   canvas: HTMLCanvasElement,
-  getDrum: () => { x: number; half: number; restBottom?: number },
+  getDrum: () => { x: number; half: number; y: number; ry: number; restBottom?: number },
   onHit: HitHandler,
   /** true のときは指のタッチをポインターイベントで受け取る（タッチイベントは止めるだけ） */
   usePointer: () => boolean = () => false,
@@ -91,10 +91,10 @@ export function bindInput(
       touchStats.rests++;
       return;
     }
-    // 画面のどこを叩いても反応する。横の位置だけで決める: 中央の帯＝ドン、左右の端＝カッ
-    // ring = 中心からの距離をドンの帯の半分の幅で割ったもの（1 がドンとカッの境目）
+    // 画面のどこを叩いても反応する（画面の端まで）。太鼓の面（楕円）の中＝ドン、それ以外（縁・面の上・左右の端）＝カッ
+    // ring = 面の中心からの楕円の距離（1 が面と縁の境目）
     const side = px < d.x ? 'L' : 'R';
-    const ring = Math.abs(px - d.x) / Math.max(1, d.half);
+    const ring = Math.hypot((px - d.x) / Math.max(1, d.half), (py - d.y) / Math.max(1, d.ry));
     onHit(ring <= 1 ? 'don' : 'ka', side, at, { x: px, y: py, ring });
   };
 

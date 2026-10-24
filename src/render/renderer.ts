@@ -62,8 +62,11 @@ export interface Layout {
   judgeX: number;
   /** 画面の横の中心（画面 px） */
   drumX: number;
-  /** 中心からこの距離までがドン、それより外がカッ（画面 px） */
+  /** 太鼓の面（楕円）の横の半径（画面 px）。面の中がドン、それ以外（縁・画面の端まで）がカッ */
   drumHalf: number;
+  /** 太鼓の面の中心の高さと、縦の半径（画面 px） */
+  drumY: number;
+  drumRY: number;
   /** これより上は指を置いておく場所（叩いても反応しない）。0 ならなし（画面 px） */
   restBottom: number;
 }
@@ -168,6 +171,8 @@ export class Renderer {
       judgeX: this.sx(JX),
       drumX: this.pad.x,
       drumHalf: this.pad.half,
+      drumY: this.drum().cy,
+      drumRY: this.drum().ry,
       restBottom: this.restZone ? this.sy(LANE_TOP) : 0,
     };
     this.burstSprites = {};
