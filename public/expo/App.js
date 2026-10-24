@@ -54,7 +54,7 @@ function ManualRN({ onDown, children }) {
 
 const Manual = HAS_V2 ? ManualV2 : HAS_V3 ? ManualV3 : ManualRN;
 
-const URL = 'https://mikado420.github.io/Malody/';
+const URL = 'https://mikado420.github.io/TJAtelier/';
 
 export default function App() {
   const web = useRef(null);

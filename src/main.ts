@@ -39,7 +39,7 @@ const esc = (s: string) =>
 /** iPhone / iPad か */
 const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 /** Expo Go で開くリンク（Expo Snack。アプリ本体は public/expo/App.js） */
-const EXPO_LINK = 'https://snack.expo.dev/?sourceUrl=https%3A%2F%2Fmikado420.github.io%2FMalody%2Fexpo%2FApp.js&platform=ios&name=TJAtelier&sdkVersion=58.0.0&dependencies=react-native-webview%2Cexpo-screen-orientation%2Cexpo-status-bar%2Creact-native-gesture-handler';
+const EXPO_LINK = 'https://snack.expo.dev/?sourceUrl=https%3A%2F%2Fmikado420.github.io%2FTJAtelier%2Fexpo%2FApp.js&platform=ios&name=TJAtelier&sdkVersion=58.0.0&dependencies=react-native-webview%2Cexpo-screen-orientation%2Cexpo-status-bar%2Creact-native-gesture-handler';
 
 const settings = {
   /** 前の版の「1 拍を何分割」（読み込みの引き継ぎ用） */
