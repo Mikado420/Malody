@@ -6,8 +6,9 @@
  * そこでテストプレイ中だけ、Web 版の上に透明な層を重ね、アプリ（React Native）の仕組みで指を受け取って
  * Web 版の window.__nativeHit(x, y, 時刻, 方式, 通し番号) に渡す。エディタを使うときは層を外す。
  *
- * 指は react-native-gesture-handler（Gesture.Manual の onTouchesDown）で受け取る
+ * 指は react-native-gesture-handler の手動のジェスチャー（onTouchesDown）で受け取る
  * （React Native の onTouchStart では Safari と同じように取りこぼした）。
+ * Expo の版によって gesture-handler が 2 系（Gesture.Manual()）か 3 系（useManualGesture()）なので、どちらでも動くようにする。
  * 叩いた時刻はこちらで受け取った瞬間に Date.now() で測って渡す。Web 版まで届くのに時間がかかっても
  * 判定が遅れない（Web 版は「届くまでの遅れがいちばん少なかったとき」を基準に時刻を直す）。
  */
@@ -16,7 +17,42 @@ import { StyleSheet, View, useWindowDimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { StatusBar } from 'expo-status-bar';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import * as GH from 'react-native-gesture-handler';
+
+const { GestureDetector, GestureHandlerRootView } = GH;
+/** gesture-handler 3 系の書き方（useManualGesture）が使えるか。なければ 2 系の Gesture.Manual() */
+const HAS_V3 = typeof GH.useManualGesture === 'function';
+const HAS_V2 = !!(GH.Gesture && typeof GH.Gesture.Manual === 'function');
+
+/** 2 系: Gesture.Manual() */
+function ManualV2({ onDown, children }) {
+  const gesture = useMemo(
+    () => GH.Gesture.Manual().runOnJS(true).onTouchesDown((e) => onDown(e.changedTouches || [])),
+    [onDown],
+  );
+  return <GestureDetector gesture={gesture}>{children}</GestureDetector>;
+}
+
+/** 3 系: useManualGesture()（コールバックは JS 側で動かす） */
+function ManualV3({ onDown, children }) {
+  const gesture = GH.useManualGesture({
+    runOnJS: true,
+    onTouchesDown: (e) => onDown(e.changedTouches || []),
+  });
+  return <GestureDetector gesture={gesture}>{children}</GestureDetector>;
+}
+
+/** どちらも無いとき（念のため）: React Native の onTouchStart */
+function ManualRN({ onDown, children }) {
+  return (
+    <View style={StyleSheet.absoluteFill} onStartShouldSetResponder={() => true}
+      onTouchStart={(e) => onDown((e.nativeEvent.changedTouches || []).map((t) => ({ absoluteX: t.pageX, absoluteY: t.pageY })))}>
+      {children}
+    </View>
+  );
+}
+
+const Manual = HAS_V2 ? ManualV2 : HAS_V3 ? ManualV3 : ManualRN;
 
 const URL = 'https://mikado420.github.io/Malody/';
 
@@ -56,18 +92,12 @@ export default function App() {
     [width, height],
   );
 
-  // react-native-gesture-handler
-  const gesture = useMemo(
-    () =>
-      Gesture.Manual()
-        .runOnJS(true)
-        .onTouchesDown((e) => {
-          const now = Date.now();
-          send(
-            (e.changedTouches || []).map((t) => ({ x: t.absoluteX, y: t.absoluteY, ts: now })),
-            'gh',
-          );
-        }),
+  // react-native-gesture-handler で受け取った指
+  const onDown = useCallback(
+    (touches) => {
+      const now = Date.now();
+      send(touches.map((t) => ({ x: t.absoluteX, y: t.absoluteY, ts: now })), 'gh');
+    },
     [send],
   );
 
@@ -91,9 +121,11 @@ export default function App() {
         setSupportMultipleWindows={false}
       />
       {playing && (
-        <GestureDetector gesture={gesture}>
-          <View style={StyleSheet.absoluteFill} collapsable={false} />
-        </GestureDetector>
+        <View style={StyleSheet.absoluteFill} collapsable={false}>
+          <Manual onDown={onDown}>
+            <View style={StyleSheet.absoluteFill} collapsable={false} />
+          </Manual>
+        </View>
       )}
     </GestureHandlerRootView>
   );
