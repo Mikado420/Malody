@@ -64,6 +64,12 @@ export default function App() {
 
   useEffect(() => {
     ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    // Expo Go の右下に浮かぶ歯車（開発用のツールボタン）を隠す。使えない環境では何もしない
+    try {
+      require('expo-dev-menu').setToolsButtonVisible(false);
+    } catch {
+      // expo-dev-menu が無い
+    }
   }, []);
 
   const onMessage = useCallback((e) => {
