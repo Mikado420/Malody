@@ -26,7 +26,7 @@ import { loadAudio, loadChart, loadHitSound, saveHitSound } from './io/storage';
 import { getCurrentId, listSongs, loadSongAudio, loadSongData, newId, saveSong, setCurrentId } from './io/library';
 import { Home } from './home/home';
 import { writeZip } from './io/zip';
-import { PlayMode } from './play/playmode';
+import { isNativeHost, PlayMode } from './play/playmode';
 import { fitRoot, localPoint, typing } from './orient';
 import { BUILD_ID, startAutoUpdate } from './update';
 
@@ -37,6 +37,11 @@ const esc = (s: string) =>
   s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
 // ---------- 設定 ----------
+
+/** iPhone / iPad か */
+const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+/** Expo Go で開くリンク（Expo Snack。アプリ本体は public/expo/App.js） */
+const EXPO_LINK = 'https://snack.expo.dev/?sourceUrl=https%3A%2F%2Fmikado420.github.io%2FMalody%2Fexpo%2FApp.js&platform=ios&name=TJAtelier&dependencies=react-native-webview%2Cexpo-screen-orientation%2Cexpo-status-bar%2Creact-native-gesture-handler';
 
 const settings = {
   /** リンクから読み込む: 処理の入ったリポジトリと、トークン */
@@ -60,8 +65,8 @@ const settings = {
   auto: false,
   showTiming: false,
   pointerInput: false,
-  // iPhone / iPad の Safari は両手交互の速い連打でタッチを落とすので、既定で指置きを使う
-  restZone: /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1),
+  // iPhone / iPad の Safari は両手交互の速い連打でタッチを落とすので、既定で指置きを使う（Expo Go の中では使わない）
+  restZone: IS_IOS,
   passiveTouch: false,
   /** タッチ用の中央のドンの帯の幅 */
   donWidth: 0.6,
@@ -81,6 +86,11 @@ const settings = {
 try {
   // 横スクロール化で拡大率の意味が変わったので v2 のキーで保存
   Object.assign(settings, JSON.parse(localStorage.getItem('malody-web:settings2') ?? '{}'));
+  // 前の版はプレイをオートだけにしていて、その間に保存した auto: true が残っているので一度だけ戻す
+  if (!localStorage.getItem('malody-web:manualPlay')) {
+    settings.auto = false;
+    localStorage.setItem('malody-web:manualPlay', '1');
+  }
 } catch { /* 使えない環境 */ }
 const saveSettings = () => {
   try { localStorage.setItem('malody-web:settings2', JSON.stringify(settings)); } catch { /* 無視 */ }
@@ -914,10 +924,18 @@ function renderSheet() {
     body.innerHTML = `
       <h3>レーンの下に出すイベント</h3>
       <div class="ev-show">${(Object.keys(EV_NAMES) as (keyof EventShow)[]).map((k) => `<label><input type="checkbox" data-evshow="${k}" ${settings.evShow[k] ? 'checked' : ''}><span style="color:${EVENT_COLOR[k]}">${EV_NAMES[k]}</span></label>`).join('')}</div>
-      <h3>テストプレイ・再生</h3>
+      <h3>プレイ・再生</h3>
+      <label class="field"><span>オート</span><input type="checkbox" data-set="auto" ${settings.auto ? 'checked' : ''}></label>
       <label class="field"><span>ハイスピード</span><input type="range" min="0.5" max="4" step="0.1" data-set="speed" value="${settings.speed}"><output>${settings.speed.toFixed(1)}</output></label>
       <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
+      <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>
+      <label class="field"><span>ドンの幅</span><input type="range" min="0.3" max="0.9" step="0.01" data-set="donWidth" value="${settings.donWidth}"><output>${Math.round(settings.donWidth * 100)}%</output></label>
+      ${isNativeHost() ? '<p class="note">Expo Go のアプリで動いています。指置きなしで叩けます。</p>' : IS_IOS ? `
+      <label class="field"><span>上を指置きに</span><input type="checkbox" data-set="restZone" ${settings.restZone ? 'checked' : ''}></label>
+      <p class="note">iPhone の Safari では、両手で速く叩くとタッチが届かないことがあります。画面の上に指を 1 本置いたまま叩くか、Expo Go のアプリで開いてください（指置きなしで叩けます）。</p>
+      <a class="btn-link" href="${EXPO_LINK}" target="_blank" rel="noopener">Expo Go で開く</a>` : ''}
+      <button data-act="calibrate">タイミング調整（クリック音に合わせて叩いて、判定調整を測る）</button>
       <h3>音量（自動で同じ大きさに揃えてから、この比率を掛けます。.zip の音源も、音源と打音の比率に合わせて書き出します）</h3>
       <label class="field"><span>音源</span><input type="range" min="0" max="2" step="0.05" data-set="volMusic" value="${settings.volMusic}"><output>${settings.volMusic.toFixed(2)}</output></label>
       <label class="field"><span>打音</span><input type="range" min="0" max="2" step="0.05" data-set="volHit" value="${settings.volHit}"><output>${settings.volHit.toFixed(2)}</output></label>

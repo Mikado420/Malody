@@ -65,7 +65,7 @@ export class PlayMode {
         return { x: L.drumX, half: L.drumHalf, restBottom: L.restBottom };
       },
       (kind, side, at, pt) => {
-        // プレイはオートだけ（叩いた入力は受け付けない）
+        // オートのときは叩いた入力を受け付けない
         if (!this.active || !this.game || this.settings.auto) return;
         this.audio.playHit(kind);
         this.renderer.pushHit(kind, side);
@@ -155,11 +155,11 @@ export class PlayMode {
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
     this.renderer.donWidth = this.settings.donWidth ?? 0.6;
-    // Expo Go のアプリの中ではアプリが指を受け取るので、指置きはいらない
-    this.renderer.restZone = false;
-    // プレイはオートだけ: 叩く入力を受け付けないので、タッチ用の太鼓も出さない
-    this.settings.auto = true;
-    this.renderer.touch = false;
+    // Expo Go のアプリの中ではアプリが指を受け取るので、指置きはいらない（Safari などでは設定のとおり）
+    const coarse = isNativeHost() || matchMedia('(pointer: coarse)').matches;
+    this.renderer.restZone = !isNativeHost() && coarse && !!this.settings.restZone && !this.settings.auto;
+    // オートのときは叩かないので、タッチ用の太鼓も出さない
+    this.renderer.touch = coarse && !this.settings.auto;
     this.input.refresh();
     resetTouchStats();
     this.raw = [];
