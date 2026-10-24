@@ -1308,3 +1308,9 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
   --sk: calc(40px * var(--tan));
   clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
 }
+/* ポーズ画面の「プレイ / オート」 */
+.pause-menu .pmode { display: grid; grid-template-columns: 1fr 1fr; gap: 0; margin-bottom: 4px; }
+.pause-menu .pmode button { padding: 10px 12px; font-size: 15px; font-weight: 700; border-radius: 0; background: var(--btn); color: rgba(255, 255, 255, 0.7); }
+.pause-menu .pmode button:first-child { border-radius: 10px 0 0 10px; }
+.pause-menu .pmode button:last-child { border-radius: 0 10px 10px 0; }
+.pause-menu .pmode button.on { background: var(--accent); color: #fff; }

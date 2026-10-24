@@ -32,6 +32,8 @@ export interface PlaySettings {
   hitSound?: boolean;
   /** タッチを passive で受け取る（iPhone が指を待たずに次へ進むように） */
   passiveTouch?: boolean;
+  /** タッチ用の太鼓を半透明で表示する（false で隠す。隠しても叩ける） */
+  padVisible?: boolean;
   /** 画面上部を指置きにする（叩いても反応しない） */
   restZone?: boolean;
   /** 指のタッチをポインターイベントで受け取る（iPhone の取りこぼし対策の切り替え） */
@@ -48,6 +50,8 @@ export class PlayMode {
   private raf = 0;
   private active = false;
   onExit: () => void = () => {};
+  /** ポーズ画面で設定（オート）を変えたとき（保存用） */
+  onSettingsChange: () => void = () => {};
 
   constructor(
     private readonly root: HTMLElement,
@@ -155,11 +159,7 @@ export class PlayMode {
     game.onRoll = (st) => this.renderer.pushRoll(st);
     this.renderer.reset();
     this.renderer.donWidth = this.settings.donWidth ?? 0.6;
-    // Expo Go のアプリの中ではアプリが指を受け取るので、指置きはいらない（Safari などでは設定のとおり）
-    const coarse = isNativeHost() || matchMedia('(pointer: coarse)').matches;
-    this.renderer.restZone = !isNativeHost() && coarse && !!this.settings.restZone && !this.settings.auto;
-    // オートのときは叩かないので、タッチ用の太鼓も出さない
-    this.renderer.touch = coarse && !this.settings.auto;
+    this.applyInputMode();
     this.input.refresh();
     resetTouchStats();
     this.raw = [];
@@ -232,6 +232,40 @@ export class PlayMode {
     this.raf = requestAnimationFrame(loop);
   }
 
+  /** オート・太鼓の表示・指置きを、設定に合わせる（描き直しが要るときは true） */
+  private applyInputMode() {
+    // Expo Go のアプリの中ではアプリが指を受け取るので、指置きはいらない（Safari などでは設定のとおり）
+    const coarse = isNativeHost() || matchMedia('(pointer: coarse)').matches;
+    const restZone = !isNativeHost() && coarse && !!this.settings.restZone && !this.settings.auto;
+    // オートのときは叩かないので、タッチ用の太鼓も出さない
+    const touch = coarse && !this.settings.auto;
+    const padVisible = this.settings.padVisible !== false;
+    const R = this.renderer;
+    const changed = R.restZone !== restZone || R.touch !== touch || R.padVisible !== padVisible;
+    R.restZone = restZone;
+    R.touch = touch;
+    R.padVisible = padVisible;
+    return changed;
+  }
+
+  /** ポーズ画面の「プレイ / オート」の表示 */
+  private paintPauseMode() {
+    this.root.querySelectorAll<HTMLButtonElement>('[data-pmode]').forEach((b) => {
+      const on = (b.dataset.pmode === 'auto') === !!this.settings.auto;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+
+  /** ポーズ画面で、プレイ（自分で叩く）とオートを切り替える。続けたところから切り替わる */
+  setAuto(auto: boolean) {
+    if (!!this.settings.auto === auto) return;
+    this.settings.auto = auto;
+    this.onSettingsChange();
+    if (this.applyInputMode()) this.renderer.resize();
+    this.paintPauseMode();
+  }
+
   /** ポーズ（曲を止めて、ポーズのメニューを出す） */
   pause() {
     if (!this.active || this.paused) return;
@@ -240,6 +274,7 @@ export class PlayMode {
     this.timeFloor = this.time();
     cancelAnimationFrame(this.raf);
     this.audio.stop();
+    this.paintPauseMode();
     this.root.querySelector('#pauseMenu')?.classList.remove('hidden');
   }
 
@@ -253,6 +288,8 @@ export class PlayMode {
     // 止めたときに予約して鳴らなかった打音を、もう一度予約し直す
     this.soundIdx = this.autoEvents.findIndex((e) => e.t >= at);
     if (this.soundIdx < 0) this.soundIdx = this.autoEvents.length;
+    // ポーズ中にオートへ切り替えたときは、止めた所から自動で叩く（それより前は叩かない）
+    this.autoIdx = this.soundIdx;
     this.runLoop();
   }
 

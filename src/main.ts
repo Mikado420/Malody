@@ -60,6 +60,8 @@ const settings = {
   // iPhone / iPad の Safari は両手交互の速い連打でタッチを落とすので、既定で指置きを使う（Expo Go の中では使わない）
   restZone: IS_IOS,
   passiveTouch: false,
+  /** タッチ用の太鼓を半透明で表示する（隠しても叩ける） */
+  padVisible: true,
   /** タッチ用の中央のドンの帯の幅 */
   donWidth: 0.6,
   /** TJA のテキストを太字で表示する */
@@ -908,6 +910,7 @@ function renderSheet() {
       <label class="field"><span>判定調整 ms</span><input type="range" min="-300" max="300" step="1" data-set="offset" value="${settings.offset}"><output>${settings.offset}</output></label>
       <label class="field"><span>打音</span><input type="checkbox" data-set="hitSound" ${settings.hitSound ? 'checked' : ''}></label>
       <label class="field"><span>ずれを表示</span><input type="checkbox" data-set="showTiming" ${settings.showTiming ? 'checked' : ''}></label>
+      <label class="field"><span>太鼓を表示</span><input type="checkbox" data-set="padVisible" ${settings.padVisible ? 'checked' : ''}></label>
       <label class="field"><span>ドンの幅</span><input type="range" min="0.3" max="0.9" step="0.01" data-set="donWidth" value="${settings.donWidth}"><output>${Math.round(settings.donWidth * 100)}%</output></label>
       ${isNativeHost() ? '<p class="note">Expo Go のアプリで動いています。指置きなしで叩けます。</p>' : IS_IOS ? `
       <label class="field"><span>上を指置きに</span><input type="checkbox" data-set="restZone" ${settings.restZone ? 'checked' : ''}></label>
@@ -1529,6 +1532,8 @@ $('back').addEventListener('click', () => play.close());
 // ポーズ: 左上のボタン。つづける／はじめから（曲の最初から）／エディタへ
 $('playPause').addEventListener('click', () => play.pause());
 $('pauseResume').addEventListener('click', () => void play.resume());
+document.querySelectorAll<HTMLButtonElement>('#pauseMenu [data-pmode]').forEach((b) => b.addEventListener('click', () => play.setAuto(b.dataset.pmode === 'auto')));
+play.onSettingsChange = saveSettings;
 $('pauseRestart').addEventListener('click', () => void (play.lastWasCalibration ? play.startCalibration() : startTest(true)));
 $('pauseBack').addEventListener('click', () => play.close());
 $('retry').addEventListener('click', () => void (play.lastWasCalibration ? play.startCalibration() : startTest()));

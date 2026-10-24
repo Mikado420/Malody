@@ -83,6 +83,8 @@ export class Renderer {
   restZone = false;
   /** タッチ操作用の太鼓を画面下に描くか */
   touch = matchMedia('(pointer: coarse)').matches;
+  /** タッチ用の太鼓を（半透明で）描くか。描かなくても叩ける */
+  padVisible = true;
 
   private dpr = 1;
   private s = 1;
@@ -277,7 +279,7 @@ export class Renderer {
     this.paintLaneBase(c, V.x1);
     c.restore(); // 16:9 の枠の切り抜きを外す（太鼓は黒帯の上まで描く）
     // タッチ用の太鼓（画面 px の座標系）
-    if (this.touch) {
+    if (this.touch && this.padVisible) {
       c.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       this.drawPadShape(c);
     }
@@ -1504,46 +1506,66 @@ export class Renderer {
     ctx.restore();
   }
 
+  /**
+   * タッチ用の太鼓の形（画面 px）。画面の下に大きな太鼓の面を半分見せる。
+   * 面の横幅がドンの帯（donWidth）と同じ。面の外（縁とその外側）がカッ。上下の位置は判定に関係ない
+   */
+  private drum() {
+    const P = this.pad;
+    const rx = P.half;
+    const ry = rx * 0.72;
+    const rim = Math.max(8, rx * 0.085);
+    // レーンの下の文字の帯から少し離す
+    const top = P.top + rim * 1.6 + 30 * this.s;
+    return { cx: P.x, cy: top + ry, rx, ry, rim };
+  }
+
   /** 太鼓の形（半透明）。画面 px の座標系で描く */
   private drawPadShape(ctx: CanvasRenderingContext2D) {
-    const P = this.pad;
-    const left = P.x - P.half;
-    const right = P.x + P.half;
-    const hgt = P.h - P.top;
+    const D = this.drum();
+    const ell = (rx: number, ry: number) => {
+      ctx.beginPath();
+      ctx.ellipse(D.cx, D.cy, rx, ry, 0, 0, Math.PI * 2);
+    };
     ctx.save();
-    ctx.globalAlpha = 0.45;
-    // 左右の端（カッ）
-    ctx.fillStyle = '#2f6f8a';
-    ctx.fillRect(0, P.top, left, hgt);
-    ctx.fillRect(right, P.top, P.w - right, hgt);
-    // 中央（ドン）: 太鼓の面のように上下を丸めた帯
-    ctx.fillStyle = '#f4e6c8';
-    ctx.beginPath();
-    const r = Math.min(P.half, hgt) * 0.25;
-    ctx.moveTo(left, P.h);
-    ctx.lineTo(left, P.top + r);
-    ctx.quadraticCurveTo(left, P.top, left + r, P.top);
-    ctx.lineTo(right - r, P.top);
-    ctx.quadraticCurveTo(right, P.top, right, P.top + r);
-    ctx.lineTo(right, P.h);
-    ctx.closePath();
-    ctx.fill();
+    // 縁（黒い胴の縁と、ふちのでこぼこ）
     ctx.globalAlpha = 0.6;
-    ctx.fillStyle = '#1f0c06';
-    ctx.fillRect(left - 1.5, P.top, 3, hgt);
-    ctx.fillRect(right - 1.5, P.top, 3, hgt);
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.fillRect(P.x - 1, P.top, 2, hgt);
+    ctx.fillStyle = '#26262c';
+    // 縁のでこぼこ: 外周に小さな丸を少しずつ重ねて並べ、縁と 1 つの形にして塗る（重なった所が濃くならないように）
+    const ax = D.rx + D.rim;
+    const ay = D.ry + D.rim;
+    const n = Math.max(32, Math.round((2 * Math.PI * Math.sqrt((ax * ax + ay * ay) / 2)) / (D.rim * 0.8)));
+    ctx.beginPath();
+    ctx.ellipse(D.cx, D.cy, ax, ay, 0, 0, Math.PI * 2);
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const x = D.cx + Math.cos(a) * ax;
+      const y = D.cy + Math.sin(a) * ay;
+      ctx.moveTo(x + D.rim * 0.5, y);
+      ctx.arc(x, y, D.rim * 0.5, 0, Math.PI * 2);
+    }
+    ctx.fill('nonzero');
+    // 縁の鋲
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#e6e6ea';
+    const m = Math.max(16, Math.round(D.rx / 22));
+    for (let k = 0; k < m; k++) {
+      const a = (k / m) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(D.cx + Math.cos(a) * (D.rx + D.rim * 0.5), D.cy + Math.sin(a) * (D.ry + D.rim * 0.5), Math.max(1.5, D.rim * 0.12), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 面（後ろの背景が透けるように薄く）
+    ctx.globalAlpha = 0.32;
+    ctx.fillStyle = '#f7f1e3';
+    ell(D.rx, D.ry);
+    ctx.fill();
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = Math.max(1, 3 * this.s);
+    ctx.strokeStyle = '#ffffff';
+    ell(D.rx * 0.97, D.ry * 0.97);
+    ctx.stroke();
     ctx.restore();
-    const fs = Math.round(30 * this.s);
-    ctx.font = `800 ${fs}px ${FONT}`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillStyle = 'rgba(255,255,255,0.6)';
-    const ty = P.top + hgt * 0.5;
-    ctx.fillText('カッ', left / 2, ty);
-    ctx.fillText('カッ', (right + P.w) / 2, ty);
-    ctx.fillText('ドン', P.x, ty);
   }
 
   /** 指置きの場所（レーンより上）。ほかの絵の上に重ねる */
@@ -1574,22 +1596,32 @@ export class Renderer {
     const ctx = this.ctx;
     const P = this.pad;
     // 叩き分けの帯は動かないので背景と一緒に前もって描いてある（drawPadShape）。ここでは光と波紋だけ
-    if (!this.bg) this.drawPadShape(ctx);
+    if (!this.bg && this.padVisible) this.drawPadShape(ctx);
     this.drawRest();
-    const hgt = P.h - P.top;
 
-    // 叩いた側が光る（ドン＝中央の左半分／右半分、カッ＝左端／右端）
-    for (const f of this.flashes) {
-      const a = 1 - (wall - f.t) / 150;
-      if (a <= 0) continue;
-      if (f.kind === 'don') {
-        ctx.fillStyle = `rgba(255,80,40,${0.45 * a})`;
-        if (f.side === 'L') ctx.fillRect(P.x - P.half, P.top, P.half, hgt);
-        else ctx.fillRect(P.x, P.top, P.half, hgt);
-      } else {
-        ctx.fillStyle = `rgba(70,200,240,${0.6 * a})`;
-        if (f.side === 'L') ctx.fillRect(0, P.top, P.x - P.half, hgt);
-        else ctx.fillRect(P.x + P.half, P.top, P.w - P.x - P.half, hgt);
+    // 叩いた側が光る（ドン＝面の左半分／右半分、カッ＝縁の左側／右側）。太鼓を隠しているときは波紋だけ
+    if (this.padVisible) {
+      const D = this.drum();
+      for (const f of this.flashes) {
+        const a = 1 - (wall - f.t) / 150;
+        if (a <= 0) continue;
+        ctx.save();
+        ctx.beginPath();
+        if (f.side === 'L') ctx.rect(0, 0, D.cx, P.h);
+        else ctx.rect(D.cx, 0, P.w - D.cx, P.h);
+        ctx.clip();
+        ctx.beginPath();
+        if (f.kind === 'don') {
+          ctx.ellipse(D.cx, D.cy, D.rx, D.ry, 0, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(255,80,40,${0.45 * a})`;
+          ctx.fill();
+        } else {
+          ctx.ellipse(D.cx, D.cy, D.rx + D.rim * 1.4, D.ry + D.rim * 1.4, 0, 0, Math.PI * 2);
+          ctx.ellipse(D.cx, D.cy, D.rx, D.ry, 0, 0, Math.PI * 2);
+          ctx.fillStyle = `rgba(70,200,240,${0.7 * a})`;
+          ctx.fill('evenodd');
+        }
+        ctx.restore();
       }
     }
 
