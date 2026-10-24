@@ -912,7 +912,7 @@ function renderSheet() {
       ${isNativeHost() ? '<p class="note">Expo Go のアプリで動いています。指置きなしで叩けます。</p>' : IS_IOS ? `
       <label class="field"><span>上を指置きに</span><input type="checkbox" data-set="restZone" ${settings.restZone ? 'checked' : ''}></label>
       <p class="note">iPhone の Safari では、両手で速く叩くとタッチが届かないことがあります。画面の上に指を 1 本置いたまま叩くか、Expo Go のアプリで開いてください（指置きなしで叩けます）。</p>
-      <a class="btn-link" href="${EXPO_LINK}" target="_blank" rel="noopener">Expo Go で開く</a>` : ''}
+      <a class="btn-link" href="${EXPO_LINK}">Expo Go で開く</a>` : ''}
       <button data-act="calibrate">タイミング調整（クリック音に合わせて叩いて、判定調整を測る）</button>
       <h3>音量（自動で同じ大きさに揃えてから、この比率を掛けます。.zip の音源も、音源と打音の比率に合わせて書き出します）</h3>
       <label class="field"><span>音源</span><input type="range" min="0" max="2" step="0.05" data-set="volMusic" value="${settings.volMusic}"><output>${settings.volMusic.toFixed(2)}</output></label>
