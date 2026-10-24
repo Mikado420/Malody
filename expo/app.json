@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "TJAtelier",
+    "slug": "tjatelier",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#000000",
+    "ios": { "supportsTablet": true },
+    "runtimeVersion": { "policy": "sdkVersion" }
+  }
+}

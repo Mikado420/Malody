@@ -729,14 +729,6 @@ html:has(body.tja-open), body.tja-open { background: #020810; }
 .busy-bar.hidden { display: none; }
 .busy-bar i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #fff, var(--accent)); box-shadow: var(--glow-b); transition: width 0.2s; }
 /* 読み込み（ファイルから / リンクから） */
-.src-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.src-pick button { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 16px; text-align: left; white-space: normal; border: 1px solid var(--line); }
-.src-pick b { font-size: 17px; }
-.src-pick small { color: var(--sub); font-size: 12px; line-height: 1.4; }
-.link-setup summary { cursor: pointer; color: var(--accent); font-size: 14px; padding: 4px 0; }
-.link-setup ol { padding-left: 20px; margin: 6px 0; }
-.link-setup ol li { margin: 2px 0; }
-.link-setup .field, .link-setup .btns { margin-top: 8px; }
 /* 音源のカット */
 .cut-ov { height: 80px; }
 .cut-detail { flex: 1; min-height: 90px; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
@@ -844,8 +836,6 @@ input[type='range'], input[type='checkbox'] { accent-color: var(--accent); }
 .list .item { background: var(--inp); border-radius: 0; }
 .list .item.current { outline: 0; box-shadow: inset 3px 0 0 var(--accent); background: var(--accent-tint); }
 .ev-row { background: var(--inp); border-radius: 0; }
-.src-pick button { border: 0; background: var(--inp); clip-path: none; border-left: 4px solid var(--accent); }
-.link-setup summary { color: var(--accent-hi); font-weight: 700; }
 /* 全画面のシート（TJA・グラデ・BPM 測定・カット）は見出しを斜めにしない */
 .sheet.tja .sheet-panel, .sheet.grad .sheet-panel, .sheet.tempo .sheet-panel { width: 100%; max-height: none; border: 0; box-shadow: none; }
 .sheet.tja .sheet-head, .sheet.grad .sheet-head { clip-path: none; padding-bottom: 8px; }

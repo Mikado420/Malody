@@ -20,8 +20,6 @@ import { loadFiles, type AudioFile } from './io/load';
 import { encodeSJIS } from './chart/sjis';
 import { bufferChannels, isOgg, oggName, pcmToOgg } from './audio/toOgg';
 import { boostWithLimiter, oggSampleRate } from './audio/loudness';
-import { fetchLink, testSetup, type LinkResult } from './io/linkFetch';
-import { fetchYoutubePublic, youtubeId } from './io/ytPublic';
 import { loadAudio, loadChart, loadHitSound, saveHitSound } from './io/storage';
 import { getCurrentId, listSongs, loadSongAudio, loadSongData, newId, saveSong, setCurrentId } from './io/library';
 import { Home } from './home/home';
@@ -44,12 +42,6 @@ const IS_IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfo
 const EXPO_LINK = 'https://snack.expo.dev/?sourceUrl=https%3A%2F%2Fmikado420.github.io%2FMalody%2Fexpo%2FApp.js&platform=ios&name=TJAtelier&sdkVersion=58.0.0&dependencies=react-native-webview%2Cexpo-screen-orientation%2Cexpo-status-bar%2Creact-native-gesture-handler';
 
 const settings = {
-  /** リンクから読み込む: 処理の入ったリポジトリと、トークン */
-  linkRepo: 'Mikado420/Malody',
-  linkToken: '',
-  /** リンクから読み込む: 中継役（トークン無しで使う）の URL と合言葉 */
-  linkRelay: '',
-  linkPass: '',
   /** 前の版の「1 拍を何分割」（読み込みの引き継ぎ用） */
   divisor: 0,
   /** グリッド: 1 小節（4/4、全音符）を何分割するか */
@@ -95,20 +87,6 @@ try {
 const saveSettings = () => {
   try { localStorage.setItem('malody-web:settings2', JSON.stringify(settings)); } catch { /* 無視 */ }
 };
-// 引き継ぎリンク（…#relay=URL&pass=合言葉）で開いたら、中継役の設定を取り込んで URL から消す
-{
-  const h = new URLSearchParams(location.hash.slice(1));
-  const relay = h.get('relay');
-  if (relay && /^https:\/\//.test(relay)) {
-    settings.linkRelay = relay;
-    settings.linkPass = h.get('pass') ?? '';
-    saveSettings();
-    history.replaceState(null, '', location.pathname + location.search);
-    setTimeout(() => toast('リンク取り込みの設定を引き継ぎました'), 800);
-  }
-}
-const linkSetup = () => ({ repo: settings.linkRepo, token: settings.linkToken, relay: settings.linkRelay || undefined, pass: settings.linkPass });
-const linkReady = () => !!settings.linkRelay || (!!settings.linkToken && !!settings.linkRepo);
 
 // ---------- 本体 ----------
 
@@ -801,7 +779,7 @@ window.addEventListener('keydown', (e) => {
 
 // ---------- シート ----------
 
-type SheetKind = 'info' | 'settings' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo' | 'src' | 'link' | 'cut' | 'gpick';
+type SheetKind = 'info' | 'settings' | 'events' | 'grad' | 'point' | 'evlist' | 'tempo' | 'cut' | 'gpick';
 let sheet: SheetKind | null = null;
 
 function openSheet(kind: SheetKind) {
@@ -854,7 +832,7 @@ function refreshSheet() {
   if ($('sheetBody').contains(document.activeElement) && (document.activeElement instanceof HTMLInputElement || document.activeElement instanceof HTMLTextAreaElement)) return;
   // TJA のテキストは書き換え中かもしれないので、譜面が変わっても勝手に描き直さない
   if (sheet === 'events' && document.getElementById('tjaText')) return;
-  if (sheet === 'grad' || sheet === 'point' || sheet === 'tempo' || sheet === 'link' || sheet === 'cut' || sheet === 'gpick') return;
+  if (sheet === 'grad' || sheet === 'point' || sheet === 'tempo' || sheet === 'cut' || sheet === 'gpick') return;
   if (sheet === 'evlist') { renderSheet(); return; }
   renderSheet();
 }
@@ -951,10 +929,6 @@ function renderSheet() {
       <label class="field"><span>メトロノーム</span><input type="checkbox" data-set="metronome" ${settings.metronome ? 'checked' : ''}></label>
       <p class="note">編集内容はこのブラウザに自動保存されます。書き出した .tja はシフトJIS です。</p>
       <p class="note">バージョン: ${esc(BUILD_ID.slice(0, 7))}</p>`;
-  } else if (sheet === 'src') {
-    renderSrcSheet(body);
-  } else if (sheet === 'link') {
-    renderLinkSheet(body);
   } else if (sheet === 'cut') {
     renderCutSheet(body);
   } else if (sheet === 'tempo') {
@@ -1405,7 +1379,7 @@ async function exportAudioData(a: AudioFile): Promise<ArrayBuffer> {
 
 async function fileAction(act: string) {
   if (act === 'open') pickFiles('any');
-  else if (act === 'audio') { srcTarget = 'editor'; openSheet('src'); }
+  else if (act === 'audio') pickFiles('audio');
   else if (act === 'cut') openCut();
   else if (act === 'tempo') startTempo();
   else if (act === 'new') {
@@ -1654,7 +1628,7 @@ async function createSong(chart: EChart, folder = '') {
 
 const home = new Home({
   open: openSong,
-  importFiles: () => { srcTarget = 'home'; openSheet('src'); },
+  importFiles: () => pickFiles('any'),
   create: (folder) => createSong(newChart(), folder),
   settings: () => openSheet('settings'),
   toast,
@@ -2905,127 +2879,6 @@ function drawTempoWave(plan: TempoPlan, playhead = -1) {
   }
   // 確認再生中の今の位置
   if (playhead >= t0 && playhead <= t1) drawPlayhead(ctx, xOf(playhead), HH, T_RULER);
-}
-
-// ---------- 読み込み（ファイルから / リンクから） ----------
-
-/** 読み込みの画面を出した所（曲選択なら新しい曲、エディタなら今の曲の音源） */
-let srcTarget: 'home' | 'editor' = 'home';
-
-function renderSrcSheet(body: HTMLElement) {
-  const home_ = srcTarget === 'home';
-  $('sheetTitle').textContent = home_ ? '読み込み' : '音源を読み込む';
-  body.innerHTML = `
-    <div class="src-pick">
-      <button data-src="file"><b>ファイルから</b><small>${home_ ? '.tja・.zip・音源（何でも、いくつでも）' : '音源ファイル（.ogg に自動で変換）'}</small></button>
-      <button data-src="link"><b>リンクから</b><small>YouTube・SoundCloud などのリンク</small></button>
-    </div>`;
-  body.querySelector('[data-src="file"]')!.addEventListener('click', () => pickFiles(home_ ? 'any' : 'audio'));
-  body.querySelector('[data-src="link"]')!.addEventListener('click', () => openSheet('link'));
-}
-
-/** リンクから取り込み中の様子（画面を閉じても続く） */
-let linkBusy = '';
-
-function renderLinkSheet(body: HTMLElement) {
-  $('sheetTitle').textContent = 'リンクから音源を読み込む';
-  const ready = linkReady();
-  body.innerHTML = `
-    <label class="field"><span>リンク</span><input type="url" id="linkUrl" placeholder="https://www.youtube.com/watch?v=…" autocomplete="off"></label>
-    <div class="btns"><button data-act="linkGo" class="primary" ${!linkBusy ? '' : 'disabled'}>取り込む</button><button data-act="linkPaste">貼り付け</button></div>
-    <p class="note" id="linkStatus">${linkBusy || (ready ? '' : 'まず下の「はじめに準備」をしてください')}</p>
-    <details class="link-setup" ${ready ? '' : 'open'}>
-      <summary>${ready ? '準備できています（変えるときはここ）' : 'はじめに準備（1 回だけ）'}</summary>
-      <p class="note"><b>引き継ぎリンク</b>をもらった人は、そのリンクを開くだけで準備が終わります（ここは触らなくて大丈夫）。</p>
-      <p class="note">自分で入れるときは、下の 2 つを入れて「保存」を押してください。</p>
-      <label class="field"><span>中継役 URL</span><input type="url" id="linkRelay" value="${esc(settings.linkRelay)}" placeholder="https://tjacs-relay.○○.workers.dev" autocomplete="off"></label>
-      <label class="field"><span>合言葉</span><input type="password" id="linkPass" value="${esc(settings.linkPass)}" autocomplete="off"></label>
-      <div class="btns"><button data-act="relaySave" class="primary">保存</button><button data-act="relayClear">消す</button></div>
-      <button data-act="relayShare" ${settings.linkRelay ? '' : 'disabled'}>別のスマホ・友だち用の引き継ぎリンクをコピー</button>
-      <p class="note">引き継ぎリンクには合言葉が入っています。使ってほしい人にだけ送ってください。</p>
-    </details>`;
-  const status = (m: string) => { const el = document.getElementById('linkStatus'); if (el) el.textContent = m; };
-  body.querySelector('[data-act="relaySave"]')!.addEventListener('click', async () => {
-    const relay = ($<HTMLInputElement>('linkRelay').value || '').trim().replace(/\/+$/, '');
-    const pass = ($<HTMLInputElement>('linkPass').value || '').trim();
-    if (!/^https:\/\//.test(relay)) { status('中継役の URL（https://…）を入れてください'); return; }
-    status('確かめています…');
-    const err = await testSetup({ repo: '', token: '', relay, pass });
-    if (err) { status(err); return; }
-    settings.linkRelay = relay;
-    settings.linkPass = pass;
-    saveSettings();
-    toast('準備ができました');
-    renderLinkSheet(body);
-  });
-  body.querySelector('[data-act="relayShare"]')!.addEventListener('click', async () => {
-    const u = `${location.origin}${location.pathname}#${new URLSearchParams({ relay: settings.linkRelay, pass: settings.linkPass })}`;
-    try { await navigator.clipboard.writeText(u); toast('引き継ぎリンクをコピーしました'); } catch { prompt('このリンクをコピーしてください', u); }
-  });
-  body.querySelector('[data-act="relayClear"]')!.addEventListener('click', () => {
-    settings.linkRelay = '';
-    settings.linkPass = '';
-    saveSettings();
-    renderLinkSheet(body);
-  });
-  body.querySelector('[data-act="linkPaste"]')?.addEventListener('click', async () => {
-    try { $<HTMLInputElement>('linkUrl').value = (await navigator.clipboard.readText()).trim(); } catch { toast('貼り付けできませんでした'); }
-  });
-  body.querySelector('[data-act="linkGo"]')?.addEventListener('click', () => {
-    const url = $<HTMLInputElement>('linkUrl').value.trim();
-    if (!/^https?:\/\//.test(url)) { status('リンク（https://…）を入れてください'); return; }
-    void importLink(url, srcTarget);
-    renderLinkSheet(body);
-  });
-}
-
-async function importLink(url: string, target: 'home' | 'editor') {
-  const ready = linkReady();
-  const show = (m: string) => {
-    linkBusy = m;
-    const el = document.getElementById('linkStatus');
-    if (el) el.textContent = m;
-  };
-  try {
-    // YouTube: まず GitHub（クッキーを登録していれば使う）、だめなら公開サーバー（Piped・Invidious）
-    let res: LinkResult;
-    if (!ready) {
-      if (!youtubeId(url)) throw new Error('先に「はじめに準備」をしてください');
-      res = await fetchYoutubePublic(url, show);
-    } else {
-      try {
-        res = await fetchLink(linkSetup(), url, show);
-      } catch (e) {
-        if (!youtubeId(url)) throw e;
-        res = await fetchYoutubePublic(url, show);
-      }
-    }
-    show('');
-    const c = await convertAudio(res.audio, res.title);
-    busyEnd();
-    if (target === 'editor' && currentSongId && !home.visible) {
-      await applyAudioOnly(c.file);
-    } else {
-      const chart = newChart(res.title);
-      if (res.artist) chart.subtitle = `--${res.artist}`;
-      chart.wave = c.file.name;
-      const id = newId();
-      await saveSong(id, { chart, courseIndex: 0 }, c.file, c.length, home.visible ? home.currentFolder : '');
-      toast(`「${res.title}」を追加しました`);
-      if (home.visible) await home.select(id);
-    }
-    if (sheet === 'link') closeSheet();
-  } catch (err) {
-    busyEnd();
-    show('');
-    const m = (err as Error).message;
-    toast(m);
-    const el = document.getElementById('linkStatus');
-    if (el) el.textContent = m;
-  } finally {
-    linkBusy = '';
-    if (sheet === 'link') document.querySelector<HTMLButtonElement>('[data-act="linkGo"]')?.removeAttribute('disabled');
-  }
 }
 
 // ---------- 音源の切り貼り ----------

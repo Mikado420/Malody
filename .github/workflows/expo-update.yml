@@ -1,0 +1,77 @@
+name: Expo Go 版を配信
+
+on:
+  push:
+    branches: [main]
+    paths: ['public/expo/**', 'expo/**', '.github/workflows/expo-update.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: expo-update
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: expo
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      # git の状態を見ない（App.js を写したり、版を合わせたりするので）
+      EAS_NO_VCS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: アプリ本体を写す
+        run: cp ../public/expo/App.js App.js
+
+      - name: Expo SDK 58 と、それに合う版のライブラリを入れる
+        run: |
+          npm install
+          npx expo install react react-native react-native-webview expo-screen-orientation expo-status-bar react-native-gesture-handler
+          npx expo install --fix || true
+          npx expo install --check || true
+
+      - name: Expo のアカウントの確認
+        run: npx eas-cli@latest whoami
+
+      - name: Expo のプロジェクトにつなぐ（なければ作る）
+        run: npx eas-cli@latest init --non-interactive --force
+
+      - name: 配信先の設定
+        run: |
+          node -e '
+            const fs = require("fs");
+            const a = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            const id = a.expo.extra && a.expo.extra.eas && a.expo.extra.eas.projectId;
+            if (!id) throw new Error("projectId がありません");
+            a.expo.updates = { url: "https://u.expo.dev/" + id };
+            fs.writeFileSync("app.json", JSON.stringify(a, null, 2));
+            fs.appendFileSync(process.env.GITHUB_ENV, "PROJECT_ID=" + id + "\n");
+          '
+          cat app.json
+
+      - name: チャンネル main（なければ作る）
+        run: npx eas-cli@latest channel:create main --non-interactive || true
+
+      - name: EAS Update で配信
+        env:
+          MSG: ${{ github.event.head_commit.message || 'manual' }}
+        run: npx eas-cli@latest update --channel main --platform all --message "$(printf '%s' "$MSG" | head -n 1)" --non-interactive
+
+      - name: 開くリンク
+        run: |
+          RV=$(node -e 'const v=require("expo/package.json").version.split(".")[0]; console.log("exposdk:"+v+".0.0")')
+          LINK="exp://u.expo.dev/${PROJECT_ID}?runtime-version=${RV}&channel-name=main"
+          echo "$LINK"
+          {
+            echo "## Expo Go で開くリンク"
+            echo ""
+            echo "\`$LINK\`"
+            echo ""
+            echo "projectId: \`${PROJECT_ID}\` / runtime: \`${RV}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

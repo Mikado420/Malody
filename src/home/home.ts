@@ -173,7 +173,7 @@ export class Home {
         <div class="hdx-diffs">${courses}</div>
         <div class="hdx-acts"><button class="hdx-edit" data-edit="${s.id}">編集</button><button class="hdx-play" data-play="${s.id}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg>プレイ</button></div>`;
     } else {
-      this.detail.innerHTML = `<div class="hdx-empty"><b>曲を選んでください</b><small>.tja・.zip・音源・リンクから読み込めます</small><button class="hdx-play" data-h="import">読み込む</button></div>`;
+      this.detail.innerHTML = `<div class="hdx-empty"><b>曲を選んでください</b><small>.tja・.zip・音源ファイルから読み込めます</small><button class="hdx-play" data-h="import">読み込む</button></div>`;
     }
 
     (document.getElementById('homeSort') as HTMLElement).textContent = SORT_LABEL[this.sort];
