@@ -95,4 +95,42 @@ describe('グラデ', () => {
       expect(ed.course.grads?.[0]?.basis).toBe('time');
     });
   });
+
+  it('グラデの始点・終点に重ねて SCROLL を置ける（置き直しても・TJA を読み直しても残る。消すとグラデの値に戻る）', () => {
+    const ed = new Editor(parseTJA(TJA));
+    ed.setGrad({ start: 0, end: M, from: 1, to: 2, mode: 'linear', digits: 3 });
+    const at = (t: number) => ed.course.events.filter((e) => e.kind === 'scroll' && e.tick === t).map((e) => (e as { value: number }).value);
+    ed.addEvent({ tick: M, kind: 'scroll', value: 0.5 });
+    ed.addEvent({ tick: 0, kind: 'scroll', value: 3 });
+    expect(at(M)).toEqual([0.5]);
+    expect(at(0)).toEqual([3]);
+    expect(at(M / 2)).toEqual([1.5]);
+    // ほかの編集でグラデを置き直しても残る
+    ed.addEvent({ tick: M * 2, kind: 'bpm', value: 150 });
+    expect(at(M)).toEqual([0.5]);
+    // グラデを変えても残る
+    ed.setGrad({ ...ed.course.grads![0], to: 4 }, ed.course.grads![0]);
+    expect(at(M)).toEqual([0.5]);
+    expect(at(M / 2)).toEqual([2.5]);
+    // TJA のテキストから読み直しても、グラデも重ねた SCROLL も残る
+    ed.replaceChart(parseTJA(writeTJA(ed.chart)));
+    expect(ed.course.grads?.length).toBe(1);
+    ed.addEvent({ tick: M * 2, kind: 'bpm', value: 160 });
+    expect(at(M)).toEqual([0.5]);
+    expect(at(0)).toEqual([3]);
+    // 消すとグラデの値に戻る
+    ed.removeEvent(ed.course.events.find((e) => e.kind === 'scroll' && e.tick === M)!);
+    expect(at(M)).toEqual([4]);
+  });
+
+  it('つながったグラデを TJA から読み直しても、つなぎ目は重ねた SCROLL にならない', () => {
+    const ed = new Editor(parseTJA(TJA));
+    ed.setGrad({ start: 0, end: M, from: 1, to: 2, mode: 'linear', digits: 3 });
+    ed.setGrad({ start: M, end: M * 3, from: 3, to: 1, mode: 'linear', digits: 3 });
+    ed.replaceChart(parseTJA(writeTJA(ed.chart)));
+    expect(ed.course.grads?.length).toBe(2);
+    expect(ed.course.events.some((e) => e.kind === 'scroll' && e.pin)).toBe(false);
+    ed.setGrad({ ...ed.course.grads![1], from: 5 }, ed.course.grads![1]);
+    expect(ed.course.events.filter((e) => e.kind === 'scroll' && e.tick === M).map((e) => (e as { value: number }).value)).toEqual([5]);
+  });
 });

@@ -683,7 +683,7 @@ function renderGradPickSheet(body: HTMLElement) {
   if (gp.after) items.push(`<button data-gp="after" class="gp-item"><b>後ろのグラデを開く</b><small>${val(gp.after)}　${range(gp.after)}</small></button>`);
   if (!gp.after) items.push(`<button data-gp="new" class="gp-item"><b>ここから新しいグラデを始める</b><small>次に、終わりにしたい位置をタップ</small></button>`);
   else if (!gp.before) items.push(`<button data-gp="new" class="gp-item"><b>ここで終わる新しいグラデを作る</b><small>次に、始めにしたい位置をタップ</small></button>`);
-  items.push(`<button data-gp="point" class="gp-item"><b>この位置にだけ SCROLL を置く</b><small>${ed.label(gp.tick)}</small></button>`);
+  items.push(`<button data-gp="point" class="gp-item"><b>この位置に SCROLL を重ねて置く</b><small>${ed.label(gp.tick)}・グラデの値の代わりにする</small></button>`);
   body.innerHTML = `<p class="note">${ed.label(gp.tick)}</p><div class="gp-list">${items.join('')}</div>`;
   // タップで開いた直後に、そのタップから来るクリックがちょうど指の下のボタンを押してしまわないように
   const openedAt = performance.now();

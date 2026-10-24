@@ -4,7 +4,7 @@ import {
 } from '../chart/model';
 import type { NoteType } from '../chart/types';
 import type { AudioFile } from '../io/load';
-import { applyGrad, gradMatches, type Grad } from './grad';
+import { applyGrad, gradMatches, markPins, type Grad } from './grad';
 
 /** scroll = #SCROLL（1 か所をタップ×2 でその位置だけ、2 か所でグラデ）、bpm = #BPMCHANGE、measure = #MEASURE */
 export type Tool = NoteType | 'erase' | 'gogo' | 'scroll' | 'bpm' | 'measure' | 'select';
@@ -139,6 +139,7 @@ export class Editor {
         sortCourse(c);
         const keep = old.grads.filter((g) => gradMatches(c, g, chart.bpm, !old.grads!.some((o) => o !== g && o.start === g.end)));
         if (keep.length) c.grads = keep.map((g) => ({ ...g }));
+        for (const g of c.grads ?? []) markPins(c, g, chart.bpm, !c.grads!.some((o) => o !== g && o.start === g.end));
       }
       this.chart = chart;
       const i = chart.courses.findIndex((c) => c.name === name);
@@ -492,19 +493,20 @@ export class Editor {
     this.mutate(() => {
       const c = this.course;
       const list = (c.grads ?? []).filter((x) => x !== old && (x.end <= g.start || x.start >= g.end));
-      if (old) c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= old.start && e.tick <= old.end));
+      // 前のグラデの #SCROLL を消す（始点・終点に重ねて置いたものは残す）
+      if (old) c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= old.start && e.tick <= old.end && !e.pin));
       list.push(g);
       list.sort((a, b) => a.start - b.start);
       c.grads = list;
     });
   }
 
-  /** グラデを消す（置いていた #SCROLL も消す） */
+  /** グラデを消す（置いていた #SCROLL も消す。始点・終点に重ねて置いたものは残す） */
   removeGrad(g: Grad) {
     this.mutate(() => {
       const c = this.course;
       c.grads = (c.grads ?? []).filter((x) => x !== g);
-      c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= g.start && e.tick <= g.end));
+      c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= g.start && e.tick <= g.end && !e.pin));
     });
   }
 
@@ -530,6 +532,12 @@ export class Editor {
 
   addEvent(ev: EEvent) {
     if (ev.kind === 'measure') ev = { ...ev, tick: this.measureOf(ev.tick).start };
+    // グラデの始点・終点に置く #SCROLL は、グラデの値の代わりにする（グラデを置き直しても消さない）
+    if (ev.kind === 'scroll') {
+      const t = ev.tick;
+      ev = { tick: t, kind: 'scroll', value: ev.value };
+      if (this.course.grads?.some((g) => g.start === t || g.end === t)) ev.pin = true;
+    }
     this.mutate(() => {
       const ev2 = ev;
       this.course.events = this.course.events.filter((e) => !(e.tick === ev2.tick && e.kind === ev2.kind));

@@ -1,4 +1,4 @@
-import { measures, measureScale, TPB, type ECourse } from '../chart/model';
+import { measures, measureScale, TPB, type ECourse, type EEvent } from '../chart/model';
 
 /**
  * グラデ（#SCROLL を少しずつ変えて、音符の見た目を滑らかに加速・減速させる）。
@@ -134,10 +134,28 @@ export function gradScrolls(c: ECourse, g: Grad, baseBpm: number): { tick: numbe
   return out;
 }
 
-/** 範囲 [start, end] の #SCROLL を、このグラデの値で置き直す */
+/** グラデの始点・終点に重ねて置いた #SCROLL（pin）か */
+export const isPin = (e: EEvent, g: Grad) => e.kind === 'scroll' && !!e.pin && (e.tick === g.start || e.tick === g.end);
+
+/**
+ * 範囲 [start, end] の #SCROLL を、このグラデの値で置き直す。
+ * 始点・終点に重ねて置いた #SCROLL（pin）はそのまま残し、その位置にはグラデの値を置かない
+ */
 export function applyGrad(c: ECourse, g: Grad, baseBpm: number) {
-  c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= g.start && e.tick <= g.end));
-  for (const s of gradScrolls(c, g, baseBpm)) c.events.push({ tick: s.tick, kind: 'scroll', value: s.value });
+  c.events = c.events.filter((e) => !(e.kind === 'scroll' && e.tick >= g.start && e.tick <= g.end) || isPin(e, g));
+  const pinned = new Set(c.events.filter((e) => isPin(e, g)).map((e) => e.tick));
+  for (const s of gradScrolls(c, g, baseBpm)) if (!pinned.has(s.tick)) c.events.push({ tick: s.tick, kind: 'scroll', value: s.value });
+}
+
+/** 始点・終点の #SCROLL がグラデの値と違えば、重ねて置いたもの（pin）にする（TJA のテキストから読み直したとき用） */
+export function markPins(c: ECourse, g: Grad, baseBpm: number, checkEnd = true) {
+  const want = new Map(gradScrolls(c, g, baseBpm).map((s) => [s.tick, s.value]));
+  for (const e of c.events) {
+    // 終点で次のグラデが始まるときは、終点の値は次のグラデのもの（そちらで確かめる）
+    if (e.kind !== 'scroll' || (e.tick !== g.start && (e.tick !== g.end || !checkEnd))) continue;
+    const w = want.get(e.tick);
+    if (w === undefined || Math.abs(e.value - w) >= 1e-9) e.pin = true;
+  }
 }
 
 /** 譜面の #SCROLL が、このグラデで置いたとおりになっているか（TJA のテキストを書き換えた後の確認用） */
@@ -148,5 +166,6 @@ export function gradMatches(c: ECourse, g: Grad, baseBpm: number, checkEnd = tru
   const have = c.events.filter((e) => e.kind === 'scroll' && e.tick >= g.start && e.tick <= last) as { tick: number; value: number }[];
   if (have.length !== want.length) return false;
   const sorted = [...have].sort((a, b) => a.tick - b.tick);
-  return sorted.every((e, i) => e.tick === want[i].tick && Math.abs(e.value - want[i].value) < 1e-9);
+  // 始点・終点は、重ねて置いた #SCROLL（pin）かもしれないので、位置だけ比べる
+  return sorted.every((e, i) => e.tick === want[i].tick && (e.tick === g.start || e.tick === g.end || Math.abs(e.value - want[i].value) < 1e-9));
 }
