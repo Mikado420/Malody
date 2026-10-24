@@ -177,6 +177,7 @@ export class Renderer {
     };
     this.burstSprites = {};
     this.sprites.clear();
+    this.padFlash = null;
     this.buildBackground();
   }
 
@@ -1525,6 +1526,46 @@ export class Renderer {
     return { cx: P.x, cy: top + ry, rx, ry, rim };
   }
 
+  /** 叩いたときの光（ドン・カッ × 左右）の画像。画面 px の半分の細かさで作る（ぼんやり光るだけなので十分） */
+  private padFlash: Record<string, { img: HTMLCanvasElement; x: number; y: number; w: number; h: number }> | null = null;
+
+  private buildPadFlash() {
+    const D = this.drum();
+    const P = this.pad;
+    const k = 0.5;
+    const out: Record<string, { img: HTMLCanvasElement; x: number; y: number; w: number; h: number }> = {};
+    const R = D.rim * 1.4;
+    const top = Math.max(0, D.cy - D.ry - R);
+    const h = Math.max(1, P.h - top);
+    for (const kind of ['don', 'ka'] as const) {
+      for (const side of ['L', 'R'] as const) {
+        const outer = kind === 'don' ? D.rx : D.rx + R;
+        const x0 = side === 'L' ? Math.max(0, D.cx - outer) : D.cx;
+        const x1 = side === 'L' ? D.cx : Math.min(P.w, D.cx + outer);
+        const w = Math.max(1, x1 - x0);
+        const img = document.createElement('canvas');
+        img.width = Math.max(1, Math.round(w * k));
+        img.height = Math.max(1, Math.round(h * k));
+        const c = img.getContext('2d')!;
+        c.scale(k, k);
+        c.translate(-x0, -top);
+        c.beginPath();
+        if (kind === 'don') {
+          c.ellipse(D.cx, D.cy, D.rx, D.ry, 0, 0, Math.PI * 2);
+          c.fillStyle = 'rgba(255,80,40,0.45)';
+          c.fill();
+        } else {
+          c.ellipse(D.cx, D.cy, D.rx + R, D.ry + R, 0, 0, Math.PI * 2);
+          c.ellipse(D.cx, D.cy, D.rx, D.ry, 0, 0, Math.PI * 2);
+          c.fillStyle = 'rgba(70,200,240,0.7)';
+          c.fill('evenodd');
+        }
+        out[`${kind}${side}`] = { img, x: x0, y: top, w, h };
+      }
+    }
+    return out;
+  }
+
   /** 太鼓の形（半透明）。画面 px の座標系で描く */
   private drawPadShape(ctx: CanvasRenderingContext2D) {
     const D = this.drum();
@@ -1534,8 +1575,9 @@ export class Renderer {
     };
     ctx.save();
     // 縁（黒い胴の縁と、ふちのでこぼこ）
-    ctx.globalAlpha = 0.6;
-    ctx.fillStyle = '#26262c';
+    // 縁は控えめに（黒が目立ちすぎないよう、薄い灰色を半透明で）
+    ctx.globalAlpha = 0.3;
+    ctx.fillStyle = '#3a3c44';
     // 縁のでこぼこ: 外周に小さな丸を少しずつ重ねて並べ、縁と 1 つの形にして塗る（重なった所が濃くならないように）
     const ax = D.rx + D.rim;
     const ay = D.ry + D.rim;
@@ -1551,7 +1593,7 @@ export class Renderer {
     }
     ctx.fill('nonzero');
     // 縁の鋲
-    ctx.globalAlpha = 0.5;
+    ctx.globalAlpha = 0.35;
     ctx.fillStyle = '#e6e6ea';
     const m = Math.max(16, Math.round(D.rx / 22));
     for (let k = 0; k < m; k++) {
@@ -1599,35 +1641,22 @@ export class Renderer {
   /** 画面下の太鼓（タッチ用）。後ろの背景が見えるように半透明 */
   private drawPad(wall: number) {
     const ctx = this.ctx;
-    const P = this.pad;
     // 叩き分けの帯は動かないので背景と一緒に前もって描いてある（drawPadShape）。ここでは光と波紋だけ
     if (!this.bg && this.padVisible) this.drawPadShape(ctx);
     this.drawRest();
 
-    // 叩いた側が光る（ドン＝面の左半分／右半分、カッ＝縁の左側／右側）。太鼓を隠しているときは波紋だけ
+    // 叩いた側が光る（ドン＝面の左半分／右半分、カッ＝縁の左側／右側）。太鼓を隠しているときは波紋だけ。
+    // 光の形は前もって小さめの画像にしておき、毎フレームはそれを貼るだけにする（大きな形を毎回塗ると重くてカクつく）
     if (this.padVisible) {
-      const D = this.drum();
+      const fx = this.padFlash ?? (this.padFlash = this.buildPadFlash());
       for (const f of this.flashes) {
         const a = 1 - (wall - f.t) / 150;
         if (a <= 0) continue;
-        ctx.save();
-        ctx.beginPath();
-        if (f.side === 'L') ctx.rect(0, 0, D.cx, P.h);
-        else ctx.rect(D.cx, 0, P.w - D.cx, P.h);
-        ctx.clip();
-        ctx.beginPath();
-        if (f.kind === 'don') {
-          ctx.ellipse(D.cx, D.cy, D.rx, D.ry, 0, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(255,80,40,${0.45 * a})`;
-          ctx.fill();
-        } else {
-          ctx.ellipse(D.cx, D.cy, D.rx + D.rim * 1.4, D.ry + D.rim * 1.4, 0, 0, Math.PI * 2);
-          ctx.ellipse(D.cx, D.cy, D.rx, D.ry, 0, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(70,200,240,${0.7 * a})`;
-          ctx.fill('evenodd');
-        }
-        ctx.restore();
+        const sp = fx[`${f.kind}${f.side}`];
+        ctx.globalAlpha = a;
+        ctx.drawImage(sp.img, sp.x, sp.y, sp.w, sp.h);
       }
+      ctx.globalAlpha = 1;
     }
 
     // 指が触れた場所の波紋（ドン＝赤、カッ＝青）。どちらと判定されたかが分かるように
