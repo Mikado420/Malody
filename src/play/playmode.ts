@@ -70,7 +70,8 @@ export class PlayMode {
       },
       (kind, side, at, pt) => {
         // オートのときは叩いた入力を受け付けない
-        if (!this.active || !this.game || this.settings.auto) return;
+        if (!this.active || this.paused || !this.game || this.settings.auto) return;
+        // 打音をいちばん先に鳴らす（判定や絵の処理で遅れないように）
         this.audio.playHit(kind);
         this.renderer.pushHit(kind, side);
         if (pt) this.renderer.pushTouch(kind, pt.x, pt.y);

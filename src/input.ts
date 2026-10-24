@@ -247,15 +247,25 @@ export function bindInput(
   // 「届くまでの遅れがいちばん少なかったとき」とみなして、叩いた瞬間の時刻に直す
   let nativeOffset = Infinity;
   (window as unknown as { __nativeHit?: unknown }).__nativeHit = (nx: number, ny: number, ts?: number, tag?: string, seq?: number) => {
+    const now = performance.now();
     const cx = nx * window.innerWidth;
     const cy = ny * window.innerHeight;
-    const el = document.elementFromPoint(cx, cy);
-    const btn = el instanceof Element ? el.closest('button') : null;
-    if (btn) {
-      btn.click();
-      return;
+    // ボタン（ポーズなど）の上なら押す。ボタンの探索（elementFromPoint）は画面の配置の計算を伴って遅くなることがあるので、
+    // ポーズのメニューなどが出ているときと、ボタンの上のときだけにする（ふだんは打音をすぐ鳴らす）
+    const overlay = root.querySelector('.pause-menu:not(.hidden)');
+    const onButton = Array.from(root.querySelectorAll<HTMLElement>(':scope > button')).some((b) => {
+      const r = b.getBoundingClientRect();
+      return r.width > 0 && cx >= r.left && cx <= r.right && cy >= r.top && cy <= r.bottom;
+    });
+    if (overlay || onButton) {
+      const el = document.elementFromPoint(cx, cy);
+      const btn = el instanceof Element ? el.closest('button') : null;
+      if (btn) {
+        btn.click();
+        return;
+      }
+      if (overlay) return;
     }
-    const now = performance.now();
     let at = now;
     if (typeof ts === 'number' && isFinite(ts)) {
       // アプリ側の時刻の基準が変わった（アプリの再起動など）ときは測り直す
@@ -264,8 +274,9 @@ export function bindInput(
       at = Math.min(now, ts + nativeOffset);
     }
     touchStats.native++;
-    onRaw(`n-${tag ?? 'start'} #${seq ?? '?'} @${nx.toFixed(2)},${ny.toFixed(2)} lag=${Math.round(now - at)}`, at);
+    // 先に叩いた処理（打音）をして、記録は後で
     hitAt(cx, cy, at);
+    onRaw(`n-${tag ?? 'start'} #${seq ?? '?'} @${nx.toFixed(2)},${ny.toFixed(2)} lag=${Math.round(now - at)}`, at);
   };
   root.addEventListener('contextmenu', block);
   root.addEventListener('dblclick', block);

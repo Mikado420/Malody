@@ -351,7 +351,7 @@ export class AudioEngine {
 
   /** 自分で用意した打音（ogg / mp3 / wav など）。null で内蔵の音に戻す */
   async setCustomHit(kind: HitSound, data: ArrayBuffer | null) {
-    this.customHit[kind] = data ? await this.ctx.decodeAudioData(data.slice(0)) : null;
+    this.customHit[kind] = data ? trimLead(this.ctx, await this.ctx.decodeAudioData(data.slice(0))) : null;
     this.measureHit(kind);
   }
 
@@ -451,4 +451,24 @@ export class AudioEngine {
       g.disconnect();
     };
   }
+}
+
+/**
+ * 打音の頭の無音を削る（叩いてから音が聞こえるまでの遅れをなくす）。
+ * mp3・ogg は変換のときに頭に数十 ms の無音が付くことが多く、wav でも頭に間がある音がある。
+ * いちばん大きい所の 2% を最初に超える所の 1ms 手前から使う
+ */
+export function trimLead(ctx: BaseAudioContext, buf: AudioBuffer): AudioBuffer {
+  const chs = Array.from({ length: buf.numberOfChannels }, (_, k) => buf.getChannelData(k));
+  let peak = 0;
+  for (const d of chs) for (let i = 0; i < d.length; i++) { const v = Math.abs(d[i]); if (v > peak) peak = v; }
+  if (peak <= 0) return buf;
+  const th = peak * 0.02;
+  let first = buf.length;
+  for (const d of chs) for (let i = 0; i < Math.min(first, d.length); i++) if (Math.abs(d[i]) > th) { first = i; break; }
+  const start = Math.max(0, first - Math.round(buf.sampleRate * 0.001));
+  if (start < Math.round(buf.sampleRate * 0.002)) return buf; // 2ms 未満なら削らない
+  const out = ctx.createBuffer(buf.numberOfChannels, buf.length - start, buf.sampleRate);
+  chs.forEach((d, k) => out.getChannelData(k).set(d.subarray(start)));
+  return out;
 }
