@@ -18,7 +18,7 @@ import type { Grad } from './grad';
 
 export const REF_H = 924;
 const R = {
-  colLine1: 72, // 密度推移の左端（拡大縮小の六角形のすぐ右）
+  colLine1: 72, // 密度推移の左端
   densW: 75, // 密度推移の幅（Malody と同じ）
   laneX: 147, // レーンの左端（密度推移のすぐ右）
   laneTop: 352,
@@ -30,15 +30,12 @@ const R = {
   judgeX: 410, // 判定枠（再生位置）
   judgeR: 72,
   judgeR2: 49,
-  zoomOut: { x: 24, y: 82, r: 36 },
-  zoomIn: { x: 24, y: 160, r: 36 },
   timeX: 176,
   waveX: 205,
   waveTop: 40, // 曲名の表示をなくした分、波形を上へ広げる
   waveBottom: 336,
   evTop: 576,
   evBottom: 616,
-  posLabel: { x: 205, y: 650 },
 };
 
 /** 斜めの形の傾き（CSS の --tan = tan(8°) と同じ） */
@@ -219,8 +216,6 @@ export class EditorView {
       waveX: R.waveX * s,
       waveY: R.waveTop * s,
       waveH: (R.waveBottom - R.waveTop) * s,
-      zoomOut: box(R.zoomOut),
-      zoomIn: box(R.zoomIn),
       play: box(R.play),
     };
   }
@@ -415,8 +410,6 @@ export class EditorView {
 
   private tap(x: number, y: number) {
     const L = this.L;
-    if (this.inBox(L.zoomIn, x, y)) return this.setZoom(this.zoom * 1.25);
-    if (this.inBox(L.zoomOut, x, y)) return this.setZoom(this.zoom / 1.25);
     if (this.inBox(L.play, x, y)) return this.onPlayToggle();
     if (x <= L.colW) return;
     if (y >= L.waveY && y <= L.waveY + L.waveH) {
@@ -731,27 +724,6 @@ export class EditorView {
     }
     ctx.restore();
 
-    // 下: 現在の小節・拍、BPM、拍子
-    const at = Math.max(0, ed.snap(this.pos));
-    const m = ed.measureOf(at);
-    const bpm = Number(ed.timing.bpmAt(at).toFixed(3));
-    ctx.font = `700 ${Math.round(30 * s)}px system-ui, sans-serif`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'middle';
-    // 数値の桁が変わっても位置がずれないよう、項目ごとに位置を固定する
-    const items: [string, string, number][] = [
-      ['小節', String(m.index + 1), 0],
-      ['BPM', String(bpm), 220],
-      ['拍子', `${m.num}/${m.den}`, 520],
-    ];
-    for (const [k, v, dx] of items) {
-      const x = (R.posLabel.x + dx) * s;
-      ctx.fillStyle = C.sub;
-      ctx.fillText(k, x, R.posLabel.y * s);
-      ctx.fillStyle = C.text;
-      ctx.fillText(v, x + (k === 'BPM' ? 92 : 72) * s, R.posLabel.y * s);
-    }
-
     this.drawColumn(L);
   }
 
@@ -862,8 +834,8 @@ export class EditorView {
     ctx.fillStyle = C.play;
     ctx.fillRect(0, L.cy - 6 * s, 12 * s, 12 * s);
 
-    // 拡大縮小・再生のボタン: 斜めの四角（平行四辺形）
-    const hex = (b: Box, label: 'plus' | 'minus' | 'play' | 'pause') => {
+    // 再生のボタン: 斜めの四角（平行四辺形）
+    const hex = (b: Box, label: 'play' | 'pause') => {
       ctx.save();
       // 左端からはみ出さないよう、少し右に寄せる
       const hw = b.r * 0.84;
@@ -877,21 +849,11 @@ export class EditorView {
       ctx.lineTo(hw - sk / 2, hh);
       ctx.lineTo(-hw - sk / 2, hh);
       ctx.closePath();
-      const isPlay = label === 'play' || label === 'pause';
-      ctx.fillStyle = isPlay ? C.play : C.btn;
+      ctx.fillStyle = C.play;
       ctx.fill();
-      if (!isPlay) {
-        ctx.lineWidth = Math.max(1, 2 * s);
-        ctx.strokeStyle = C.btnEdge;
-        ctx.stroke();
-      }
       ctx.fillStyle = '#fff';
       const k = b.r;
-      if (label === 'plus' || label === 'minus') {
-        const t = Math.max(2, k * 0.12);
-        ctx.fillRect(-k * 0.42, -t / 2, k * 0.84, t);
-        if (label === 'plus') ctx.fillRect(-t / 2, -k * 0.42, t, k * 0.84);
-      } else if (label === 'play') {
+      if (label === 'play') {
         ctx.beginPath();
         ctx.moveTo(-k * 0.28, -k * 0.36);
         ctx.lineTo(k * 0.42, 0);
@@ -904,8 +866,6 @@ export class EditorView {
       }
       ctx.restore();
     };
-    hex(L.zoomOut, 'minus');
-    hex(L.zoomIn, 'plus');
     hex(L.play, this.playing ? 'pause' : 'play');
 
     // 曲の長さ（上）と現在時刻（下）を縦書きで（Malody と同じ位置）

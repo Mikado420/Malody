@@ -1004,6 +1004,157 @@ html:has(body.tja-open), body.tja-open { background: var(--deep); }
 /* ツールの台がエディタの幅に収まるよう、ボタンの幅をエディタの幅に合わせて抑える */
 .stage { container-type: inline-size; }
 .note-tools, .cmd-tools { grid-auto-columns: max(40px, min(calc(118px * var(--es, 0.45)), 7.4cqw)); }
+/* ---------- 下のツールの台（音符・イベント・選択・間隔）。--th = ボタンの高さ ---------- */
+.stage { --th: max(38px, calc(124px * var(--es, 0.45))); }
+/* ボタンの幅: 台がエディタの幅に収まるように（ボタン 9 つ ＋ 間隔の 3 つ ≒ 12 個ぶん。cqw は .stage の幅） */
+.tools { --tw: max(30px, min(calc(122px * var(--es, 0.45)), calc((100cqw - 335px * var(--es, 0.45) - 96px) / 12.4))); }
+.tools {
+  height: calc(var(--th) + 12px);
+  bottom: calc(40px * var(--es, 0.45));
+  gap: max(12px, calc(30px * var(--es, 0.45)));
+  /* 台の形は ::before に描く（上に出すグループの名前が切れないように） */
+  background: none;
+  clip-path: none;
+  isolation: isolate;
+}
+.tools::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: rgba(29, 32, 35, 0.92);
+  --sk: calc((var(--th) + 12px) * var(--tan));
+  clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
+}
+.note-tools, .cmd-tools { grid-auto-columns: var(--tw); gap: max(4px, calc(10px * var(--es, 0.45))); }
+.tool { --sk: calc(var(--th) * var(--tan)); }
+/* グループの名前（台の上に小さく） */
+.note-tools, .cmd-tools, .grid-step { position: relative; }
+.note-tools::after, .cmd-tools::after, .grid-step::after {
+  content: attr(data-label);
+  position: absolute;
+  left: 4px;
+  bottom: calc(100% + 9px);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--sub);
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* 間隔: ‹ 1/16 › */
+.grid-step { display: flex; align-items: stretch; gap: 3px; }
+.grid-step button {
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 0;
+  background: var(--btn);
+  --sk: calc(var(--th) * var(--tan));
+  clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
+}
+.grid-step #divPrev, .grid-step #divNext { width: calc(var(--tw) * 0.72); }
+.grid-step svg { width: 18px; height: 18px; fill: none; stroke: #fff; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.grid-step #divMid { width: calc(var(--tw) * 1.5); background: var(--deep); box-shadow: inset 0 -2px 0 var(--accent); }
+.grid-step #divMid b { font-family: var(--fd); font-weight: 800; font-size: max(15px, calc(40px * var(--es, 0.45))); font-variant-numeric: tabular-nums; }
+.grid-step #divMid.free b { color: var(--accent-hi); }
+.sel-bar { bottom: calc(40px * var(--es, 0.45) + var(--th) + 34px); }
+
+/* 今の位置の小節・BPM・拍子（波形の左下の小さな札） */
+.pos-info {
+  position: absolute;
+  left: calc(205px * var(--es, 0.45) + 6px);
+  top: calc(336px * var(--es, 0.45) - 30px);
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+.pos-info span {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 12px;
+  background: rgba(29, 32, 35, 0.85);
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
+}
+.pos-info i { font-style: normal; font-size: 11px; font-weight: 700; color: var(--sub); }
+.pos-info b { font-family: var(--fd); font-size: 14px; font-weight: 800; color: #fff; font-variant-numeric: tabular-nums; }
+
+/* 拡大・縮小（波形の右上に縦に）。真ん中は今の拡大率、タップで元に戻す */
+.zoom-ctl {
+  position: absolute;
+  right: 8px;
+  top: calc(40px * var(--es, 0.45) + 4px);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  --zh: max(24px, min(38px, calc((296px * var(--es, 0.45) - 14px) / 3)));
+}
+.zoom-ctl button {
+  width: 50px;
+  height: var(--zh);
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  border-radius: 0;
+  background: rgba(29, 32, 35, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+  --sk: calc(var(--zh) * var(--tan));
+  clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
+}
+.zoom-ctl svg { width: 17px; height: 17px; fill: none; stroke: #fff; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+.zoom-ctl #zoomReset { flex-direction: column; gap: 0; }
+.zoom-ctl #zoomReset svg { width: 11px; height: 11px; }
+.zoom-ctl #zoomReset b { font-family: var(--fd); font-size: 11px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.zoom-ctl #zoomReset.on b { color: var(--accent-hi); }
+
+/* ---------- メニュー（編集・ファイル・再生のタブと、アイコンのタイル） ---------- */
+.menu-panel {
+  position: absolute;
+  z-index: 8;
+  top: 8px;
+  right: calc(max(40px, calc(90px * var(--es, 0.6))) + 8px);
+  width: min(360px, calc(100% - max(40px, calc(90px * var(--es, 0.6))) - 24px));
+  max-height: calc(100% - 16px);
+  overflow-y: auto;
+  padding: 8px;
+  background: var(--deep);
+  border: 1.5px solid #fff;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.7);
+  touch-action: pan-y;
+}
+.mp-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 4px; }
+.mp-tabs button, .mp-grid button {
+  border-radius: 0;
+  --sk: calc(34px * var(--tan));
+  clip-path: polygon(var(--sk) 0, 100% 0, calc(100% - var(--sk)) 100%, 0 100%);
+}
+.mp-tabs button { padding: 8px 4px; font-size: 14px; font-weight: 800; background: var(--btn); color: #fff; }
+.mp-tabs button.on { background: #fff; color: var(--deep); }
+.menu-panel h4 { margin: 8px 4px 4px; font-size: 11px; font-weight: 700; color: var(--sub); letter-spacing: 0.04em; }
+.mp-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; margin-top: 4px; }
+.mp-grid button {
+  height: 58px;
+  padding: 0 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--btn);
+  --sk: calc(20px * var(--tan));
+}
+.mp-grid button span { white-space: nowrap; }
+.mp-grid button.wide { grid-column: span 2; }
+.mp-grid svg { width: 21px; height: 21px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.mp-grid button.txt { height: 44px; font-family: var(--fd); font-size: 15px; font-weight: 800; }
+.mp-grid button.primary, .mp-grid button.on { background: var(--accent); color: #fff; }
+.side #rateLabel { color: #fff; }
 /* プレイ画面は今までの見た目のまま */
 .play, .overlay { --bg: #000; --panel: #08111e; --line: #1d3352; --text: #f4f8ff; --sub: #8ea6c4; --accent: #1e88ff; --btn: #0f1f36; --btn-on: #12345e; }
 .play button, .overlay button { border-radius: 10px; }

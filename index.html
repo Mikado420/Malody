@@ -27,14 +27,14 @@
         <canvas id="editor"></canvas>
         <div id="tools" class="tools">
           <!-- ノーツ 4 つ（選んでいるボタンをもう一度タップすると、ドン⇔カッ・大ドン⇔大カッ・連打⇔大連打 が切り替わる） -->
-          <div class="note-tools">
+          <div class="note-tools" data-label="音符">
             <button data-group="small" class="tool" aria-label="ドン / カッ"><i></i></button>
             <button data-group="big" class="tool" aria-label="大ドン / 大カッ"><i></i></button>
             <button data-group="roll" class="tool" aria-label="連打 / 大連打"><i></i></button>
             <button data-group="balloon" class="tool" aria-label="風船"><i></i></button>
           </div>
           <!-- 命令: ゴーゴー（判定枠の炎の玉）、SCROLL・グラデ、BPMCHANGE、MEASURE -->
-          <div class="cmd-tools">
+          <div class="cmd-tools" data-label="イベント・選択">
             <button data-group="gogo" class="tool gogo" aria-label="ゴーゴータイム"><svg viewBox="0 0 40 40" aria-hidden="true">
               <path d="M24 9c6-3 9 1 13-2-1 6-2 11-6 17z" fill="#ee6e30"/>
               <circle cx="18" cy="22" r="14" fill="#f07436"/>
@@ -59,6 +59,20 @@
               <path d="M22 20l13 5-6 2-2 6z" stroke-width="2.4" fill="#7cc4ff"/>
             </svg></button>
           </div>
+          <!-- 音符の間隔（グリッド）: ‹ › で 1/8〜1/64、真ん中をタップで自由グリッド -->
+          <div class="grid-step" data-label="間隔">
+            <button id="divPrev" aria-label="間隔を広く"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 5-7 7 7 7"/></svg></button>
+            <button id="divMid" aria-label="自由グリッド"><b id="divLabel">1/16</b></button>
+            <button id="divNext" aria-label="間隔を細かく"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 7 7-7 7"/></svg></button>
+          </div>
+        </div>
+        <!-- 今の位置の小節・BPM・拍子（波形の左下） -->
+        <div id="posInfo" class="pos-info"><span><i>小節</i><b id="piBar">1</b></span><span><i>BPM</i><b id="piBpm">120</b></span><span><i>拍子</i><b id="piMeter">4/4</b></span></div>
+        <!-- 拡大・縮小（波形の右上。密度レーンと反対側）。真ん中で元の大きさに -->
+        <div id="zoomCtl" class="zoom-ctl">
+          <button id="zoomIn" aria-label="拡大"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+          <button id="zoomReset" aria-label="拡大率を元に戻す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.3-5.7"/><path d="M4 4v4h4"/></svg><b id="zoomLabel">100%</b></button>
+          <button id="zoomOut" aria-label="縮小"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
         </div>
         <!-- 選択ツールのときの操作 -->
         <div id="selBar" class="sel-bar hidden">
@@ -70,20 +84,17 @@
           <button data-sel="clear">解除</button>
         </div>
       </div>
-      <!-- グリッドのメニュー（右のアイコンバーの少し左に出す） -->
-      <div id="divMenu" class="div-menu hidden" role="menu"></div>
       <div id="flyMenu" class="div-menu fly-menu hidden" role="menu"></div>
+      <!-- メニュー（編集・ファイル・再生のタブと、アイコンのタイル） -->
+      <div id="menuPanel" class="menu-panel hidden" role="menu"></div>
       <nav class="side">
         <button id="btnHome" title="曲選択へ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5h6l2 2h10v10H3z"/></svg></button>
         <button id="btnUndo" title="元に戻す"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
         <button id="btnRedo" title="やり直し"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
-        <!-- 2 段のメニュー: アイコンを押すと、左に項目の一覧が出る -->
-        <button id="btnEdit" data-fly="edit" title="編集（譜面情報・TJA・BPM 測定）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="m13.5 6.5 4 4"/></svg></button>
-        <button id="btnFile" data-fly="file" title="読み込み・書き出し"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3v12"/><path d="m4.5 11.5 3.5 3.5 3.5-3.5"/><path d="M16 21V9"/><path d="m12.5 12.5 3.5-3.5 3.5 3.5"/></svg></button>
-        <button id="btnSound" data-fly="sound" title="メトロノーム・再生速度"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6l4 18H5z"/><path d="M12 16 18 6"/><path d="M7.5 15h9"/></svg><small id="rateLabel">1.0x</small></button>
+        <!-- メニュー: 編集・ファイル・再生をまとめたパネルを出す -->
+        <button id="btnMenu" title="メニュー"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg><small id="rateLabel" class="hidden">1.0x</small></button>
         <button id="btnTest" data-fly="test" title="テストプレイ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 4.5v15l12.5-7.5z"/></svg></button>
         <button id="btnSettings" title="設定"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></svg></button>
-        <button class="divbtn" id="btnDiv" title="グリッド（分割）"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 2h8v20H8z"/><path d="M8 6h4M8 10h5M8 14h4M8 18h5"/></svg><small id="divLabel">1/4</small></button>
       </nav>
     </div>
 

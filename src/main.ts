@@ -300,7 +300,10 @@ function loop() {
   if (tempoPreview.on) tickTempoPreview();
   if (arrPlay.on) tickArrPlay();
   // プレイ画面を出している間は、隠れているエディタを描き直さない
-  if (!document.body.classList.contains('playing')) view.frame();
+  if (!document.body.classList.contains('playing')) {
+    view.frame();
+    updateHud();
+  }
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -310,9 +313,10 @@ requestAnimationFrame(loop);
 function updateHeader() {
   $<HTMLButtonElement>('btnUndo').disabled = !ed.canUndo;
   $<HTMLButtonElement>('btnRedo').disabled = !ed.canRedo;
-  $('rateLabel').textContent = `${settings.rate.toFixed(settings.rate === 1 ? 1 : 2)}x`;
-  $('btnSound').classList.toggle('on', settings.metronome);
-  $('divLabel').textContent = `1/${ed.divisor}`;
+  // 再生速度が 1.0 でないときだけ、メニューのボタンに小さく出す
+  $('rateLabel').textContent = `${settings.rate.toFixed(2)}x`;
+  $('rateLabel').classList.toggle('hidden', settings.rate === 1);
+  updateDivStep();
   view.invalidate();
 }
 
@@ -378,8 +382,7 @@ document.querySelectorAll<HTMLButtonElement>('#tools .tool').forEach((b) => {
 });
 setTool('don');
 
-// グリッド（分割）: ボタンを押すと、右のアイコンバーの少し左に 1/2〜1/32 と「自由グリッド」のメニューを出す
-const divMenu = $('divMenu');
+// グリッド（音符の間隔）: 下の「‹ 間隔 ›」。‹ › で 1/8〜1/64 を 1 つずつ、真ん中をタップで自由グリッド
 const setDivisor = (d: number) => {
   ed.divisor = d;
   settings.grid = d;
@@ -387,96 +390,175 @@ const setDivisor = (d: number) => {
   updateHeader();
   view.invalidate();
 };
-const closeDivMenu = () => divMenu.classList.add('hidden');
-const openDivMenu = () => {
-  const preset = DIVISORS;
-  const custom = !preset.includes(ed.divisor);
-  divMenu.innerHTML = preset.map((d) => `<button data-div="${d}" class="${d === ed.divisor ? 'on' : ''}">1/${d}</button>`).join('')
-    + `<hr><button data-div="free" class="${custom ? 'on' : ''}">${custom ? `自由 1/${ed.divisor}` : '自由…'}</button>`;
-  divMenu.classList.remove('hidden');
-  // グリッドのボタンの下端にメニューの下端をそろえる（はみ出すときは上にそろえる）
-  const btn = $('btnDiv');
-  const app = $('app');
-  const bottom = btn.offsetTop + btn.offsetHeight - (btn.parentElement as HTMLElement).scrollTop;
-  divMenu.style.top = `${Math.max(8, Math.min(bottom - divMenu.offsetHeight, app.offsetHeight - divMenu.offsetHeight - 8))}px`;
+/** 今の間隔から dir の向きに、いちばん近い決まった間隔（自由グリッドのときも、その向きの近い所へ） */
+const stepDivisor = (dir: 1 | -1) => {
+  const d = ed.divisor;
+  const next = dir > 0 ? DIVISORS.find((v) => v > d) : [...DIVISORS].reverse().find((v) => v < d);
+  if (next !== undefined) setDivisor(next);
 };
-$('btnDiv').addEventListener('click', (e) => {
-  e.stopPropagation();
-  closeFlyMenu();
-  if (divMenu.classList.contains('hidden')) openDivMenu();
-  else closeDivMenu();
-});
-divMenu.addEventListener('click', (e) => {
-  e.stopPropagation();
-  const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-div]');
-  if (!b) return;
-  if (b.dataset.div === 'free') {
-    const v = prompt('1 小節を何分割にするか（例: 20, 28, 36, 40, 96）', String(ed.divisor));
-    if (v === null) return;
-    const n = Math.round(Number(v));
-    if (!gridOk(n)) {
-      toast('その分割数は使えません（使える例: 1〜16, 18, 20, 21, 24, 28, 30, 32, 35, 36, 40, 42, 48, 56, 60, 64, 80, 96…）');
-      return;
-    }
-    setDivisor(n);
-    if (!divMenu.classList.contains('hidden')) openDivMenu();
-    toast(`グリッドを 1/${n} にしました`);
+function updateDivStep() {
+  $('divLabel').textContent = `1/${ed.divisor}`;
+  $<HTMLButtonElement>('divPrev').disabled = ed.divisor <= DIVISORS[0];
+  $<HTMLButtonElement>('divNext').disabled = ed.divisor >= DIVISORS[DIVISORS.length - 1];
+  $('divMid').classList.toggle('free', !DIVISORS.includes(ed.divisor));
+}
+$('divPrev').addEventListener('click', () => stepDivisor(-1));
+$('divNext').addEventListener('click', () => stepDivisor(1));
+$('divMid').addEventListener('click', () => {
+  closeMenus();
+  const v = prompt('1 小節を何分割にするか（例: 20, 28, 36, 40, 96）', String(ed.divisor));
+  if (v === null) return;
+  const n = Math.round(Number(v));
+  if (!gridOk(n)) {
+    toast('その分割数は使えません（使える例: 1〜16, 18, 20, 21, 24, 28, 30, 32, 35, 36, 40, 42, 48, 56, 60, 64, 80, 96…）');
     return;
   }
-  // 選んでもメニューは出したまま（グリッドのボタンをもう一度押すと閉じる）
-  setDivisor(Number(b.dataset.div));
-  openDivMenu();
+  setDivisor(n);
+  toast(`グリッドを 1/${n} にしました`);
 });
 
-// ---------- 2 段のメニュー（右のアイコンを押すと、その少し左に項目の一覧を出す） ----------
+// 拡大・縮小（波形の右上）。真ん中は今の拡大率の表示で、タップで初期値（プレイ画面と同じ間隔）に戻す
+const resetZoom = () => {
+  settings.zoomSet = false;
+  saveSettings();
+  view.setZoom(view.defaultZoom);
+};
+$('zoomIn').addEventListener('click', () => view.setZoom(view.zoom * 1.25));
+$('zoomOut').addEventListener('click', () => view.setZoom(view.zoom / 1.25));
+$('zoomReset').addEventListener('click', resetZoom);
 
-type FlyItem = { label: string; on?: boolean; primary?: boolean; run: () => void } | { head: string } | 'sep';
+// 今の位置の小節・BPM・拍子と、拡大率の表示（毎フレーム、変わったときだけ書き換える）
+let hudKey = '';
+function updateHud() {
+  const at = Math.max(0, ed.snap(view.pos));
+  const m = ed.measureOf(at);
+  const bpm = String(Number(ed.timing.bpmAt(at).toFixed(3)));
+  const zoom = `${Math.round((view.zoom / view.defaultZoom) * 100)}%`;
+  const key = `${m.index}|${bpm}|${m.num}/${m.den}|${zoom}`;
+  if (key === hudKey) return;
+  hudKey = key;
+  $('piBar').textContent = String(m.index + 1);
+  $('piBpm').textContent = bpm;
+  $('piMeter').textContent = `${m.num}/${m.den}`;
+  $('zoomLabel').textContent = zoom;
+  $('zoomReset').classList.toggle('on', zoom !== '100%');
+}
+
+// ---------- メニュー（右の ≡ を押すと、編集・ファイル・再生のタブとアイコンのタイルを出す） ----------
+
+const ICON: Record<string, string> = {
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/>',
+  tja: '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M9 12h6M9 16h4"/>',
+  tempo: '<path d="M2 13h4l3-8 5 15 3-9 2 2h3"/>',
+  open: '<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 20h16"/>',
+  audio: '<path d="M9 18V5l11-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="17" cy="16" r="3"/>',
+  cut: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.1 15.9M14.5 14.5 20 20M8.1 8.1 12 12"/>',
+  new: '<path d="M14 3H6v18h12V7z"/><path d="M14 3v4h4M12 11v6M9 14h6"/>',
+  sample: '<path d="M4 19V5l8 4 8-4v14l-8-4z"/>',
+  save: '<path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h8V3M8 21v-7h8v7"/>',
+  zip: '<path d="M6 3h9l3 3v15H6z"/><path d="M11 3v2h2v2h-2v2h2v2h-2v2"/>',
+  copy: '<rect x="8" y="8" width="12" height="12"/><path d="M16 8V4H4v12h4"/>',
+  metro: '<path d="M9 3h6l4 18H5z"/><path d="M12 16 18 6"/><path d="M7.5 15h9"/>',
+};
+type Tile = { label: string; icon?: string; on?: boolean; primary?: boolean; keep?: boolean; wide?: boolean; run: () => void } | { head: string };
+type MenuTab = 'edit' | 'file' | 'play';
+const MENU_TABS: [MenuTab, string][] = [['edit', '編集'], ['file', 'ファイル'], ['play', '再生']];
+let menuTab: MenuTab = 'file';
+const menuPanel = $('menuPanel');
+function menuTiles(tab: MenuTab): Tile[] {
+  if (tab === 'edit') {
+    return [
+      { label: '曲の情報', icon: 'info', run: () => openSheet('info') },
+      { label: 'TJA', icon: 'tja', run: () => openSheet('events') },
+      { label: 'BPM 測定', icon: 'tempo', run: () => startTempo() },
+    ];
+  }
+  if (tab === 'file') {
+    return [
+      { head: '読み込み' },
+      { label: '読み込む', icon: 'open', primary: true, run: () => void fileAction('open') },
+      { label: '音源', icon: 'audio', run: () => void fileAction('audio') },
+      { label: '切り貼り', icon: 'cut', run: () => void fileAction('cut') },
+      { label: '新規', icon: 'new', run: () => void fileAction('new') },
+      { label: 'サンプル', icon: 'sample', run: () => void fileAction('sample') },
+      { head: '書き出し' },
+      { label: '.tja 保存', icon: 'save', run: () => void fileAction('saveTja') },
+      { label: '.zip 保存', icon: 'zip', run: () => void fileAction('saveZip') },
+      { label: 'コピー', icon: 'copy', run: () => void fileAction('copy') },
+    ];
+  }
+  const rates = [1, 0.75, 0.5, 0.25];
+  return [
+    { label: settings.metronome ? 'メトロノーム ON' : 'メトロノーム OFF', icon: 'metro', on: settings.metronome, keep: true, wide: true, run: () => {
+      settings.metronome = !settings.metronome;
+      saveSettings();
+      updateHeader();
+    } },
+    { head: '再生速度' },
+    ...rates.map((r) => ({ label: `${r.toFixed(r === 1 ? 1 : 2)}x`, on: settings.rate === r, keep: true, run: () => {
+      settings.rate = r;
+      saveSettings();
+      updateHeader();
+      if (playing) { stopPlayback(); void startPlayback(); }
+    } })),
+  ];
+}
+const svgIcon = (k: string) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICON[k] ?? ''}</svg>`;
+function renderMenu() {
+  const tiles = menuTiles(menuTab);
+  let grid = '';
+  let html = '';
+  const flush = () => { if (grid) html += `<div class="mp-grid">${grid}</div>`; grid = ''; };
+  tiles.forEach((t, i) => {
+    if ('head' in t) { flush(); html += `<h4>${esc(t.head)}</h4>`; return; }
+    grid += `<button data-ti="${i}" class="${t.on ? 'on' : ''} ${t.primary ? 'primary' : ''} ${t.icon ? '' : 'txt'} ${t.wide ? 'wide' : ''}">${t.icon ? svgIcon(t.icon) : ''}<span>${esc(t.label)}</span></button>`;
+  });
+  flush();
+  menuPanel.innerHTML = `<div class="mp-tabs">${MENU_TABS.map(([k, n]) => `<button data-tab="${k}" class="${k === menuTab ? 'on' : ''}">${n}</button>`).join('')}</div>${html}`;
+  menuPanel.onclick = (e) => {
+    e.stopPropagation();
+    const tb = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-tab]');
+    if (tb) { menuTab = tb.dataset.tab as MenuTab; renderMenu(); return; }
+    const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-ti]');
+    if (!b) return;
+    const t = tiles[Number(b.dataset.ti)];
+    if (!('run' in t)) return;
+    // メトロノーム・再生速度は、続けて選べるように開いたまま
+    if (t.keep) { t.run(); renderMenu(); return; }
+    closeMenus();
+    t.run();
+  };
+}
+const menuOpen = () => !menuPanel.classList.contains('hidden');
+const closeMenu = () => {
+  menuPanel.classList.add('hidden');
+  $('btnMenu').classList.remove('open');
+};
+$('btnMenu').addEventListener('click', (e) => {
+  e.stopPropagation();
+  closeFlyMenu();
+  if (menuOpen()) { closeMenu(); return; }
+  renderMenu();
+  menuPanel.classList.remove('hidden');
+  $('btnMenu').classList.add('open');
+});
+
+// ---------- テストプレイの 2 段のメニュー（右のアイコンを押すと、その少し左に項目の一覧を出す） ----------
+
+type FlyItem = { label: string; primary?: boolean; run: () => void };
 const flyMenu = $('flyMenu');
 let flyKind = '';
 const closeFlyMenu = () => {
   flyMenu.classList.add('hidden');
-  document.querySelectorAll('.side .open').forEach((b) => b.classList.remove('open'));
+  document.querySelectorAll('.side [data-fly].open').forEach((b) => b.classList.remove('open'));
   flyKind = '';
 };
+/** メニューを全部閉じる */
+function closeMenus() {
+  closeFlyMenu();
+  closeMenu();
+}
 function flyItems(kind: string): FlyItem[] {
-  const rates = [1, 0.75, 0.5, 0.25];
-  if (kind === 'edit') {
-    return [
-      { label: '曲・難易度の情報', run: () => openSheet('info') },
-      { label: 'TJA テキスト', run: () => openSheet('events') },
-      { label: 'BPM・OFFSET 自動測定', run: () => startTempo() },
-    ];
-  }
-  if (kind === 'file') {
-    return [
-      { head: '読み込み' },
-      { label: '読み込み（.tja / .zip / 音源）', primary: true, run: () => void fileAction('open') },
-      { label: '音源を読み込む（ファイル / リンク）', run: () => void fileAction('audio') },
-      { label: '音源の切り貼り', run: () => void fileAction('cut') },
-      { label: '新規作成', run: () => void fileAction('new') },
-      { label: 'サンプル譜面', run: () => void fileAction('sample') },
-      { head: '書き出し' },
-      { label: '.tja を保存', run: () => void fileAction('saveTja') },
-      { label: '.zip（譜面＋音源）を保存', run: () => void fileAction('saveZip') },
-      { label: 'TJA をコピー', run: () => void fileAction('copy') },
-    ];
-  }
-  if (kind === 'sound') {
-    return [
-      { label: `メトロノーム ${settings.metronome ? 'ON' : 'OFF'}`, on: settings.metronome, run: () => {
-        settings.metronome = !settings.metronome;
-        saveSettings();
-        updateHeader();
-      } },
-      { head: '再生速度' },
-      ...rates.map((r) => ({ label: `${r.toFixed(r === 1 ? 1 : 2)}x`, on: settings.rate === r, run: () => {
-        settings.rate = r;
-        saveSettings();
-        updateHeader();
-        if (playing) { stopPlayback(); void startPlayback(); }
-      } })),
-    ];
-  }
   if (kind === 'test') {
     return [
       { label: '最初から', primary: true, run: () => void startTest(true) },
@@ -488,11 +570,8 @@ function flyItems(kind: string): FlyItem[] {
 function openFlyMenu(btn: HTMLElement) {
   const kind = btn.dataset.fly!;
   const items = flyItems(kind);
-  flyMenu.innerHTML = items.map((it, i) => (it === 'sep' ? '<hr>'
-    : 'head' in it ? `<h4>${esc(it.head)}</h4>`
-    : `<button data-fi="${i}" class="${it.on ? 'on' : ''} ${it.primary ? 'primary' : ''}">${esc(it.label)}</button>`)).join('');
+  flyMenu.innerHTML = items.map((it, i) => `<button data-fi="${i}" class="${it.primary ? 'primary' : ''}">${esc(it.label)}</button>`).join('');
   flyMenu.classList.remove('hidden');
-  document.querySelectorAll('.side .open').forEach((b) => b.classList.remove('open'));
   btn.classList.add('open');
   flyKind = kind;
   // 押したボタンの上端にメニューの上端をそろえる（はみ出すときは下にそろえる）
@@ -503,29 +582,20 @@ function openFlyMenu(btn: HTMLElement) {
     e.stopPropagation();
     const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-fi]');
     if (!b) return;
-    const it = items[Number(b.dataset.fi)];
-    if (typeof it === 'object' && 'run' in it) {
-      // メトロノーム・再生速度は、続けて選べるようにメニューを開いたまま作り直す
-      if (kind === 'sound') {
-        it.run();
-        openFlyMenu(btn);
-        return;
-      }
-      closeFlyMenu();
-      it.run();
-    }
+    closeFlyMenu();
+    items[Number(b.dataset.fi)].run();
   };
 }
 document.querySelectorAll<HTMLButtonElement>('.side [data-fly]').forEach((btn) => btn.addEventListener('click', (e) => {
   e.stopPropagation();
-  closeDivMenu();
+  closeMenu();
   if (flyKind === btn.dataset.fly) closeFlyMenu();
   else openFlyMenu(btn);
 }));
 document.addEventListener('pointerdown', (e) => {
-  if (!flyKind) return;
   const t = e.target as HTMLElement;
-  if (!flyMenu.contains(t) && !t.closest('.side [data-fly]')) closeFlyMenu();
+  if (flyKind && !flyMenu.contains(t) && !t.closest('.side [data-fly]')) closeFlyMenu();
+  if (menuOpen() && !menuPanel.contains(t) && !t.closest('#btnMenu')) closeMenu();
 });
 
 view.onZoomChange = (z) => {
@@ -789,7 +859,7 @@ $('sheetBold').addEventListener('click', () => {
   scheduleTjaHl();
 });
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
-$('btnSettings').addEventListener('click', () => { closeFlyMenu(); openSheet('settings'); });
+$('btnSettings').addEventListener('click', () => { closeMenus(); openSheet('settings'); });
 
 function renderSheet() {
   const body = $('sheetBody');
@@ -1361,9 +1431,7 @@ async function fileAction(act: string) {
     closeSheet();
     await play.startCalibration();
   } else if (act === 'resetZoom') {
-    settings.zoomSet = false;
-    saveSettings();
-    view.setZoom(view.defaultZoom);
+    resetZoom();
     toast('拡大率を初期値（プレイ画面と同じ間隔）に戻しました');
   } else if (act === 'delCourse') {
     if (confirm(`${ed.course.name} を削除しますか？`)) ed.removeCourse(ed.courseIndex);
@@ -1570,7 +1638,7 @@ const home = new Home({
 });
 
 $('btnHome').addEventListener('click', async () => {
-  closeFlyMenu();
+  closeMenus();
   stopPlayback();
   await persist();
   await home.show(currentSongId);
